@@ -74,6 +74,7 @@ class CarPlaySpeedTemplate {
         }
     }
     
+    @MainActor
     private func presentAlert(speed: Double, limit: Int) {
         guard let interfaceController = interfaceController else { return }
         
