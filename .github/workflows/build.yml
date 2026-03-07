@@ -13,27 +13,27 @@ jobs:
 
     steps:
 
-    # ── 1. Download your code ──────────────────────────────────────
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # ── 2. Select Xcode 15 ────────────────────────────────────────
-    - name: Select Xcode 15
-      run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+    - name: Find and select latest Xcode
+      run: |
+        echo "Available Xcode versions:"
+        ls /Applications | grep Xcode
+        XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+        echo "Selecting: $XCODE_PATH"
+        sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+        xcodebuild -version
 
-    # ── 3. Install XcodeGen ───────────────────────────────────────
     - name: Install XcodeGen
       run: brew install xcodegen
 
-    # ── 4. Generate the .xcodeproj from project.yml ───────────────
     - name: Generate Xcode project
       run: xcodegen generate
 
-    # ── 5. Confirm project was created ────────────────────────────
     - name: Verify project exists
       run: ls -la *.xcodeproj
 
-    # ── 6. Build the app (no signing) ─────────────────────────────
     - name: Build app
       run: |
         xcodebuild \
@@ -47,30 +47,16 @@ jobs:
           CODE_SIGNING_ALLOWED=NO \
           clean archive
 
-    # ── 7. Package into an IPA manually ───────────────────────────
     - name: Package unsigned IPA
       run: |
         mkdir -p ./Payload
         cp -r ./SmartSpeedCompanion.xcarchive/Products/Applications/SmartSpeedCompanion.app ./Payload/
         zip -r SmartSpeedCompanion-unsigned.ipa Payload
-        echo "IPA created successfully"
         ls -lh SmartSpeedCompanion-unsigned.ipa
 
-    # ── 8. Upload IPA as downloadable artifact ────────────────────
     - name: Upload unsigned IPA
       uses: actions/upload-artifact@v4
       with:
         name: SmartSpeedCompanion-unsigned-${{ github.run_number }}
         path: SmartSpeedCompanion-unsigned.ipa
         retention-days: 7
-
-    # ── 9. Show build log summary ─────────────────────────────────
-    - name: Build complete
-      run: |
-        echo "========================================"
-        echo "Build #${{ github.run_number }} complete"
-        echo "Download the IPA from the Artifacts"
-        echo "section of this Actions run."
-        echo "Then use AltStore on Windows to sign"
-        echo "and install it on your iPhones."
-        echo "========================================"
