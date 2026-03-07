@@ -26,6 +26,9 @@ public final class DriveViewModel: ObservableObject {
     @Published public var destination: MKMapItem? = nil
     @Published public var searchResults: [MKMapItem] = []
     @Published public var isSearching: Bool = false
+    @Published public var nextManeuverInstruction: String = ""
+    @Published public var distanceToNextTurn: CLLocationDistance = 0
+    @Published public var eta: Date? = nil
     
     // Timer properties
     private var sessionStartTime: Date? = nil
