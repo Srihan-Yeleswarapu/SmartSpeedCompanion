@@ -4,21 +4,21 @@
 import CarPlay
 import Combine
 
-@MainActor
 class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
 
-    let mapTemplate: CPMapTemplate
-    private weak var interfaceController: CPInterfaceController?
-    private let viewModel: DriveViewModel
-    private var navigationManager: CarPlayNavigationManager!
+    @MainActor let mapTemplate: CPMapTemplate
+    @MainActor private weak var interfaceController: CPInterfaceController?
+    @MainActor private let viewModel: DriveViewModel
+    @MainActor private var navigationManager: CarPlayNavigationManager!
     
     private var cancellables = Set<AnyCancellable>()
-    private var isAlertPresented = false
+    @MainActor private var isAlertPresented = false
     
     // Top bar elements
-    private var speedButton: CPBarButton!
-    private var limitButton: CPBarButton!
+    @MainActor private var speedButton: CPBarButton!
+    @MainActor private var limitButton: CPBarButton!
 
+    @MainActor
     init(interfaceController: CPInterfaceController, viewModel: DriveViewModel) {
         self.interfaceController = interfaceController
         self.viewModel = viewModel
@@ -32,6 +32,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         bindViewModel()
     }
 
+    @MainActor
     private func setupTemplate() {
         // Navigation Bar Buttons (Top - Representing the 25% overlay conceptually)
         speedButton = CPBarButton(title: "0 MPH") { _ in }
@@ -41,7 +42,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         
         // Map Buttons (Right Side)
         let searchButton = CPMapButton { [weak self] _ in
-            self?.presentSearch()
+            Task { @MainActor in self?.presentSearch() }
         }
         searchButton.image = UIImage(systemName: "magnifyingglass")!
         
@@ -55,15 +56,15 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         }
         endButton.image = UIImage(systemName: "stop.fill")!
 
-        let muteButton = CPMapButton { [weak self] btn in
-            // Basic toggle simulation, no icon swap logic natively in dummy without re-assigning mapButtons
-            self?.navigationManager.setMuted(true)
+        let muteButton = CPMapButton { [weak self] _ in
+            Task { @MainActor in self?.navigationManager.setMuted(true) }
         }
         muteButton.image = UIImage(systemName: "speaker.slash.fill")!
 
         mapTemplate.mapButtons = [searchButton, startButton, endButton, muteButton]
     }
 
+    @MainActor
     private func bindViewModel() {
         viewModel.$speed
             .combineLatest(viewModel.$limit, viewModel.$status)
@@ -75,6 +76,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
             .store(in: &cancellables)
     }
 
+    @MainActor
     private func updateHUD(speed: Double, limit: Int, status: SpeedStatus) {
         speedButton.title = "\(Int(speed)) MPH"
         limitButton.title = "LIMIT \(limit)"
@@ -97,6 +99,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         }
     }
 
+    @MainActor
     private func handleAlerts(speed: Double, limit: Int, status: SpeedStatus) {
         if status == .over && !isAlertPresented {
             presentAlert(speed: speed, limit: limit)
@@ -106,10 +109,11 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         }
     }
 
+    @MainActor
     private func presentAlert(speed: Double, limit: Int) {
         _ = Int(speed) - limit
         let action = CPAlertAction(title: "Got It", style: .cancel) { [weak self] _ in
-            self?.isAlertPresented = false
+            Task { @MainActor in self?.isAlertPresented = false }
         }
         let alert = CPAlertTemplate(
             titleVariants: ["⚠ SPEED ALERT", "SPEED ALERT"],
@@ -120,29 +124,29 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
     }
     
     // MARK: - Search
+    @MainActor
     private func presentSearch() {
         let searchTemplate = CPSearchTemplate()
         searchTemplate.delegate = self
         interfaceController?.pushTemplate(searchTemplate, animated: true, completion: nil)
     }
     
-    @preconcurrency
     public func searchTemplate(_ searchTemplate: CPSearchTemplate, updatedSearchText searchText: String, completionHandler: @escaping ([CPListItem]) -> Void) {
-        Task {
-            let results = await navigationManager.searchDestinationTrigger(searchText)
-            
-            let listItems = results.map { mapItem in
-                let item = CPListItem(text: mapItem.name, detailText: mapItem.placemark.title)
-                item.handler = { [weak self] _, completion in
-                    self?.interfaceController?.popTemplate(animated: true, completion: nil)
-                    Task {
-                        await self?.navigationManager.startNavigationTrigger(to: mapItem)
+        Task { @MainActor in
+            self.navigationManager.searchDestination(query: searchText) { results in
+                let listItems = results.map { mapItem in
+                    let item = CPListItem(text: mapItem.name, detailText: mapItem.placemark.title)
+                    item.handler = { [weak self] _, completion in
+                        Task { @MainActor in
+                            self?.interfaceController?.popTemplate(animated: true, completion: nil)
+                            self?.navigationManager.startNavigation(to: mapItem)
+                        }
+                        completion()
                     }
-                    completion()
+                    return item
                 }
-                return item
+                completionHandler(listItems)
             }
-            completionHandler(listItems)
         }
     }
 }

@@ -35,6 +35,29 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         self.isMuted = muted
     }
     
+    public func searchDestination(query: String, completion: @escaping ([MKMapItem]) -> Void) {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        let coordinate = viewModel.locationManager.latestLocation?.coordinate ?? CLLocationCoordinate2D()
+        request.region = MKCoordinateRegion(center: coordinate, latitudinalMeters: 50000, longitudinalMeters: 50000)
+        
+        let search = MKLocalSearch(request: request)
+        search.start { response, error in
+            completion(Array(response?.mapItems.prefix(5) ?? []))
+        }
+    }
+    
+    public func startNavigation(to destination: MKMapItem) {
+        Task {
+            do {
+                let route = try await calculateRoute(to: destination)
+                self.startNavigation(route: route, destination: destination)
+            } catch {
+                print("Failed to calculate route: \(error)")
+            }
+        }
+    }
+    
     public func searchDestinationTrigger(_ query: String) async -> [MKMapItem] {
         return await searchDestination(query: query, near: viewModel.locationManager.latestLocation?.coordinate ?? CLLocationCoordinate2D())
     }
