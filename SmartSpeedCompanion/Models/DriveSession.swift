@@ -25,7 +25,7 @@ public final class DriveSession {
     
     /// Computes the percentage of time spent within the safe speed limit (0.0 to 1.0).
     public var percentWithinLimit: Double {
-        guard !readings.isEmpty else else { return 1.0 }
+        guard !readings.isEmpty else { return 1.0 }
         let safeReadings = readings.filter { !$0.overLimit }.count
         return Double(safeReadings) / Double(readings.count)
     }
