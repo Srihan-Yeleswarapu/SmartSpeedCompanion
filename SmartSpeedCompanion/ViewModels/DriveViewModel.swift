@@ -45,7 +45,7 @@ public final class DriveViewModel: ObservableObject {
         self.speedEngine = spdEngine
         self.alertEngine = alrtEngine
         self.sessionRecorder = rec
-        
+
         // Bind UI state
         spdEngine.$speed.assign(to: &$speed)
         spdEngine.$limit.assign(to: &$limit)
@@ -76,8 +76,8 @@ public final class DriveViewModel: ObservableObject {
         await navigationDelegate?.startNavigationTrigger(to: destination)
     }
     
-    public func endNavigation() {
-        navigationDelegate?.endNavigationTrigger()
+    public func endNavigation() async {
+        await navigationDelegate?.endNavigationTrigger()
     }
     
     public func searchDestination(_ query: String) async -> [MKMapItem] {
@@ -87,6 +87,6 @@ public final class DriveViewModel: ObservableObject {
 
 public protocol NavigationActionDelegate: AnyObject {
     func startNavigationTrigger(to destination: MKMapItem) async
-    func endNavigationTrigger()
+    func endNavigationTrigger() async
     func searchDestinationTrigger(_ query: String) async -> [MKMapItem]
 }

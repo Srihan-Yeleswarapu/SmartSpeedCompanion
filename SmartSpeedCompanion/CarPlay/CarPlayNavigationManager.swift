@@ -14,6 +14,8 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     private let viewModel: DriveViewModel
     private let mapTemplate: CPMapTemplate
     private var navigationSession: CPNavigationSession?
+    private var currentTrip: CPTrip?
+    private var currentManeuver: CPManeuver?
     
     private let speechSynthesizer = AVSpeechSynthesizer()
     private var isMuted: Bool = false
@@ -46,7 +48,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         }
     }
     
-    public func endNavigationTrigger() {
+    public func endNavigationTrigger() async {
         endNavigation()
     }
     
@@ -95,8 +97,13 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         let estimatedTime = route.expectedTravelTime
         viewModel.eta = Date().addingTimeInterval(estimatedTime)
         
-        let routeChoice = CPRouteChoice(summaryVariants: ["Fastest Route"], additionalInformationVariants: [], selectionTraits: .fastest)
+        let routeChoice = CPRouteChoice(
+            summaryVariants: ["Fastest Route"],
+            additionalInformationVariants: [],
+            selectionSummaryVariants: ["Fastest"]
+        )
         let trip = CPTrip(origin: MKMapItem.forCurrentLocation(), destination: destination, routeChoices: [routeChoice])
+        self.currentTrip = trip
         
         navigationSession = mapTemplate.startNavigationSession(for: trip)
         
@@ -111,6 +118,8 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     public func endNavigation() {
         navigationSession?.finishTrip()
         navigationSession = nil
+        currentTrip = nil
+        currentManeuver = nil
         locationCancellable?.cancel()
         
         viewModel.isNavigating = false
@@ -132,7 +141,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     }
     
     private func evaluateNavigationProgress(at location: CLLocation) {
-        guard let currentRoute = viewModel.currentRoute else { return }
+        guard let currentRoute = viewModel.currentRoute, let session = navigationSession else { return }
         
         // 1. Check distance to next turn (step)
         if currentStepIndex < currentSteps.count {
@@ -158,19 +167,14 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
             }
         }
         
-        // 2. Reroute check (deviation > 80m from polyline points roughly)
-        // A robust mathematical point-to-line representation is needed for production, but as a simulated implementation:
-        // We'll calculate straight-line to destination vs expected distance to determine massive deviations.
-        
         // Update CarPlay HUD Estimates
-        let remainingDistance = Measurement(value: viewModel.distanceToNextTurn, unit: UnitLength.meters)
         let totalDistance = Measurement(value: currentRoute.distance - currentRoute.distance(to: currentStepIndex), unit: UnitLength.meters)
         let timeRemaining = currentRoute.expectedTravelTime * (totalDistance.value / currentRoute.distance)
-        
         let travelEstimates = CPTravelEstimates(distanceRemaining: totalDistance, timeRemaining: timeRemaining)
-        if let session = navigationSession {
-            // CPTrip requires the trip again.
-            let trip = CPTrip(origin: MKMapItem.forCurrentLocation(), destination: viewModel.destination!, routeChoices: [])
+        
+        if let maneuver = currentManeuver {
+            session.updateEstimates(travelEstimates, for: maneuver)
+        } else if let trip = currentTrip {
             session.updateEstimates(travelEstimates, for: trip)
         }
     }
@@ -188,6 +192,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         let distanceMeasure = Measurement(value: maneuver.distance, unit: UnitLength.meters)
         cpManeuver.initialTravelEstimates = CPTravelEstimates(distanceRemaining: distanceMeasure, timeRemaining: 0) // Approximation
         
+        self.currentManeuver = cpManeuver
         navigationSession?.upcomingManeuvers = [cpManeuver]
         
         if maneuver.distance > 0 {

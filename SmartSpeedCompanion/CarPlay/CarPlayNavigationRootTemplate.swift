@@ -126,6 +126,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         interfaceController?.pushTemplate(searchTemplate, animated: true, completion: nil)
     }
     
+    @preconcurrency
     public func searchTemplate(_ searchTemplate: CPSearchTemplate, updatedSearchText searchText: String, completionHandler: @escaping ([CPListItem]) -> Void) {
         Task {
             let results = await navigationManager.searchDestinationTrigger(searchText)
