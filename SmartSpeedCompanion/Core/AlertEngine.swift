@@ -42,8 +42,9 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     deinit {
         // Stop audio engine if it's running
-        Task { [weak self] @MainActor in
-            self?.audioEngine.stop()
+        let engine = audioEngine
+        Task { @MainActor in
+            engine.stop()
         }
         NotificationCenter.default.removeObserver(self)
     }

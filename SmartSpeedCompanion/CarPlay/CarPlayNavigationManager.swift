@@ -174,8 +174,6 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         
         if let maneuver = currentManeuver {
             session.updateEstimates(travelEstimates, for: maneuver)
-        } else if let trip = currentTrip {
-            session.updateEstimates(travelEstimates, for: trip)
         }
     }
     

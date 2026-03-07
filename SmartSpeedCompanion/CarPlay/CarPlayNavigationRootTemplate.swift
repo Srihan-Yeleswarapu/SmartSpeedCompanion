@@ -107,7 +107,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
     }
 
     private func presentAlert(speed: Double, limit: Int) {
-        let overAmount = Int(speed) - limit
+        _ = Int(speed) - limit
         let action = CPAlertAction(title: "Got It", style: .cancel) { [weak self] _ in
             self?.isAlertPresented = false
         }

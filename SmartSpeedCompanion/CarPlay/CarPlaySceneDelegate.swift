@@ -39,7 +39,9 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
             vm.endSession()
         }
         if vm.isNavigating {
-            vm.endNavigation()
+            Task {
+                await vm.endNavigation()
+            }
         }
         
         self.interfaceController = nil
