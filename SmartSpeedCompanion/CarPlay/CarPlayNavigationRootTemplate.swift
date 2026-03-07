@@ -149,4 +149,10 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
             }
         }
     }
+
+    public func searchTemplate(_ searchTemplate: CPSearchTemplate, selectedResult item: CPListItem, completionHandler: @escaping () -> Void) {
+        // If the item.handler is set, it will be called automatically by CarPlay.
+        // We implement this to satisfy protocol requirements.
+        completionHandler()
+    }
 }
