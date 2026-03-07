@@ -12,11 +12,10 @@ public final class SpeedEngine: ObservableObject {
     
     @AppStorage("userBuffer") public var userBuffer: Int = 5 // 0 to 15 mph
     
-    private let limitProvider: SpeedLimitProviding
+    private let speedLimitService = SmartSpeedLimitService.shared
     private var cancellables = Set<AnyCancellable>()
     
-    public init(locationManager: LocationManager, limitProvider: SpeedLimitProviding = PrototypeSpeedLimitProvider()) {
-        self.limitProvider = limitProvider
+    public init(locationManager: LocationManager) {
         
         locationManager.$latestLocation
             .compactMap { $0 }
@@ -31,17 +30,20 @@ public final class SpeedEngine: ObservableObject {
         // Convert m/s to mph: max(0, speed * 2.23694)
         let currentSpeed = max(0, location.speed * 2.23694)
         self.speed = currentSpeed
-        let currentLimit = limitProvider.estimateLimit(for: currentSpeed)
-        self.limit = currentLimit
         
-        let threshold = Double(currentLimit + userBuffer)
-        
-        if currentSpeed > threshold {
-            self.status = .over
-        } else if currentSpeed > (threshold - 2.0) {
-            self.status = .warning
-        } else {
-            self.status = .safe
+        Task { @MainActor in
+            let currentLimit = await speedLimitService.updateSpeedLimit(at: location.coordinate, currentSpeedMph: currentSpeed)
+            self.limit = currentLimit
+            
+            let threshold = Double(currentLimit + self.userBuffer)
+            
+            if currentSpeed > threshold {
+                self.status = .over
+            } else if currentSpeed > (threshold - 2.0) {
+                self.status = .warning
+            } else {
+                self.status = .safe
+            }
         }
     }
 }

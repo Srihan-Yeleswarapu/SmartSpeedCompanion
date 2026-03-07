@@ -1,10 +1,14 @@
+// CarPlaySceneDelegate.swift
+// CarPlay is the PRIMARY interface for Smart Speed Companion.
+// The entire driving experience lives here.
+
 import CarPlay
 import UIKit
 import Combine
 
 class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
     var interfaceController: CPInterfaceController?
-    var drivingTemplate: CarPlaySpeedTemplate?
+    var navigationRoot: CarPlayNavigationRootTemplate?
     private var cancellables = Set<AnyCancellable>()
     
     func templateApplicationScene(
@@ -15,42 +19,30 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
         
         // Pass shared ViewModel to CarPlay
         let vm = AppDelegate.sharedDriveViewModel
-        drivingTemplate = CarPlaySpeedTemplate(interfaceController: interfaceController, viewModel: vm)
         
-        // Root Template
-        guard let speedTemplate = drivingTemplate?.mapTemplate else { return }
-        interfaceController.setRootTemplate(speedTemplate, animated: true)
+        // Configure Primary Root Layout
+        navigationRoot = CarPlayNavigationRootTemplate(interfaceController: interfaceController, viewModel: vm)
         
-        // Observe Alert State
-        vm.$status
-            .receive(on: RunLoop.main)
-            .sink { [weak self] status in
-                if status == .over && vm.alertActive {
-                    self?.presentOverspeedAlert()
-                }
-            }
-            .store(in: &cancellables)
-    }
-    
-    private func presentOverspeedAlert() {
-        guard interfaceController?.presentedTemplate == nil else { return }
+        guard let speedMapTemplate = navigationRoot?.mapTemplate else { return }
         
-        let action = CPAlertAction(title: "I'm Aware", style: .default) { [weak self] _ in
-            self?.interfaceController?.dismissTemplate(animated: true, completion: nil)
-        }
-        
-        let alert = CPAlertTemplate(
-            titleVariants: ["Speed Limit Exceeded"],
-            actions: [action]
-        )
-        interfaceController?.presentTemplate(alert, animated: true, completion: nil)
+        // Establish as primary
+        interfaceController.setRootTemplate(speedMapTemplate, animated: true, completion: nil)
     }
     
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
         didDisconnectInterfaceController interfaceController: CPInterfaceController
     ) {
+        // Handle Disconnect logic (e.g., stop nav, pausing recorders)
+        let vm = AppDelegate.sharedDriveViewModel
+        if vm.isRecording {
+            vm.endSession()
+        }
+        if vm.isNavigating {
+            vm.endNavigation()
+        }
+        
         self.interfaceController = nil
-        self.drivingTemplate = nil
+        self.navigationRoot = nil
     }
 }

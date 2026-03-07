@@ -1,87 +1,111 @@
-// Path: Views/Drive/DriveRootView.swift
 import SwiftUI
 
 public struct DriveRootView: View {
     @Environment(\.horizontalSizeClass) var sizeClass
     @EnvironmentObject var viewModel: DriveViewModel
     
+    @State private var selectedTab = 0
+    
     public init() {}
     
     public var body: some View {
-        NavigationStack {
-            ZStack {
-                Color(hex: "#040510").ignoresSafeArea()
-                
-                // Grid Background Overlay
-                Canvas { context, size in
-                    let gridColor = Color(red: 0, green: 212/255, blue: 255/255, opacity: 0.025)
-                    let step: CGFloat = 48
-                    
-                    for x in stride(from: 0, through: size.width, by: step) {
-                        var path = Path()
-                        path.move(to: CGPoint(x: x, y: 0))
-                        path.addLine(to: CGPoint(x: x, y: size.height))
-                        context.stroke(path, with: .color(gridColor), lineWidth: 1)
-                    }
-                    
-                    for y in stride(from: 0, through: size.height, by: step) {
-                        var path = Path()
-                        path.move(to: CGPoint(x: 0, y: y))
-                        path.addLine(to: CGPoint(x: size.width, y: y))
-                        context.stroke(path, with: .color(gridColor), lineWidth: 1)
-                    }
+        TabView(selection: $selectedTab) {
+            // Tab 1: Map + Speed HUD (Companion Mode)
+            CompanionDriveView()
+                .tabItem {
+                    Image(systemName: "map.fill")
+                    Text("MAP")
                 }
-                .ignoresSafeArea()
-                
-                if sizeClass == .regular {
-                    // iPad HStack Layout
-                    HStack(spacing: 20) {
-                        VStack(spacing: 20) {
-                            SpeedGaugeView()
-                                .frame(height: 300)
-                            SpeedDisplayView()
-                            BufferSliderView(buffer: Binding(
-                                get: { Double(viewModel.speedEngine.userBuffer) },
-                                set: { viewModel.speedEngine.userBuffer = Int($0) }
-                            ))
-                            Spacer()
-                        }
-                        .frame(maxWidth: .infinity)
-                        
-                        VStack(spacing: 20) {
-                            LiveMapView()
-                                .cornerRadius(16)
-                            SessionControlsView()
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .padding()
-                } else {
-                    // iPhone VStack Layout
-                    VStack(spacing: 16) {
-                        SpeedGaugeView()
-                            .frame(height: 240)
-                            .padding(.top, 20)
-                        
-                        SpeedDisplayView()
-                            .padding(.horizontal)
-                        
-                        BufferSliderView(buffer: Binding(
-                            get: { Double(viewModel.speedEngine.userBuffer) },
-                            set: { viewModel.speedEngine.userBuffer = Int($0) }
-                        ))
-                            .padding(.horizontal)
-                        
-                        LiveMapView()
-                            .cornerRadius(16)
-                            .padding(.horizontal)
-                        
-                        SessionControlsView()
-                            .padding(.horizontal)
-                            .padding(.bottom, 20)
-                    }
+                .tag(0)
+            
+            // Tab 2: Analytics
+            AnalyticsDashboardView()
+                .tabItem {
+                    Image(systemName: "chart.bar.fill")
+                    Text("ANALYTICS")
                 }
+                .tag(1)
+            
+            // Tab 3: Settings
+            SettingsView()
+                .tabItem {
+                    Image(systemName: "gearshape.fill")
+                    Text("SETTINGS")
+                }
+                .tag(2)
+        }
+        .tint(DesignSystem.cyan)
+        .onAppear {
+            let appearance = UITabBarAppearance()
+            appearance.configureWithOpaqueBackground()
+            appearance.backgroundColor = UIColor(DesignSystem.bgCard)
+            
+            UITabBar.appearance().standardAppearance = appearance
+            if #available(iOS 15.0, *) {
+                UITabBar.appearance().scrollEdgeAppearance = appearance
             }
+        }
+    }
+}
+
+fileprivate struct CompanionDriveView: View {
+    @EnvironmentObject var viewModel: DriveViewModel
+    
+    var body: some View {
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                // Top 75% Map
+                LiveMapView()
+                    .frame(height: geo.size.height * 0.75)
+                
+                // Bottom 25% Speed HUD
+                HStack(alignment: .center, spacing: 16) {
+                    SpeedGaugeView()
+                        .frame(width: 80, height: 80)
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(Int(viewModel.speed))")
+                            .font(DesignSystem.displayFont)
+                            .scaleEffect(0.6, anchor: .leading)
+                            .frame(height: 36)
+                            .foregroundColor(.white)
+                        
+                        Text("MPH")
+                            .font(.caption.bold())
+                            .foregroundColor(.gray)
+                    }
+                    
+                    Spacer()
+                    
+                    VStack(alignment: .trailing, spacing: 8) {
+                        HStack {
+                            Text("LIMIT \(viewModel.limit)")
+                                .font(.caption.bold())
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Capsule().stroke(Color.white.opacity(0.3), lineWidth: 1))
+                        }
+                        
+                        Circle()
+                            .fill(statusColor(viewModel.status))
+                            .frame(width: 16, height: 16)
+                            .shadow(color: statusColor(viewModel.status).opacity(0.5), radius: 4)
+                    }
+                }
+                .padding()
+                .frame(height: geo.size.height * 0.25)
+                .background(DesignSystem.bgPanel)
+            }
+        }
+        .ignoresSafeArea(.container, edges: .top)
+    }
+    
+    private func statusColor(_ status: SpeedStatus) -> Color {
+        switch status {
+        case .over: return DesignSystem.alertRed
+        case .warning: return DesignSystem.amber
+        case .safe: return DesignSystem.neonGreen
         }
     }
 }
