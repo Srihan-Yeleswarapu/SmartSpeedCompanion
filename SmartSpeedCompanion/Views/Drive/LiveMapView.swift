@@ -1,43 +1,61 @@
 import SwiftUI
 import MapKit
-import Combine
 
 public struct LiveMapView: UIViewRepresentable {
     @EnvironmentObject var viewModel: DriveViewModel
+    
+    public init() {}
     
     public func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
         map.delegate = context.coordinator
         map.overrideUserInterfaceStyle = .dark
-        map.mapType = .standard // Changed to standard for clearer navigation polylines
+        map.mapType = .standard
         map.showsUserLocation = true
-        map.userTrackingMode = .followWithHeading
+        
+        // Settings requested
         map.showsCompass = true
         map.showsScale = true
         
-        // Add Recalculating overlay view hooks via coordinator
         return map
     }
     
     public func updateUIView(_ uiView: MKMapView, context: Context) {
+        // Update tracking mode
+        if viewModel.isRecording || viewModel.isNavigating {
+            if uiView.userTrackingMode != .followWithHeading {
+                uiView.setUserTrackingMode(.followWithHeading, animated: true)
+            }
+            if let cam = uiView.camera.copy() as? MKMapCamera {
+                cam.altitude = 500 // ~zoom level for driving
+                uiView.setCamera(cam, animated: true)
+            }
+        } else {
+            if uiView.userTrackingMode != .follow {
+                uiView.setUserTrackingMode(.follow, animated: true)
+            }
+        }
+        
+        // Clear all previous non-user overlays and annotations
         uiView.removeOverlays(uiView.overlays)
         uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
         
-        // 1. Render active navigation route
+        // Display Route
         if viewModel.isNavigating, let route = viewModel.currentRoute {
             let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
-            polyline.statusColor = UIColor(DesignSystem.cyan) // Simulated safe color
+            polyline.statusColor = UIColor(red: 0.0, green: 0.83, blue: 1.0, alpha: 1.0) // #00D4FF setup
             uiView.addOverlay(polyline)
             
-            // Show destination pin
             if let dest = viewModel.destination {
                 let annotation = MKPointAnnotation()
                 annotation.coordinate = dest.placemark.coordinate
                 annotation.title = dest.name
                 uiView.addAnnotation(annotation)
             }
-        } else if let session = viewModel.sessionRecorder.currentSession {
-            // 2. Render standard drive session history line
+        }
+        
+        // Display Retroactive History Line
+        if let session = viewModel.sessionRecorder.currentSession, !session.readings.isEmpty {
             var safeCoords: [CLLocationCoordinate2D] = []
             var overCoords: [CLLocationCoordinate2D] = []
             
@@ -46,7 +64,7 @@ public struct LiveMapView: UIViewRepresentable {
                 if reading.overLimit {
                     if !safeCoords.isEmpty {
                         let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                        polyline.statusColor = UIColor(DesignSystem.neonGreen) // Safe
+                        polyline.statusColor = UIColor(red: 0.0, green: 0.83, blue: 1.0, alpha: 1.0) // Safe Cyan
                         uiView.addOverlay(polyline)
                         safeCoords.removeAll()
                     }
@@ -54,7 +72,7 @@ public struct LiveMapView: UIViewRepresentable {
                 } else {
                     if !overCoords.isEmpty {
                         let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
-                        polyline.statusColor = UIColor(DesignSystem.alertRed) // Over
+                        polyline.statusColor = UIColor(red: 1.0, green: 0.24, blue: 0.44, alpha: 1.0) // Over Red
                         uiView.addOverlay(polyline)
                         overCoords.removeAll()
                     }
@@ -63,20 +81,14 @@ public struct LiveMapView: UIViewRepresentable {
             }
             if !safeCoords.isEmpty {
                 let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                polyline.statusColor = UIColor(DesignSystem.neonGreen)
+                polyline.statusColor = UIColor(red: 0.0, green: 0.83, blue: 1.0, alpha: 1.0)
                 uiView.addOverlay(polyline)
             }
             if !overCoords.isEmpty {
                 let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
-                polyline.statusColor = UIColor(DesignSystem.alertRed)
+                polyline.statusColor = UIColor(red: 1.0, green: 0.24, blue: 0.44, alpha: 1.0)
                 uiView.addOverlay(polyline)
             }
-        }
-        
-        // 3. Render Speed Limit Sign Annotation at current projected path (simulated near location)
-        if let currentLoc = viewModel.locationManager.latestLocation {
-            let sign = SpeedLimitAnnotation(coordinate: currentLoc.coordinate, limit: viewModel.limit, source: viewModel.speedLimitSource)
-            uiView.addAnnotation(sign)
         }
     }
     
@@ -91,24 +103,6 @@ public struct LiveMapView: UIViewRepresentable {
             self.parent = parent
         }
         
-        // Custom Annotations and Line Renderings
-        public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            if annotation is MKUserLocation { return nil } // Use default blue glow or custom car
-            
-            if let signAnnotation = annotation as? SpeedLimitAnnotation {
-                let identifier = "SpeedLimitSign"
-                var view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier)
-                if view == nil {
-                    view = MKAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-                }
-                view?.image = createSpeedSignImage(limit: signAnnotation.limit)
-                view?.centerOffset = CGPoint(x: 30, y: -30) // Offset to not hide car
-                return view
-            }
-            
-            return nil
-        }
-        
         public func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? NavPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
@@ -118,49 +112,9 @@ public struct LiveMapView: UIViewRepresentable {
             }
             return MKOverlayRenderer(overlay: overlay)
         }
-        
-        private func createSpeedSignImage(limit: Int) -> UIImage {
-            let size = CGSize(width: 40, height: 40)
-            let renderer = UIGraphicsImageRenderer(size: size)
-            return renderer.image { ctx in
-                let circleRect = CGRect(x: 2, y: 2, width: 36, height: 36)
-                
-                // White background
-                UIColor.white.setFill()
-                ctx.cgContext.fillEllipse(in: circleRect)
-                
-                // Red Border
-                UIColor.systemRed.setStroke()
-                ctx.cgContext.setLineWidth(4)
-                ctx.cgContext.strokeEllipse(in: circleRect)
-                
-                // Black Text
-                let text = "\(limit)"
-                let font = UIFont.systemFont(ofSize: 18, weight: .bold)
-                let attributes: [NSAttributedString.Key: Any] = [
-                    .font: font,
-                    .foregroundColor: UIColor.black
-                ]
-                let textSize = text.size(withAttributes: attributes)
-                let textRect = CGRect(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2, width: textSize.width, height: textSize.height)
-                text.draw(in: textRect, withAttributes: attributes)
-            }
-        }
     }
 }
 
 class NavPolyline: MKPolyline {
     var statusColor: UIColor = .systemBlue
-}
-
-class SpeedLimitAnnotation: NSObject, MKAnnotation {
-    var coordinate: CLLocationCoordinate2D
-    var limit: Int
-    var source: String
-    
-    init(coordinate: CLLocationCoordinate2D, limit: Int, source: String) {
-        self.coordinate = coordinate
-        self.limit = limit
-        self.source = source
-    }
 }

@@ -1,31 +1,30 @@
 // SpeedLimitService.swift
-// Fetches real speed limit data from OpenStreetMap Overpass API.
-// Falls back to prototype estimation if no data found within 5 seconds.
-
 import Foundation
 import CoreLocation
 import Combine
 
+struct TimeoutError: Error {}
+
 public protocol SpeedLimitProviding {
-    func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async -> Int?
+    func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int
 }
 
-public class OpenStreetMapSpeedLimitService: SpeedLimitProviding {
+public class OpenStreetMapSpeedLimitService {
     private let endpoint = URL(string: "https://overpass-api.de/api/interpreter")!
     private var lastQueryTime: Date = .distantPast
     private var cachedLimit: Int?
-    private var cachedCoordinateString: String = ""
+    private var lastCoordinate: CLLocationCoordinate2D?
     
     public init() {}
     
-    public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async -> Int? {
-        let latStr = String(format: "%.4f", coordinate.latitude)
-        let lonStr = String(format: "%.4f", coordinate.longitude)
-        let coordHash = "\(latStr),\(lonStr)"
-        
-        // Cache for 10 seconds or if coordinate is identical at 4 decimal places (~11m precision)
-        if coordHash == cachedCoordinateString && Date().timeIntervalSince(lastQueryTime) < 10 {
-            return cachedLimit
+    public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int {
+        // Cache invalidation logic
+        if let lastCoord = lastCoordinate, let limit = cachedLimit {
+            let location1 = CLLocation(latitude: lastCoord.latitude, longitude: lastCoord.longitude)
+            let location2 = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            if location1.distance(from: location2) < 25.0 && Date().timeIntervalSince(lastQueryTime) < 10 {
+                return limit
+            }
         }
         
         let query = """
@@ -39,53 +38,52 @@ public class OpenStreetMapSpeedLimitService: SpeedLimitProviding {
         request.httpBody = query.data(using: .utf8)
         request.timeoutInterval = 5.0
         
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("[OSM] Raw response: \(responseString)")
+        }
+        
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return nil
-            }
-            
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let elements = json["elements"] as? [[String: Any]],
                let firstWay = elements.first,
                let tags = firstWay["tags"] as? [String: String],
                let maxSpeedStr = tags["maxspeed"] {
                 
-                let limit = parseMaxSpeed(maxSpeedStr)
-                
-                cachedLimit = limit
-                cachedCoordinateString = coordHash
-                lastQueryTime = Date()
-                
-                return limit
+                if let limit = parseMaxSpeed(maxSpeedStr) {
+                    print("[OSM] Parsed limit: \(limit) from tag: \(maxSpeedStr)")
+                    
+                    cachedLimit = limit
+                    lastCoordinate = coordinate
+                    lastQueryTime = Date()
+                    
+                    return limit
+                }
             }
         } catch {
-            print("OSM Overpass API Error: \(error)")
+            print("[OSM] Parse error: \(error)")
         }
         
-        return nil
+        throw URLError(.cannotParseResponse)
     }
     
     private func parseMaxSpeed(_ speedStr: String) -> Int? {
         let lower = speedStr.lowercased().trimmingCharacters(in: .whitespaces)
-        
-        if lower == "national" || lower == "urban" {
-            return nil
-        }
+        if lower == "national" || lower == "urban" { return nil }
         
         if lower.hasSuffix("mph") {
             let numStr = lower.replacingOccurrences(of: "mph", with: "").trimmingCharacters(in: .whitespaces)
             return Int(numStr)
         } else if lower.hasSuffix("km/h") || lower.hasSuffix("kph") {
             let numStr = lower.replacingOccurrences(of: "km/h", with: "").replacingOccurrences(of: "kph", with: "").trimmingCharacters(in: .whitespaces)
-            if let kph = Double(numStr) {
-                return Int(kph * 0.621371)
-            }
+            if let kph = Double(numStr) { return Int(kph * 0.621371) }
         } else {
-            // Assume plain number is mph per US norms, or just pare it directly
             return Int(lower)
         }
-        
         return nil
     }
 }
@@ -116,11 +114,26 @@ public class SmartSpeedLimitService: ObservableObject {
     private init() {}
     
     public func updateSpeedLimit(at coordinate: CLLocationCoordinate2D, currentSpeedMph: Double) async -> Int {
-        if let limit = await osmService.fetchSpeedLimit(at: coordinate) {
+        do {
+            let limit = try await withThrowingTaskGroup(of: Int.self) { group in
+                group.addTask {
+                    try await self.osmService.fetchSpeedLimit(at: coordinate)
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                    throw TimeoutError()
+                }
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
+            }
+            
             self.currentLimit = limit
             self.dataSource = "OpenStreetMap"
             return limit
-        } else {
+            
+        } catch {
+            print("[OSM] Fetch failed or timed out: \(error), falling back to prototype.")
             let limit = fallbackService.estimateLimit(for: currentSpeedMph)
             self.currentLimit = limit
             self.dataSource = "Estimated"

@@ -32,10 +32,13 @@ public final class SpeedEngine: ObservableObject {
         self.speed = currentSpeed
         
         Task { @MainActor in
-            let currentLimit = await speedLimitService.updateSpeedLimit(at: location.coordinate, currentSpeedMph: currentSpeed)
-            self.limit = currentLimit
+            // Only query OSM/estimate if accuracy is good enough
+            if location.horizontalAccuracy > 0 && location.horizontalAccuracy < 50 {
+                let currentLimit = await speedLimitService.updateSpeedLimit(at: location.coordinate, currentSpeedMph: currentSpeed)
+                self.limit = currentLimit
+            }
             
-            let threshold = Double(currentLimit + self.userBuffer)
+            let threshold = Double(self.limit + self.userBuffer)
             
             if currentSpeed > threshold {
                 self.status = .over
