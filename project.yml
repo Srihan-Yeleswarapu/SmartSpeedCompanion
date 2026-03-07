@@ -24,7 +24,6 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
 
-    # Points to where files ACTUALLY are (confirmed by Gemini audit)
     sources:
       - path: SmartSpeedCompanion/App
       - path: SmartSpeedCompanion/CarPlay
@@ -34,14 +33,16 @@ targets:
       - path: SmartSpeedCompanion/ViewModels
       - path: SmartSpeedCompanion/Views
       - path: SmartSpeedCompanion/Features/iOS26/CrashDetection
-      - path: SmartSpeedCompanion/Features/iOS26/LiveActivities
       - path: SmartSpeedCompanion/Features/iOS26/Siri
       - path: SmartSpeedCompanion/Features/iOS26/StandBy
+
+    # NOTE: LiveActivities and Widgets folders are excluded from main
+    # app sources for now — they compile as separate extension targets
+    # which are disabled below until Xcode 16 runner is available.
 
     resources:
       - path: SmartSpeedCompanion/Resources
 
-    # Fixed: now points to where entitlements ACTUALLY is
     entitlements:
       path: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
 
@@ -87,55 +88,15 @@ targets:
         CODE_SIGN_ENTITLEMENTS: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
 
-    dependencies:
-      - target: SpeedWidget
-      - target: SpeedLiveActivity
-
-  # ── WidgetKit Extension ──────────────────────────────────────────
-  # Fixed: points to actual location inside Features/iOS26/Widgets
-  SpeedWidget:
-    type: app-extension
-    platform: iOS
-    deploymentTarget: "17.0"
-    sources:
-      - path: SmartSpeedCompanion/Features/iOS26/Widgets
-    info:
-      path: SmartSpeedCompanion/Features/iOS26/Widgets/SpeedWidget-Info.plist
-      properties:
-        CFBundleIdentifier: com.smartspeedcompanion.app.widget
-        CFBundleDisplayName: Speed Widget
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.widgetkit-extension
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app.widget
-
-  # ── Live Activity Extension ──────────────────────────────────────
-  # Fixed: points to actual location inside Features/iOS26/LiveActivities
-  SpeedLiveActivity:
-    type: app-extension
-    platform: iOS
-    deploymentTarget: "16.1"
-    sources:
-      - path: SmartSpeedCompanion/Features/iOS26/LiveActivities
-    info:
-      path: SmartSpeedCompanion/Features/iOS26/LiveActivities/LiveActivity-Info.plist
-      properties:
-        CFBundleIdentifier: com.smartspeedcompanion.app.liveactivity
-        CFBundleDisplayName: Speed Live Activity
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.usernotifications.content-extension
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app.liveactivity
+    # SpeedWidget and SpeedLiveActivity removed from dependencies
+    # until iOS 26 / Xcode 16 runner is available on GitHub Actions
+    dependencies: []
 
 schemes:
   SmartSpeedCompanion:
     build:
       targets:
         SmartSpeedCompanion: all
-        SpeedWidget: all
-        SpeedLiveActivity: all
     run:
       config: Debug
     archive:
