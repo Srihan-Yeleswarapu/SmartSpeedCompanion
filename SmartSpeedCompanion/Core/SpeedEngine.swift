@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CoreLocation
 import SwiftUI // For @AppStorage
 
 /// Engine responsible for observing location, determining speed, buffer, and calculating status.
