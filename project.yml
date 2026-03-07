@@ -1,0 +1,146 @@
+name: SmartSpeedCompanion
+options:
+  bundleIdPrefix: com.smartspeedcompanion
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""          # GitHub Actions fills this in via secrets
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_BITCODE: NO
+    DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+
+targets:
+
+  # ── Main iPhone App ──────────────────────────────────────────────
+  SmartSpeedCompanion:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: SmartSpeedCompanion
+        excludes:
+          - "**/*.md"
+    resources:
+      - path: SmartSpeedCompanion/Resources
+    entitlements:
+      path: SmartSpeedCompanion/Configuration/SmartSpeedCompanion.entitlements
+    info:
+      path: SmartSpeedCompanion/Resources/Info.plist
+      properties:
+        CFBundleName: Smart Speed
+        CFBundleDisplayName: Smart Speed Companion
+        CFBundleIdentifier: com.smartspeedcompanion.app
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0.0"
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
+            CPTemplateApplicationSceneSessionRoleApplication:
+              - UISceneConfigurationName: CarPlay Configuration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
+        UIBackgroundModes:
+          - location
+          - audio
+          - fetch
+          - remote-notification
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Smart Speed Companion needs your location to monitor your speed in real time."
+        NSLocationWhenInUseUsageDescription: "Smart Speed Companion needs your location to monitor your speed."
+        NSMotionUsageDescription: "Used to detect sudden deceleration for crash detection."
+        NSSiriUsageDescription: "Use Siri to start and stop your drive sessions."
+        CPSupportedTemplates:
+          - CPMapTemplate
+          - CPAlertTemplate
+        UIRequiredDeviceCapabilities:
+          - location-services
+          - gps
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app
+        INFOPLIST_FILE: SmartSpeedCompanion/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: SmartSpeedCompanion/Configuration/SmartSpeedCompanion.entitlements
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+    dependencies:
+      - target: SpeedWidget
+      - target: SpeedLiveActivity
+    preBuildScripts:
+      - script: |
+          # Embed custom fonts if present
+          if [ -d "$SRCROOT/SmartSpeedCompanion/Resources/Fonts" ]; then
+            echo "Fonts directory found"
+          fi
+        name: Check Fonts
+
+  # ── WidgetKit Extension ──────────────────────────────────────────
+  SpeedWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: SpeedWidget
+    entitlements:
+      path: SpeedWidget/SpeedWidget.entitlements
+    info:
+      path: SpeedWidget/Info.plist
+      properties:
+        CFBundleIdentifier: com.smartspeedcompanion.app.widget
+        CFBundleDisplayName: Speed Widget
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app.widget
+        INFOPLIST_FILE: SpeedWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: SpeedWidget/SpeedWidget.entitlements
+
+  # ── Live Activity Extension ──────────────────────────────────────
+  SpeedLiveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.1"
+    sources:
+      - path: SpeedLiveActivity
+    entitlements:
+      path: SpeedLiveActivity/SpeedLiveActivity.entitlements
+    info:
+      path: SpeedLiveActivity/Info.plist
+      properties:
+        CFBundleIdentifier: com.smartspeedcompanion.app.liveactivity
+        CFBundleDisplayName: Speed Live Activity
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.content-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app.liveactivity
+        INFOPLIST_FILE: SpeedLiveActivity/Info.plist
+        CODE_SIGN_ENTITLEMENTS: SpeedLiveActivity/SpeedLiveActivity.entitlements
+
+schemes:
+  SmartSpeedCompanion:
+    build:
+      targets:
+        SmartSpeedCompanion: all
+        SpeedWidget: all
+        SpeedLiveActivity: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

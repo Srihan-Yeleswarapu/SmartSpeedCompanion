@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>Smart Speed Companion needs constant background location access to monitor speed and provide CarPlay navigation alerts even when the app is backgrounded.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>We need your location to show current speed in the dashboard.</string>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>location</string>
+        <string>audio</string>
+        <string>fetch</string>
+        <string>remote-notification</string>
+    </array>
+    <key>CPSupportedTemplates</key>
+    <array>
+        <string>CPMapTemplate</string>
+        <string>CPAlertTemplate</string>
+    </array>
+    <key>NSMotionUsageDescription</key>
+    <string>We use motion data for advanced crash detection during drive sessions.</string>
+    <key>NSSiriUsageDescription</key>
+    <string>Siri integration allows you to start and end your drives via voice controls.</string>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <true/>
+        <key>UISceneConfigurations</key>
+        <dict>
+            <key>CPTemplateApplicationSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneClassName</key>
+                    <string>CPTemplateApplicationScene</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+                </dict>
+            </array>
+            <key>UIWindowSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneConfigurationName</key>
+                    <string>Default Configuration</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+                </dict>
+            </array>
+        </dict>
+    </dict>
+</dict>
+</plist>
