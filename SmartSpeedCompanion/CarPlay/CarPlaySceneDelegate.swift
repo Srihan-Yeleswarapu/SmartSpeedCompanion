@@ -15,7 +15,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
         
         // Pass shared ViewModel to CarPlay
         let vm = AppDelegate.sharedDriveViewModel
-        drivingTemplate = CarPlaySpeedTemplate(viewModel: vm)
+        drivingTemplate = CarPlaySpeedTemplate(interfaceController: interfaceController, viewModel: vm)
         
         // Root Template
         guard let speedTemplate = drivingTemplate?.mapTemplate else { return }
@@ -36,14 +36,14 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
         guard interfaceController?.presentedTemplate == nil else { return }
         
         let action = CPAlertAction(title: "I'm Aware", style: .default) { [weak self] _ in
-            self?.interfaceController?.dismissTemplate(animated: true)
+            self?.interfaceController?.dismissTemplate(animated: true, completion: nil)
         }
         
         let alert = CPAlertTemplate(
             titleVariants: ["Speed Limit Exceeded"],
             actions: [action]
         )
-        interfaceController?.presentTemplate(alert, animated: true)
+        interfaceController?.presentTemplate(alert, animated: true, completion: nil)
     }
     
     func templateApplicationScene(

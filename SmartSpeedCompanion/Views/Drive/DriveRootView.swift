@@ -40,7 +40,10 @@ public struct DriveRootView: View {
                             SpeedGaugeView()
                                 .frame(height: 300)
                             SpeedDisplayView()
-                            BufferSliderView()
+                            BufferSliderView(buffer: Binding(
+                                get: { Double(viewModel.speedEngine.userBuffer) },
+                                set: { viewModel.speedEngine.userBuffer = Int($0) }
+                            ))
                             Spacer()
                         }
                         .frame(maxWidth: .infinity)
@@ -63,7 +66,10 @@ public struct DriveRootView: View {
                         SpeedDisplayView()
                             .padding(.horizontal)
                         
-                        BufferSliderView()
+                        BufferSliderView(buffer: Binding(
+                            get: { Double(viewModel.speedEngine.userBuffer) },
+                            set: { viewModel.speedEngine.userBuffer = Int($0) }
+                        ))
                             .padding(.horizontal)
                         
                         LiveMapView()

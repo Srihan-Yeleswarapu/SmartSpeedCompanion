@@ -3,6 +3,7 @@ import Foundation
 import Combine
 import AVFoundation
 
+@MainActor
 public protocol AlertEngineProtocol {
     var consecutiveSeconds: Int { get }
     var audioAlertActive: Bool { get }
@@ -40,7 +41,10 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     }
     
     deinit {
-        audioEngine.stop()
+        // Stop audio engine if it's running
+        Task { @MainActor in
+            audioEngine.stop()
+        }
         NotificationCenter.default.removeObserver(self)
     }
     
