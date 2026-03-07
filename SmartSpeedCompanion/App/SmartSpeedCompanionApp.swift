@@ -14,6 +14,7 @@ struct SmartSpeedCompanionApp: App {
         WindowGroup {
             DriveRootView()
                 .environmentObject(driveViewModel)
+                .preferredColorScheme(.dark)
                 // We use an explicit container for SwiftData persistence
                 .modelContainer(for: [DriveSession.self, SpeedReading.self])
         }

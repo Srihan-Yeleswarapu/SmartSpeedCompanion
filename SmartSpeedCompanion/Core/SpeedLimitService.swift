@@ -27,6 +27,8 @@ public class OpenStreetMapSpeedLimitService {
             }
         }
         
+        print("[OSM] querying at \(coordinate.latitude), \(coordinate.longitude)")
+        
         let query = """
         [out:json][timeout:5];
         way(around:25,\(coordinate.latitude),\(coordinate.longitude))[maxspeed];
