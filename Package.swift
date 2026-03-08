@@ -10,11 +10,15 @@ let package = Package(
         .library(name: "SmartSpeedCompanion", targets: ["SmartSpeedCompanion"]),
     ],
     dependencies: [
-        // Add dependencies here if needed, e.g. .package(url: "...", from: "1.0.0")
+        .package(url: "https://github.com/firebase/firebase-ios-sdk.git", from: "10.0.0")
     ],
     targets: [
         .target(
             name: "SmartSpeedCompanion",
+            dependencies: [
+                .product(name: "FirebaseCore", package: "firebase-ios-sdk"),
+                .product(name: "FirebaseDatabase", package: "firebase-ios-sdk")
+            ],
             path: "SmartSpeedCompanion",
             exclude: ["Info.plist", "Resources/Entitlements/SmartSpeedCompanion.entitlements"]
         ),
