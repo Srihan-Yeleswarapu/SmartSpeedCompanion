@@ -97,9 +97,9 @@ targets:
     # SpeedWidget and SpeedLiveActivity removed from dependencies
     # until iOS 26 / Xcode 16 runner is available on GitHub Actions
     dependencies:
-      - package: firebase-ios-sdk
+      - package: Firebase
         product: FirebaseCore
-      - package: firebase-ios-sdk
+      - package: Firebase
         product: FirebaseDatabase
 
 schemes:
@@ -113,6 +113,6 @@ schemes:
       config: Release
 
 packages:
-  firebase-ios-sdk:
+  Firebase:
     url: https://github.com/firebase/firebase-ios-sdk.git
-    from: "10.0.0"
+    from: "10.5.0"
