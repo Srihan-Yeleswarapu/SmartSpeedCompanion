@@ -61,9 +61,20 @@ public final class DriveViewModel: ObservableObject {
         rec.$isRecording.assign(to: &$isRecording)
         
         // Bind Data Source
-        SmartSpeedLimitService.shared.$dataSource
+        CrowdsourceSpeedLimitService.shared.$dataSource
             .receive(on: RunLoop.main)
             .assign(to: &$speedLimitSource)
+            
+        // Bind Crowdsource Speed Limit Subscription
+        CrowdsourceSpeedLimitService.shared.$currentLimit
+            .receive(on: RunLoop.main)
+            .sink { [weak self] limit in
+                if let limit = limit {
+                    self?.limit = limit
+                    self?.speedLimitSource = CrowdsourceSpeedLimitService.shared.dataSource
+                }
+            }
+            .store(in: &cancellables)
         
         // Request Location Authorization
         locManager.requestAuthorization()

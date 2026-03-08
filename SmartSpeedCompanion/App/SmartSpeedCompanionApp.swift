@@ -2,10 +2,15 @@ import SwiftUI
 import SwiftData
 import ActivityKit
 import WidgetKit
+import FirebaseCore
 
 @main
 struct SmartSpeedCompanionApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    
+    init() {
+        FirebaseApp.configure()
+    }
     
     // Global shared ViewModel
     @StateObject private var driveViewModel = DriveViewModel()

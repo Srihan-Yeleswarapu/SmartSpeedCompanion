@@ -13,6 +13,7 @@ import Combine
 
 struct MapWithHUDView: View {
     @EnvironmentObject var vm: DriveViewModel
+    @StateObject private var crowdsourceService = CrowdsourceSpeedLimitService.shared
 
     var body: some View {
         GeometryReader { geo in
@@ -40,7 +41,15 @@ struct MapWithHUDView: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, geo.safeAreaInsets.bottom + 72) // 72 = tab bar height
                 }
+                
+                if crowdsourceService.showCrowdsourcePrompt {
+                    CrowdsourceOverlayView()
+                        .environmentObject(crowdsourceService)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .zIndex(10)
+                }
             }
+            .animation(.spring(response: 0.3), value: crowdsourceService.showCrowdsourcePrompt)
         }
         .background(Color(hex: "#040510"))
     }

@@ -44,6 +44,12 @@ extension LocationManager: CLLocationManagerDelegate {
         DispatchQueue.main.async {
             self.latestLocation = location
         }
+        
+        Task { @MainActor in
+            if location.horizontalAccuracy > 0 && location.horizontalAccuracy < 50 {
+                CrowdsourceSpeedLimitService.shared.onLocationUpdate(location.coordinate)
+            }
+        }
     }
     
     public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
