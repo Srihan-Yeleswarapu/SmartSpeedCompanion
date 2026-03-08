@@ -34,15 +34,7 @@ jobs:
     - name: Verify project exists
       run: ls -la *.xcodeproj
 
-    - name: Resolve Swift Package dependencies
-      run: |
-        xcodebuild \
-          -resolvePackageDependencies \
-          -project SmartSpeedCompanion.xcodeproj \
-          -scheme SmartSpeedCompanion \
-          -clonedSourcePackagesDirPath ./SourcePackages
-
-    - name: Build app
+    - name: Build and archive app
       run: |
         xcodebuild \
           -project SmartSpeedCompanion.xcodeproj \
@@ -50,10 +42,11 @@ jobs:
           -configuration Release \
           -destination "generic/platform=iOS" \
           -archivePath ./SmartSpeedCompanion.xcarchive \
-          -clonedSourcePackagesDirPath ./SourcePackages \
+          -derivedDataPath ./DerivedData \
           CODE_SIGN_IDENTITY="" \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO \
+          -onlyUsePackageVersionsFromResolvedFile NO \
           archive
 
     - name: Package unsigned IPA

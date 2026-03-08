@@ -10,15 +10,12 @@ let package = Package(
         .library(name: "SmartSpeedCompanion", targets: ["SmartSpeedCompanion"]),
     ],
     dependencies: [
-        .package(name: "Firebase", url: "https://github.com/firebase/firebase-ios-sdk.git", from: "10.0.0")
+        // Firebase is managed via project.yml / XcodeGen for the iOS app target.
+        // Do not add SPM dependencies here — this manifest is not used for the app build.
     ],
     targets: [
         .target(
             name: "SmartSpeedCompanion",
-            dependencies: [
-                .product(name: "FirebaseCore", package: "Firebase"),
-                .product(name: "FirebaseDatabase", package: "Firebase")
-            ],
             path: "SmartSpeedCompanion",
             exclude: ["Info.plist", "Resources/Entitlements/SmartSpeedCompanion.entitlements"]
         ),
