@@ -42,6 +42,8 @@ jobs:
           -scheme SmartSpeedCompanion \
           -clonedSourcePackagesDirPath .build
 
+    - name: Clean package cache
+      run: rm -rf .build
 
     - name: Build and archive app
       run: |

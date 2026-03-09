@@ -5,6 +5,11 @@ options:
     iOS: "17.0"
   xcodeVersion: "16.2"
   generateEmptyDirectories: true
+  packageReferences:
+    - package: firebase-ios-sdk
+      url: https://github.com/firebase/firebase-ios-sdk
+      from: "10.29.0"
+
 
 packages:
   firebase-ios-sdk:
@@ -37,7 +42,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app
-        # SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         INFOPLIST_FILE: SmartSpeedCompanion/Configuration/Info.plist
