@@ -35,7 +35,7 @@ jobs:
       run: ls -la *.xcodeproj
 
     - name: Resolve Swift Packages
-      run: xcodebuild -resolvePackageDependencies -workspace SmartSpeedCompanion.xcworkspace -scheme SmartSpeedCompanion
+      run: xcodebuild -resolvePackageDependencies -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion
 
     - name: Build and archive app
       run: |
