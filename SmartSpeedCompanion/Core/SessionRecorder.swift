@@ -8,12 +8,10 @@ public final class SessionRecorder: ObservableObject {
     public var currentSession: DriveSession?
     
     private var modelContext: ModelContext?
-    private let speedEngine: SpeedEngine
     private let locationManager: LocationManager
     private var recordingTimer: Timer?
     
-    public init(speedEngine: SpeedEngine, locationManager: LocationManager) {
-        self.speedEngine = speedEngine
+    public init(locationManager: LocationManager) {
         self.locationManager = locationManager
     }
     
@@ -61,13 +59,21 @@ public final class SessionRecorder: ObservableObject {
     
     private func recordDataPoint() {
         guard let session = currentSession, let location = locationManager.latestLocation else { return }
+        let speed = max(0, location.speed * 2.23694)
+        let limit = SpeedLimitBrain.shared.currentLimit
+        let limitSource = SpeedLimitBrain.shared.limitSource.rawValue
+        
+        let threshold = Double(limit + 5) // MVP 5mph buffer
+        let isOver = speed > threshold
+        
         let reading = SpeedReading(
             timestamp: .now,
             latitude: location.coordinate.latitude,
             longitude: location.coordinate.longitude,
-            speed: speedEngine.speed,
-            speedLimit: speedEngine.limit,
-            overLimit: speedEngine.status == .over
+            speed: speed,
+            speedLimit: limit,
+            overLimit: isOver,
+            limitSource: limitSource
         )
         session.readings.append(reading)
     }

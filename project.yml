@@ -5,10 +5,7 @@ options:
     iOS: "17.0"
   xcodeVersion: "16.2"
   generateEmptyDirectories: true
-  packageReferences:
-    - package: firebase-ios-sdk
-      url: https://github.com/firebase/firebase-ios-sdk
-      from: "10.29.0"
+ 
 
 packages:
   firebase-ios-sdk:
@@ -30,6 +27,7 @@ targets:
     resources:
       - path: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
       - path: SmartSpeedCompanion/Configuration/Info.plist
+      - path: SmartSpeedCompanion/Configuration/Config.plist
       - path: SmartSpeedCompanion/GoogleService-Info.plist
 
     dependencies:

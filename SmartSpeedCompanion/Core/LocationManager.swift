@@ -47,7 +47,7 @@ extension LocationManager: CLLocationManagerDelegate {
         
         Task { @MainActor in
             if location.horizontalAccuracy > 0 && location.horizontalAccuracy < 50 {
-                CrowdsourceSpeedLimitService.shared.onLocationUpdate(location.coordinate)
+                await SpeedLimitBrain.shared.onLocationUpdate(location)
             }
         }
     }

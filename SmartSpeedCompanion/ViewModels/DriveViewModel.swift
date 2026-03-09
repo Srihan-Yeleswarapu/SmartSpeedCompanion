@@ -1,90 +1,166 @@
+// Path: ViewModels/DriveViewModel.swift
 import Foundation
 import Combine
 import SwiftData
 import MapKit
 
-/// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
 public final class DriveViewModel: ObservableObject {
-    public let locationManager: LocationManager
-    public let speedEngine: SpeedEngine
-    public let alertEngine: AlertEngine
-    public let sessionRecorder: SessionRecorder
-    
-    // Core driving state
+    // Speed
     @Published public var speed: Double = 0.0
     @Published public var limit: Int = 25
     @Published public var status: SpeedStatus = .safe
+    @Published public var limitSource: LimitSource = .estimating
+
+    // Session
     @Published public var isRecording: Bool = false
     @Published public var sessionDuration: TimeInterval = 0
-    @Published public var alertActive: Bool = false
-    @Published public var speedLimitSource: String = "Estimating..."
-    
-    // Navigation state
+    @Published public var currentSession: DriveSession? = nil
+
+    // Navigation
     @Published public var isNavigating: Bool = false
     @Published public var currentRoute: MKRoute? = nil
+    @Published public var alternativeRoutes: [MKRoute] = []
     @Published public var destination: MKMapItem? = nil
+    @Published public var nextManeuverInstruction: String = ""
+    @Published public var nextManeuverDistance: CLLocationDistance = 0
+    @Published public var eta: Date? = nil
+    @Published public var remainingDistance: CLLocationDistance = 0
+    @Published public var isRerouting: Bool = false
+
+    // Search
     @Published public var searchResults: [MKMapItem] = []
     @Published public var isSearching: Bool = false
-    @Published public var nextManeuverInstruction: String = ""
-    @Published public var distanceToNextTurn: CLLocationDistance = 0
-    @Published public var eta: Date? = nil
+
+    // Premium
+    @Published public var isPremium: Bool = false
+
+    // Verify prompt
+    @Published public var showVerifyPrompt: Bool = false
     
-    // Timer properties
+    // Core Dependencies
+    public let locationManager: LocationManager
+    public let sessionRecorder: SessionRecorder
+    public let alertEngine: AlertEngine
+    private let navigationEngine = NavigationEngine.shared
+    
     private var sessionStartTime: Date? = nil
     private var sessionTimer: AnyCancellable? = nil
-    
     private var cancellables = Set<AnyCancellable>()
-    // A weak reference or delegate will handle actual logic in CarPlay layer
-    public var navigationDelegate: NavigationActionDelegate?
     
+    private var lastStableLimit: Int?
+    private var stableLimitSeconds: Int = 0
+    private var stableLimitTimer: AnyCancellable?
+
     public init(modelContext: ModelContext? = nil) {
         let locManager = LocationManager()
-        let spdEngine = SpeedEngine(locationManager: locManager)
-        let alrtEngine = AlertEngine(speedEngine: spdEngine)
-        let rec = SessionRecorder(speedEngine: spdEngine, locationManager: locManager)
-        
-        if let ctx = modelContext {
-            rec.setModelContext(ctx)
-        }
+        let recorder = SessionRecorder(locationManager: locManager)
         
         self.locationManager = locManager
-        self.speedEngine = spdEngine
-        self.alertEngine = alrtEngine
-        self.sessionRecorder = rec
-
-        // Bind UI state
-        spdEngine.$speed.assign(to: &$speed)
-        SmartSpeedLimitService.shared.$currentLimit.assign(to: &$limit)
-        spdEngine.$status.assign(to: &$status)
-        alrtEngine.$audioAlertActive.assign(to: &$alertActive)
-        rec.$isRecording.assign(to: &$isRecording)
+        self.sessionRecorder = recorder
         
-        // Bind Data Source
-        CrowdsourceSpeedLimitService.shared.$dataSource
+        if let ctx = modelContext {
+            recorder.setModelContext(ctx)
+        }
+        
+        // We create a subject that emits status changes for AlertEngine
+        let statusSubject = CurrentValueSubject<SpeedStatus, Never>(.safe)
+        self.alertEngine = AlertEngine(statusPublisher: statusSubject.eraseToAnyPublisher())
+        
+        // Bind SpeedLimitBrain limit
+        SpeedLimitBrain.shared.$currentLimit
             .receive(on: RunLoop.main)
-            .assign(to: &$speedLimitSource)
+            .assign(to: &$limit)
             
-        // Bind Crowdsource Speed Limit Subscription
-        CrowdsourceSpeedLimitService.shared.$currentLimit
+        SpeedLimitBrain.shared.$limitSource
             .receive(on: RunLoop.main)
-            .sink { [weak self] limit in
-                if let limit = limit {
-                    self?.limit = limit
-                    self?.speedLimitSource = CrowdsourceSpeedLimitService.shared.dataSource
+            .assign(to: &$limitSource)
+            
+        // Observe internal status changes to feed AlertEngine
+        $status
+            .dropFirst()
+            .sink { newStatus in
+                statusSubject.send(newStatus)
+            }
+            .store(in: &cancellables)
+            
+        // Calculate status dynamically
+        Publishers.CombineLatest($speed, SpeedLimitBrain.shared.$currentLimit)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] currentSpeed, currentLimit in
+                guard let self = self else { return }
+                let threshold = Double(currentLimit + 5) // Hardcoded 5mph buffer for MVP
+                if currentSpeed > threshold {
+                    self.status = .over
+                } else if currentSpeed > (threshold - 2.0) {
+                    self.status = .warning
+                } else {
+                    self.status = .safe
                 }
             }
             .store(in: &cancellables)
+            
+        // Update speed from location manager
+        locManager.$latestLocation
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] location in
+                guard let self = self else { return }
+                let rawSpeed = max(0, location.speed * 2.23694)
+                // Filter low noise
+                self.speed = rawSpeed < 1.0 ? 0.0 : round(rawSpeed)
+                
+                if self.isNavigating {
+                    self.navigationEngine.updateProgress(location: location)
+                }
+            }
+            .store(in: &cancellables)
+            
+        // Bind NavigationEngine state
+        navigationEngine.$currentRoute.assign(to: &$currentRoute)
+        navigationEngine.$alternativeRoutes.assign(to: &$alternativeRoutes)
+        navigationEngine.$nextManeuverInstruction.assign(to: &$nextManeuverInstruction)
+        navigationEngine.$nextManeuverDistance.assign(to: &$nextManeuverDistance)
+        navigationEngine.$eta.assign(to: &$eta)
+        navigationEngine.$remainingDistance.assign(to: &$remainingDistance)
+        navigationEngine.$isRerouting.assign(to: &$isRerouting)
         
-        // Request Location Authorization
+        setupFlagPromptLogic()
+        
         locManager.requestAuthorization()
         locManager.startUpdatingLocation()
     }
     
+    private func setupFlagPromptLogic() {
+        // Only show "correct?" flag after displaying stable limit for 5s
+        SpeedLimitBrain.shared.$currentLimit
+            .receive(on: RunLoop.main)
+            .sink { [weak self] newLimit in
+                guard let self = self else { return }
+                if self.lastStableLimit != newLimit {
+                    self.lastStableLimit = newLimit
+                    self.stableLimitSeconds = 0
+                }
+            }
+            .store(in: &cancellables)
+            
+        stableLimitTimer = Timer.publish(every: 1.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                self.stableLimitSeconds += 1
+                if self.stableLimitSeconds >= 5 {
+                    self.showVerifyPrompt = true
+                } else {
+                    self.showVerifyPrompt = false
+                }
+            }
+    }
+    
     public func startSession() {
         sessionRecorder.startSession()
+        isRecording = true
         
-        // Timer tracking
         sessionStartTime = Date()
         sessionTimer = Timer.publish(every: 1, on: .main, in: .common)
             .autoconnect()
@@ -95,89 +171,39 @@ public final class DriveViewModel: ObservableObject {
     }
     
     public func endSession() {
-        _ = sessionRecorder.endSession()
-        
+        if let session = sessionRecorder.endSession() {
+            currentSession = session
+        }
+        isRecording = false
         sessionTimer?.cancel()
         sessionTimer = nil
         sessionDuration = 0
         sessionStartTime = nil
     }
     
-    // Navigation controls  
-    public func startNavigation(to destination: MKMapItem) async {
-        self.destination = destination
-        self.isNavigating = true
-        
-        // Proxy it to CarPlay navigation delegate if active
-        await navigationDelegate?.startNavigationTrigger(to: destination)
-        
-        // Also perform local MKDirections routing for the iOS app MapKit UI
-        guard let currentLocation = locationManager.latestLocation else { return }
-        
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: currentLocation.coordinate))
-        request.destination = destination
-        request.requestsAlternateRoutes = false
-        request.transportType = .automobile
-        
-        do {
-            let directions = MKDirections(request: request)
-            let response = try await directions.calculate()
-            if let firstRoute = response.routes.first {
-                await MainActor.run {
-                    self.currentRoute = firstRoute
-                    self.eta = Date().addingTimeInterval(firstRoute.expectedTravelTime)
-                    // The 0th step is usually "Start", the 1st step is the actual next instruction
-                    if firstRoute.steps.count > 1 {
-                        self.nextManeuverInstruction = firstRoute.steps[1].instructions
-                        self.distanceToNextTurn = firstRoute.steps[1].distance
-                    } else if let onlyStep = firstRoute.steps.first {
-                        self.nextManeuverInstruction = onlyStep.instructions
-                        self.distanceToNextTurn = onlyStep.distance
-                    }
-                }
-            }
-        } catch {
-            print("Failed to calculate MKDirections route: \(error.localizedDescription)")
-        }
-    }
-    
-    public func endNavigation() async {
-        self.isNavigating = false
-        self.destination = nil
-        self.currentRoute = nil
-        await navigationDelegate?.endNavigationTrigger()
-    }
-    
     public func searchDestination(query: String) async {
-        guard !query.isEmpty else { searchResults = []; return }
         isSearching = true
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = query
-        if let userLocation = locationManager.latestLocation {
-            request.region = MKCoordinateRegion(
-                center: userLocation.coordinate,
-                latitudinalMeters: 50000,
-                longitudinalMeters: 50000
-            )
-        }
-        let search = MKLocalSearch(request: request)
-        do {
-            let response = try await search.start()
-            searchResults = Array(response.mapItems.prefix(5))
-        } catch {
-            searchResults = []
-        }
+        let region = MKCoordinateRegion(
+            center: locationManager.latestLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 33.4, longitude: -111.9),
+            latitudinalMeters: 50000,
+            longitudinalMeters: 50000
+        )
+        searchResults = await navigationEngine.search(query: query, region: region)
         isSearching = false
     }
     
-    public func searchDestinationTrigger(_ query: String) async -> [MKMapItem] {
-        return await navigationDelegate?.searchDestinationTrigger(query) ?? []
+    public func startNavigation(to destination: MKMapItem) async {
+        self.destination = destination
+        self.isNavigating = true
+        guard let location = locationManager.latestLocation else { return }
+        let startItem = MKMapItem(placemark: MKPlacemark(coordinate: location.coordinate))
+        await navigationEngine.calculateRoute(from: startItem, to: destination)
     }
-}
-
-public protocol NavigationActionDelegate: AnyObject {
-    func startNavigationTrigger(to destination: MKMapItem) async
-    func endNavigationTrigger() async
-    func searchDestinationTrigger(_ query: String) async -> [MKMapItem]
+    
+    public func endNavigation() {
+        isNavigating = false
+        destination = nil
+        currentRoute = nil
+        navigationEngine.currentRoute = nil
+    }
 }

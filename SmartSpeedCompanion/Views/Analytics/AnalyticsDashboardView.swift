@@ -111,6 +111,7 @@ public struct AnalyticsDashboardView: View {
         }
         .preferredColorScheme(.dark)
         .onAppear {
+            viewModel.setModelContext(modelContext)
             if let first = sessions.first {
                 viewModel.selectSession(first)
             }

@@ -20,10 +20,10 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     private var timerCancellable: AnyCancellable?
     private var statusCancellable: AnyCancellable?
     
-    public init(speedEngine: SpeedEngine) {
+    public init(statusPublisher: AnyPublisher<SpeedStatus, Never>) {
         setupAudio()
         
-        statusCancellable = speedEngine.$status
+        statusCancellable = statusPublisher
             .receive(on: RunLoop.main)
             .sink { [weak self] newStatus in
                 self?.handleStatusChange(newStatus)

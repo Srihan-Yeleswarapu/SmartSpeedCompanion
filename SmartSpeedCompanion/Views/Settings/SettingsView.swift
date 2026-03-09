@@ -45,37 +45,55 @@ public struct SettingsView: View {
                 }
                 .listRowBackground(DesignSystem.bgPanel)
                 
-                Section(header: Text("DATA").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                Section(header: Text("DATA SOURCE").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
                     HStack {
-                        Text("Speed Limits")
+                        Text("Current Limit Provider")
                             .foregroundColor(.white)
                         Spacer()
-                        Text(driveViewModel.speedLimitSource)
+                        Text(driveViewModel.limitSource.rawValue)
                             .foregroundColor(DesignSystem.amber)
-                            .font(.caption)
+                            .font(.caption.bold())
                     }
                 }
                 .listRowBackground(DesignSystem.bgPanel)
                 
                 Section(header: Text("HISTORY").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
-                    Text("Session history list goes here")
-                        .foregroundColor(.gray)
+                    ForEach(driveViewModel.sessionRecorder.sessions) { session in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(session.startTime.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white)
+                                Text("\(String(format: "%.1f", driveViewModel.sessionRecorder.calculateDistance(for: session))) miles")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            Spacer()
+                            Text("\(Int(session.percentWithinLimit * 100))%")
+                                .font(DesignSystem.displayFont)
+                                .scaleEffect(0.3)
+                                .frame(width: 30)
+                                .foregroundColor(session.percentWithinLimit > 0.9 ? DesignSystem.neonGreen : DesignSystem.amber)
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
                 .listRowBackground(DesignSystem.bgPanel)
                 
                 Section {
                     Button(role: .destructive) {
-                        // Clear sessions logic
+                        driveViewModel.sessionRecorder.clearAllSessions()
                     } label: {
                         HStack {
                             Spacer()
                             Text("CLEAR ALL SESSIONS")
                                 .font(DesignSystem.labelFont.bold())
+                                .foregroundColor(DesignSystem.alertRed)
                             Spacer()
                         }
                     }
                 }
-                .listRowBackground(DesignSystem.alertRed.opacity(0.15))
+                .listRowBackground(DesignSystem.bgPanel)
             }
             .scrollContentBackground(.hidden)
             .background(DesignSystem.bgDeep.ignoresSafeArea())

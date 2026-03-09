@@ -13,7 +13,6 @@ import Combine
 
 struct MapWithHUDView: View {
     @EnvironmentObject var vm: DriveViewModel
-    @StateObject private var crowdsourceService = CrowdsourceSpeedLimitService.shared
 
     var body: some View {
         GeometryReader { geo in
@@ -42,14 +41,13 @@ struct MapWithHUDView: View {
                         .padding(.bottom, geo.safeAreaInsets.bottom + 72) // 72 = tab bar height
                 }
                 
-                if crowdsourceService.showCrowdsourcePrompt {
-                    CrowdsourceOverlayView()
-                        .environmentObject(crowdsourceService)
+                if vm.showVerifyPrompt {
+                    VerifyLimitSheet(vm: vm)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .zIndex(10)
                 }
             }
-            .animation(.spring(response: 0.3), value: crowdsourceService.showCrowdsourcePrompt)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: vm.showVerifyPrompt)
         }
         .background(Color(hex: "#040510"))
     }
@@ -294,11 +292,8 @@ struct SearchBarWithResults: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(hex: "#0F1022").opacity(0.95))
-                    .shadow(color: .black.opacity(0.4), radius: 12, x: 0, y: 4)
-            )
+            .background(DesignSystem.glassBackground)
+            .shadow(color: .black.opacity(0.4), radius: 12, x: 0, y: 4)
 
             // Results dropdown
             if showResults && !vm.searchResults.isEmpty {
@@ -407,7 +402,7 @@ struct SpeedHUDPill: View {
         HStack(spacing: isLandscape ? 12 : 16) {
 
             // ── Speed Limit Badge
-            SpeedLimitBadge(limit: vm.limit, source: vm.speedLimitSource)
+            SpeedLimitBadge(limit: vm.limit, limitSource: vm.limitSource)
                 .frame(width: isLandscape ? 44 : 56, height: isLandscape ? 44 : 56)
 
             Divider()
@@ -420,15 +415,12 @@ struct SpeedHUDPill: View {
                     RecordingBadge(duration: vm.sessionDuration)
                 }
                 Text(String(format: "%.0f", vm.speed))
-                    .font(.system(size: isLandscape ? 36 : 52,
-                                  weight: .black,
-                                  design: .rounded))
+                    .font(DesignSystem.speedFont(landscape: isLandscape))
                     .foregroundColor(speedColor)
                     .monospacedDigit()
                     .contentTransition(.numericText())
                 Text("MPH")
-                    .font(.system(size: isLandscape ? 10 : 12,
-                                  weight: .semibold))
+                    .font(DesignSystem.labelFont)
                     .foregroundColor(Color(hex: "#8888AA"))
                     .kerning(2)
             }
@@ -478,17 +470,14 @@ struct SpeedHUDPill: View {
         }
         .padding(.horizontal, isLandscape ? 14 : 18)
         .padding(.vertical, isLandscape ? 10 : 14)
-        .background(
-            Capsule()
-                .fill(Color(hex: "#0F1022").opacity(0.96))
-                .shadow(color: .black.opacity(0.45), radius: 20, x: 0, y: 6)
-        )
+        .background(DesignSystem.glassBackground)
+        .shadow(color: .black.opacity(0.45), radius: 20, x: 0, y: 6)
         .overlay(
             Capsule()
                 .strokeBorder(
                     vm.status == .over
                         ? Color(hex: "#FF3D71").opacity(0.6)
-                        : Color(hex: "#1A1B2E"),
+                        : Color(hex: "#1A1B2E").opacity(0.1),
                     lineWidth: 1
                 )
         )
@@ -515,12 +504,11 @@ struct SpeedHUDPill: View {
 
 struct SpeedLimitBadge: View {
     let limit: Int
-    let source: String
+    let limitSource: LimitSource
 
     var body: some View {
         VStack(spacing: 2) {
             ZStack {
-                // Outer white circle with red border
                 Circle()
                     .fill(.white)
                     .overlay(Circle().strokeBorder(Color.red, lineWidth: 3))
@@ -528,20 +516,13 @@ struct SpeedLimitBadge: View {
                 VStack(spacing: 0) {
                     Spacer(minLength: 4)
                     Text(limit > 0 ? "\(limit)" : "--")
-                        .font(.system(size: limit >= 100 ? 13 : 17,
-                                      weight: .black))
+                        .font(.system(size: limit >= 100 ? 13 : 17, weight: .black))
                         .foregroundColor(.black)
-                    // Red MPH band at bottom
                     ZStack {
                         Rectangle()
                             .fill(Color.red)
                             .frame(height: 14)
-                            .clipShape(
-                                .rect(
-                                    bottomLeadingRadius: 100,
-                                    bottomTrailingRadius: 100
-                                )
-                            )
+                            .clipShape(.rect(bottomLeadingRadius: 100, bottomTrailingRadius: 100))
                         Text("MPH")
                             .font(.system(size: 7, weight: .bold))
                             .foregroundColor(.white)
@@ -550,23 +531,20 @@ struct SpeedLimitBadge: View {
             }
             .frame(width: 52, height: 52)
 
-            // Data source label
-            Text(sourceLabel)
+            Text(limitSource.rawValue)
                 .font(.system(size: 8, weight: .medium))
                 .foregroundColor(sourceColor)
                 .kerning(0.5)
         }
     }
 
-    private var sourceLabel: String {
-        if source.contains("OpenStreetMap") { return "OSM" }
-        if source.contains("Estimated") { return "EST" }
-        return "···"
-    }
-
     private var sourceColor: Color {
-        if source.contains("OpenStreetMap") { return Color(hex: "#00D4FF") }
-        return Color(hex: "#8888AA")
+        switch limitSource {
+        case .localVerified: return Color(hex: "#00FF9D")
+        case .localTemporary: return Color(hex: "#00D4FF")
+        case .adot: return Color(hex: "#FFB800")
+        case .estimating: return Color(hex: "#8888AA")
+        }
     }
 }
 
