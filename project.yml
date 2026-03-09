@@ -30,12 +30,14 @@ targets:
 
     dependencies:
       - package: firebase-ios-sdk
+        product: FirebaseCore
+      - package: firebase-ios-sdk
         product: FirebaseDatabase
 
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app
-        SWIFT_VERSION: "5.9"
+        # SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         INFOPLIST_FILE: SmartSpeedCompanion/Configuration/Info.plist
