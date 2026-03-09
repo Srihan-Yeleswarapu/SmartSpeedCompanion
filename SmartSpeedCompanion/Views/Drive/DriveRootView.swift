@@ -2,6 +2,7 @@ import SwiftUI
 import MapKit
 
 public struct DriveRootView: View {
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var driveViewModel: DriveViewModel
     
     public init() {}
@@ -24,5 +25,9 @@ public struct DriveRootView: View {
                 }
         }
         .accentColor(Color(hex: "#00D4FF"))
+        .toolbar(driveViewModel.isRecording || driveViewModel.isNavigating ? .hidden : .visible, for: .tabBar)
+        .onAppear {
+            driveViewModel.sessionRecorder.setModelContext(modelContext)
+        }
     }
 }

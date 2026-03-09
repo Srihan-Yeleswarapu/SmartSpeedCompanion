@@ -97,7 +97,10 @@ struct MapView: UIViewRepresentable {
 
     func updateUIView(_ map: MKMapView, context: Context) {
         context.coordinator.updateRoute(on: map)
-        context.coordinator.updateTracking(on: map)
+        
+        // Removed context.coordinator.updateTracking(on: map)
+        // Calling this every second (when speed updates) interrupts user gestures.
+        // Tracking mode is now managed by initialization and delegate callbacks.
     }
 
     // MARK: Coordinator
@@ -170,14 +173,8 @@ struct MapView: UIViewRepresentable {
         }
 
         func updateTracking(on map: MKMapView) {
-            // When navigating, follow with heading
-            // When idle and user hasn't interacted, follow with heading
-            if !userInteracting {
-                let desired: MKUserTrackingMode = .followWithHeading
-                if map.userTrackingMode != desired {
-                    map.setUserTrackingMode(desired, animated: true)
-                }
-            }
+            // Deprecated: Intentionally left empty as tracking should not be forced arbitrarily
+            // by Swiftui state updates.
         }
 
         func clearNavigation() {
@@ -218,17 +215,27 @@ struct MapView: UIViewRepresentable {
 
         // Detect when user starts panning — stop auto-centering
         func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
-            if !animated {
-                userInteracting = true
+            let view = mapView.subviews.first
+            // Check if the gesture is from a user (gesture recognizers present)
+            if let recognizers = view?.gestureRecognizers {
+                for recognizer in recognizers {
+                    if recognizer.state == .began || recognizer.state == .changed {
+                        userInteracting = true
+                        break
+                    }
+                }
             }
         }
 
         // After user stops interacting, re-enable tracking after 5s
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             if userInteracting {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak mapView] in
-                    self?.userInteracting = false
-                    mapView?.setUserTrackingMode(.followWithHeading, animated: true)
+                userInteracting = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak mapView] in
+                    // Only resume if user hasn't started interacting again
+                    if mapView?.userTrackingMode == .none {
+                        mapView?.setUserTrackingMode(.followWithHeading, animated: true)
+                    }
                 }
             }
         }

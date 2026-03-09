@@ -12,7 +12,7 @@ public class CrowdsourceSpeedLimitService: ObservableObject {
     @Published public var currentLimit: Int? = nil        // nil = unknown
     @Published public var dataSource: String = "Estimating..."
     @Published public var showCrowdsourcePrompt: Bool = false
-    @Published public var promptOptions: [Int] = [25, 35, 45]  // dynamic or default
+    @Published public var promptOptions: [Int] = [25, 45, 65]  // Default placeholders
     @Published public var isReconfirmation: Bool = false   // true = "still X mph here?"
     @Published public var existingLimitForReconfirm: Int = 0
 
@@ -72,7 +72,7 @@ public class CrowdsourceSpeedLimitService: ObservableObject {
                             .sorted { $0.value > $1.value }
                             .prefix(3)
                             .compactMap { Int($0.key) }
-                        self.promptOptions = topSpeeds.isEmpty ? [25, 35, 45] : topSpeeds
+                        self.promptOptions = topSpeeds.isEmpty ? [25, 45, 65] : topSpeeds
                         
                         // Check if re-confirmation is due (30 days = 2592000 seconds)
                         let daysSinceConfirm = Date().timeIntervalSince1970 - lastConfirmedAt
@@ -89,7 +89,7 @@ public class CrowdsourceSpeedLimitService: ObservableObject {
                             .sorted { $0.value > $1.value }
                             .prefix(3)
                             .compactMap { Int($0.key) }
-                        self.promptOptions = topSpeeds.isEmpty ? [25, 35, 45] : Array(topSpeeds)
+                        self.promptOptions = topSpeeds.isEmpty ? [25, 45, 65] : Array(topSpeeds)
                         
                         self.scheduleNewRoadPrompt()
                     }
@@ -97,7 +97,7 @@ public class CrowdsourceSpeedLimitService: ObservableObject {
                     // No data at all for this segment
                     self.currentLimit = nil
                     self.dataSource = "Unknown"
-                    self.promptOptions = [25, 35, 45]
+                    self.promptOptions = [25, 45, 65]
                     self.scheduleNewRoadPrompt()
                 }
             }

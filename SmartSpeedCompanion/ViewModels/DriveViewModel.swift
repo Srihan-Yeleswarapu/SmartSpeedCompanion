@@ -107,9 +107,39 @@ public final class DriveViewModel: ObservableObject {
     public func startNavigation(to destination: MKMapItem) async {
         self.destination = destination
         self.isNavigating = true
-        // If there's a specific route calculation needed locally, perform it.
-        // Or proxy it to CarPlay navigation delegate if active:
+        
+        // Proxy it to CarPlay navigation delegate if active
         await navigationDelegate?.startNavigationTrigger(to: destination)
+        
+        // Also perform local MKDirections routing for the iOS app MapKit UI
+        guard let currentLocation = locationManager.latestLocation else { return }
+        
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: currentLocation.coordinate))
+        request.destination = destination
+        request.requestsAlternateRoutes = false
+        request.transportType = .automobile
+        
+        do {
+            let directions = MKDirections(request: request)
+            let response = try await directions.calculate()
+            if let firstRoute = response.routes.first {
+                await MainActor.run {
+                    self.currentRoute = firstRoute
+                    self.eta = Date().addingTimeInterval(firstRoute.expectedTravelTime)
+                    // The 0th step is usually "Start", the 1st step is the actual next instruction
+                    if firstRoute.steps.count > 1 {
+                        self.nextManeuverInstruction = firstRoute.steps[1].instructions
+                        self.distanceToNextTurn = firstRoute.steps[1].distance
+                    } else if let onlyStep = firstRoute.steps.first {
+                        self.nextManeuverInstruction = onlyStep.instructions
+                        self.distanceToNextTurn = onlyStep.distance
+                    }
+                }
+            }
+        } catch {
+            print("Failed to calculate MKDirections route: \(error.localizedDescription)")
+        }
     }
     
     public func endNavigation() async {

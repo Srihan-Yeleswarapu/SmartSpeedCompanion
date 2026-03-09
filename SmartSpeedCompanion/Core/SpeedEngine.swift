@@ -15,6 +15,9 @@ public final class SpeedEngine: ObservableObject {
     private let speedLimitService = SmartSpeedLimitService.shared
     private var cancellables = Set<AnyCancellable>()
     
+    // For moving average smoothing
+    private var speedHistory: [Double] = []
+    
     public init(locationManager: LocationManager) {
         
         locationManager.$latestLocation
@@ -28,8 +31,19 @@ public final class SpeedEngine: ObservableObject {
     
     private func processLocation(_ location: CLLocation) {
         // Convert m/s to mph: max(0, speed * 2.23694)
-        let currentSpeed = max(0, location.speed * 2.23694)
-        self.speed = currentSpeed
+        var currentSpeed = max(0, location.speed * 2.23694)
+        
+        // Very low speeds often fluctuate due to GPS drift — clamp them
+        if currentSpeed < 1.0 { currentSpeed = 0.0 }
+        
+        // Moving average (last 3 points)
+        speedHistory.append(currentSpeed)
+        if speedHistory.count > 3 {
+            speedHistory.removeFirst()
+        }
+        
+        let smoothedSpeed = speedHistory.reduce(0, +) / Double(speedHistory.count)
+        self.speed = round(smoothedSpeed) // Round to nearest int for clean UI
         
         Task { @MainActor in
             // Only query OSM/estimate if accuracy is good enough
