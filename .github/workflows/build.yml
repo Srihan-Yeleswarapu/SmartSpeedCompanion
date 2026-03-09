@@ -35,7 +35,7 @@ jobs:
       run: ls -la *.xcodeproj
 
     - name: Resolve Swift Packages
-      run: xcodebuild -resolvePackageDependencies -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion
+      run: xcodebuild -resolvePackageDependencies -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -clonedSourcePackagesDirPath .build
 
     - name: Build and archive app
       run: |
@@ -46,6 +46,7 @@ jobs:
           -destination "generic/platform=iOS" \
           -archivePath ./SmartSpeedCompanion.xcarchive \
           -derivedDataPath ./DerivedData \
+          -clonedSourcePackagesDirPath .build \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
