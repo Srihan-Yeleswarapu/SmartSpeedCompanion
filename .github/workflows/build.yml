@@ -28,6 +28,12 @@ jobs:
     - name: Install XcodeGen
       run: brew install xcodegen
 
+    - name: Clean generated Xcode project
+      run: rm -rf *.xcodeproj
+
+    - name: Clean package cache
+      run: rm -rf .build
+
     - name: Generate Xcode project
       run: xcodegen generate
 
