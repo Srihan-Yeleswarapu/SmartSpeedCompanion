@@ -36,7 +36,7 @@ jobs:
 
     - name: Build and archive app
       run: |
-        xcodebuild archive \
+        xcodebuild \
           -project SmartSpeedCompanion.xcodeproj \
           -scheme SmartSpeedCompanion \
           -configuration Release \
@@ -45,7 +45,8 @@ jobs:
           -derivedDataPath ./DerivedData \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGN_IDENTITY=""
+          CODE_SIGN_IDENTITY="" \
+          resolvePackageDependencies archive
 
     - name: Package unsigned IPA
       run: |
