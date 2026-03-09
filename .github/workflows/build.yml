@@ -34,6 +34,9 @@ jobs:
     - name: Verify project exists
       run: ls -la *.xcodeproj
 
+    - name: Resolve Swift Packages
+      run: xcodebuild -resolvePackageDependencies -workspace SmartSpeedCompanion.xcworkspace
+
     - name: Build and archive app
       run: |
         xcodebuild \
