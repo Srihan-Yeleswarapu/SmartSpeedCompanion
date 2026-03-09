@@ -30,8 +30,6 @@ targets:
 
     dependencies:
       - package: firebase-ios-sdk
-        product: FirebaseCore
-      - package: firebase-ios-sdk
         product: FirebaseDatabase
 
     settings:
