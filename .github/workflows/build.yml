@@ -35,7 +35,9 @@ jobs:
       run: rm -rf .build
 
     - name: Generate Xcode project
-      run: xcodegen generate
+      run: |
+        xcodegen generate
+        tuist generate
 
     - name: Verify project exists
       run: ls -la *.xcodeproj
@@ -64,7 +66,7 @@ jobs:
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
-          archive
+          archivepath /tmp/SmartSpeedCompanion.xcarchive
 
     - name: Package unsigned IPA
       run: |
