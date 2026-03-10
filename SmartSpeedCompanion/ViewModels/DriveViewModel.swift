@@ -27,7 +27,8 @@ public final class DriveViewModel: ObservableObject {
     @Published public var eta: Date? = nil
     @Published public var remainingDistance: CLLocationDistance = 0
     @Published public var isRerouting: Bool = false
-    @Published var distanceToNextTurn: String = ""
+    @Published var nextManeuverDistance: String = "" // Fixes the error in the log
+    @Published var distanceToNextTurn: String = ""   // Added to "make it work" as requested
 
     // Search
     @Published public var searchResults: [MKMapItem] = []

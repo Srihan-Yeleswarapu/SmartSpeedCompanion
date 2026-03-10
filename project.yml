@@ -2,7 +2,7 @@ name: SmartSpeedCompanion
 options:
   bundleIdPrefix: com.smartspeedcompanion
   deploymentTarget:
-    iOS: "13.0"
+    iOS: "17.0"
   xcodeVersion: "16.2"
   generateEmptyDirectories: true
  
@@ -37,7 +37,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app
         TARGETED_DEVICE_FAMILY: "1,2"
-        IPHONEOS_DEPLOYMENT_TARGET: "13.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         INFOPLIST_FILE: SmartSpeedCompanion/Configuration/Info.plist
         CODE_SIGN_ENTITLEMENTS: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
         ENABLE_BITCODE: NO
