@@ -31,8 +31,6 @@ targets:
 
     dependencies:
       - package: firebase-ios-sdk
-        product: Firebase
-      - package: firebase-ios-sdk
         product: FirebaseDatabase
 
     settings:
@@ -49,4 +47,3 @@ targets:
           SWIFT_OPTIMIZATION_LEVEL: "-O"
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
-
