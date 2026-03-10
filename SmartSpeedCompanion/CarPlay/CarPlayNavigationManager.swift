@@ -9,7 +9,7 @@ import Combine
 import AVFoundation
 
 @MainActor
-public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
+public class CarPlayNavigationManager: NSObject {
     
     private let viewModel: DriveViewModel
     private let mapTemplate: CPMapTemplate

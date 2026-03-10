@@ -45,7 +45,7 @@ public class FirebaseSyncService {
     public func incrementVerifiedCount(latKey: Int, lngKey: Int) async {
         let key = "\(latKey)_\(lngKey)"
         let ref = db.child("verified_segments").child(key).child("verifiedCount")
-        ref.runTransactionBlock({ (currentData) -> TransactionResult in
+        try await ref.runTransactionBlock({ (currentData) -> TransactionResult in
             var count = currentData.value as? Int ?? 0
             count += 1
             currentData.value = count
@@ -56,7 +56,7 @@ public class FirebaseSyncService {
     public func incrementFlagCount(latKey: Int, lngKey: Int) async {
         let key = "\(latKey)_\(lngKey)"
         let ref = db.child("verified_segments").child(key).child("flagCount")
-        ref.runTransactionBlock({ (currentData) -> TransactionResult in
+        try await ref.runTransactionBlock({ (currentData) -> TransactionResult in
             var count = currentData.value as? Int ?? 0
             count += 1
             currentData.value = count

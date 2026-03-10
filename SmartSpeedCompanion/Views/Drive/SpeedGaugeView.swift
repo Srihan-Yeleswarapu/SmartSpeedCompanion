@@ -34,7 +34,7 @@ public struct SpeedGaugeView: View {
                 context.stroke(speedPath, with: .color(activeColor.opacity(0.4)), style: StrokeStyle(lineWidth: strokeWidth * 2, lineCap: .round))
                 
                 // Limit Tick Mark
-                let limitRatio = Double(viewModel.limit + viewModel.speedEngine.userBuffer) / maxSpeed
+                let limitRatio = Double(viewModel.limit + SpeedLimitBrain.shared.userBuffer) / maxSpeed
                 let tickAngle = Angle(degrees: 135.0 + (limitRatio * 270.0))
                 
                 var tickPath = Path()

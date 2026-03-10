@@ -41,7 +41,7 @@ public struct SpeedDisplayView: View {
                     Text("BUFFER")
                         .font(DesignSystem.labelFont)
                         .foregroundColor(.gray)
-                    Text("+\(viewModel.speedEngine.userBuffer)")
+                    Text("+\(SpeedLimitBrain.shared.userBuffer)")
                         .font(.title3.bold())
                         .foregroundColor(DesignSystem.amber)
                 }

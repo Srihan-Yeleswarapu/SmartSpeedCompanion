@@ -6,7 +6,7 @@
 import SwiftUI
 
 public struct CrowdsourceOverlayView: View {
-    @EnvironmentObject var service: CrowdsourceSpeedLimitService
+    @EnvironmentObject var vm: DriveViewModel
     
     @State private var showingSuggestSlider = false
     @State private var suggestedSpeed: Double = 35

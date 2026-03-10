@@ -6,13 +6,19 @@ import UserNotifications
 @MainActor
 public final class CrashDetectionManager: ObservableObject {
     private let motionManager = CMMotionManager()
-    private let speedEngine: SpeedEngine
+    private let brain: SpeedLimitBrain
     private let sessionRecorder: SessionRecorder
     
-    public init(speedEngine: SpeedEngine, sessionRecorder: SessionRecorder) {
-        self.speedEngine = speedEngine
+    public init(brain: SpeedLimitBrain, sessionRecorder: SessionRecorder) {
+        self.brain = brain
         self.sessionRecorder = sessionRecorder
         startCrashDetection()
+    }
+    
+//   private init(speedEngine: startEngine, sessionRecorder: SessionRecorder) {
+//       self.speedEngine = speedEngine
+//       self.sessionRecorder = sessionRecorder
+//       startCrashDetection()
     }
     
     private func startCrashDetection() {
