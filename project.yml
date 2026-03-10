@@ -6,7 +6,6 @@ options:
   xcodeVersion: "16.2"
   generateEmptyDirectories: true
  
-
 packages:
   firebase-ios-sdk:
     url: https://github.com/firebase/firebase-ios-sdk
@@ -31,8 +30,6 @@ targets:
       - path: SmartSpeedCompanion/GoogleService-Info.plist
 
     dependencies:
-      - package: firebase-ios-sdk
-        product: FirebaseCore
       - package: firebase-ios-sdk
         product: FirebaseDatabase
 
