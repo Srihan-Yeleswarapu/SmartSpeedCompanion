@@ -2,7 +2,6 @@ import SwiftUI
 import SwiftData
 import ActivityKit
 import WidgetKit
-import Firebase
 import FirebaseCore
 
 @main
