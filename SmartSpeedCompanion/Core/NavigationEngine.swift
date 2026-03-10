@@ -11,7 +11,7 @@ public class NavigationEngine: ObservableObject {
     @Published public var currentRoute: MKRoute?
     @Published public var alternativeRoutes: [MKRoute] = []
     @Published public var nextManeuverInstruction: String = ""
-    @Published public var nextManeuverDistance: CLLocationDistance = 0
+    @Published public var nextManeuverDistance: String = ""
     @Published public var eta: Date?
     @Published public var remainingDistance: CLLocationDistance = 0
     @Published public var isRerouting: Bool = false

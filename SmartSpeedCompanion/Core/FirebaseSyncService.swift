@@ -65,27 +65,28 @@ public class FirebaseSyncService {
     }
     
     public func syncVerified(context: ModelContext, center: CLLocationCoordinate2D) async {
-        // In a real app we'd use GeoFire to pull segments within 50km.
-        // For this MVP, we will pull recent verified segments broadly and cache locally if not present.
+        // Ensure this method is called on the Main Actor
+        assert(Thread.isMainThread, "syncVerified must be called on the Main Actor")
+
         do {
             let snapshot = try await db.child("verified_segments")
                 .queryOrdered(byChild: "verifiedAt")
                 .queryLimited(toLast: 500)
                 .getData()
-            
+
             guard let dict = snapshot.value as? [String: [String: Any]] else { return }
-            
+
             for (key, val) in dict {
                 let parts = key.components(separatedBy: "_")
                 guard parts.count == 2,
                       let latK = Int(parts[0]),
                       let lngK = Int(parts[1]),
                       let limit = val["limit"] as? Int else { continue }
-                
+
                 let source = val["source"] as? String ?? "Firebase"
                 let osmWayID = val["osmWayID"] as? String
                 let verifiedAtRaw = val["verifiedAt"] as? TimeInterval ?? Date().timeIntervalSince1970
-                
+
                 let segment = RoadSegment(
                     latKey: latK,
                     lngKey: lngK,
@@ -95,11 +96,10 @@ public class FirebaseSyncService {
                     source: source,
                     verifiedAt: Date(timeIntervalSince1970: verifiedAtRaw)
                 )
-                
-                // SwiftData simple upsert/insert logic:
-                // Only insert if it doesn't already exist
-                let descriptor = FetchDescriptor<RoadSegment>(predicate: #Predicate { $0.id == key })
-                if let existing = try? context.fetch(descriptor), existing.isEmpty {
+
+                // Simplified predicate logic for iOS 17 compatibility
+                let existingSegments = try? context.fetch(FetchDescriptor<RoadSegment>())
+                if existingSegments?.contains(where: { $0.id == key }) == false {
                     context.insert(segment)
                 }
             }

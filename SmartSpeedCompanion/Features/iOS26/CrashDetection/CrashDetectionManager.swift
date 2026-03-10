@@ -19,7 +19,6 @@ public final class CrashDetectionManager: ObservableObject {
 //       self.speedEngine = speedEngine
 //       self.sessionRecorder = sessionRecorder
 //       startCrashDetection()
-    }
     
     private func startCrashDetection() {
         guard motionManager.isAccelerometerAvailable else { return }

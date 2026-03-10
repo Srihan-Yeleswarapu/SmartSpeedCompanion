@@ -8,6 +8,11 @@ import SwiftUI
 public struct CrowdsourceOverlayView: View {
     @EnvironmentObject var vm: DriveViewModel
     
+    // Define `service` as a computed property referencing the DriveViewModel
+    private var service: DriveViewModel {
+        return vm
+    }
+    
     @State private var showingSuggestSlider = false
     @State private var suggestedSpeed: Double = 35
     
