@@ -37,6 +37,7 @@ jobs:
     - name: Generate Xcode project
       run: |
         xcodegen generate
+        tuist generate
 
     - name: Verify project exists
       run: ls -la *.xcodeproj
@@ -59,13 +60,13 @@ jobs:
           -scheme SmartSpeedCompanion \
           -configuration Release \
           -destination "generic/platform=iOS" \
-          -archivePath ./SmartSpeedCompanion.xcarchive \
+          -archivePath /tmp/SmartSpeedCompanion.xcarchive \
           -derivedDataPath ./DerivedData \
           -clonedSourcePackagesDirPath .build \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
-          archivepath /tmp/SmartSpeedCompanion.xcarchive
+          archive
 
     - name: Package unsigned IPA
       run: |
@@ -79,4 +80,4 @@ jobs:
       with:
         name: SmartSpeedCompanion-unsigned-${{ github.run_number }}
         path: SmartSpeedCompanion-unsigned.ipa
-        retention-days: 7
+        retention-days: 7 
