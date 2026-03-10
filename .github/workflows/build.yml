@@ -38,8 +38,7 @@ jobs:
       run: rm -rf .build
 
     - name: Generate Xcode project
-      run: |
-        xcodegen generate
+      run: xcodegen generate
 
     - name: Verify project exists
       run: ls -la *.xcodeproj
@@ -56,12 +55,7 @@ jobs:
       run: git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
 
     - name: Resolve Package Dependencies
-      run: 
-        xcodebuild \
-          -showBuildSettings \
-          -resolvePackageDependencies 
-          -project SmartSpeedCompanion.xcodeproj 
-          -scheme SmartSpeedCompanion
+      run: xcodebuild -showBuildSettings -resolvePackageDependencies -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion
 
     - name: Clean package cache
       run: rm -rf .build
