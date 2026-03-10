@@ -23,12 +23,11 @@ public final class DriveViewModel: ObservableObject {
     @Published public var alternativeRoutes: [MKRoute] = []
     @Published public var destination: MKMapItem? = nil
     @Published public var nextManeuverInstruction: String = ""
-    @Published public var nextManeuverDistance: CLLocationDistance = 0
     @Published public var eta: Date? = nil
     @Published public var remainingDistance: CLLocationDistance = 0
     @Published public var isRerouting: Bool = false
-    @Published var nextManeuverDistance: String = "" // Fixes the error in the log
-    @Published var distanceToNextTurn: String = ""   // Added to "make it work" as requested
+    @Published public var nextManeuverDistance: String = "" 
+    @Published public var distanceToNextTurn: String = ""
 
     // Search
     @Published public var searchResults: [MKMapItem] = []

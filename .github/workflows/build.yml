@@ -16,9 +16,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Configure Git Safe Directory
-      run: git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
-
     - name: Find and select latest Xcode
       run: |
         echo "Available Xcode versions:"
@@ -34,9 +31,6 @@ jobs:
     - name: Clean generated Xcode project
       run: rm -rf *.xcodeproj
 
-    - name: Clean package cache
-      run: rm -rf .build
-
     - name: Generate Xcode project
       run: xcodegen generate
 
@@ -44,15 +38,7 @@ jobs:
       run: ls -la *.xcodeproj
 
     - name: Resolve Swift Packages
-      run: |
-        xcodebuild \
-          -resolvePackageDependencies \
-          -project SmartSpeedCompanion.xcodeproj \
-          -scheme SmartSpeedCompanion \
-          -clonedSourcePackagesDirPath .build
-
-    - name: Configure Git Safe Directory
-      run: git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+      run: xcodebuild -resolvePackageDependencies -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -clonedSourcePackagesDirPath .build
 
     - name: Resolve Package Dependencies
       run: xcodebuild -showBuildSettings -resolvePackageDependencies -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion
@@ -64,19 +50,7 @@ jobs:
       run: git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
 
     - name: Build and archive app
-      run: |
-        xcodebuild \
-          -project SmartSpeedCompanion.xcodeproj \
-          -scheme SmartSpeedCompanion \
-          -configuration Release \
-          -destination "generic/platform=iOS" \
-          -archivePath /tmp/SmartSpeedCompanion.xcarchive \
-          -derivedDataPath ./DerivedData \
-          -clonedSourcePackagesDirPath .build \
-          CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGN_IDENTITY="" \
-          archive
+      run: xcodebuild -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -destination "generic/platform=iOS" -archivePath ./SmartSpeedCompanion.xcarchive -derivedDataPath ./DerivedData -clonedSourcePackagesDirPath .build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive
 
     - name: Configure Git Safe Directory
       run: git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion

@@ -28,7 +28,6 @@ public class CarPlayNavigationManager: NSObject {
         self.viewModel = viewModel
         self.mapTemplate = mapTemplate
         super.init()
-        // self.viewModel.navigationDelegate = self
     }
     
     public func setMuted(_ muted: Bool) {
