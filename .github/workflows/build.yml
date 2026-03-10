@@ -37,7 +37,6 @@ jobs:
     - name: Generate Xcode project
       run: |
         xcodegen generate
-        tuist generate
 
     - name: Verify project exists
       run: ls -la *.xcodeproj
