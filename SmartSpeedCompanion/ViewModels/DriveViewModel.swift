@@ -27,6 +27,7 @@ public final class DriveViewModel: ObservableObject {
     @Published public var eta: Date? = nil
     @Published public var remainingDistance: CLLocationDistance = 0
     @Published public var isRerouting: Bool = false
+    @Published var distanceToNextTurn: String = ""
 
     // Search
     @Published public var searchResults: [MKMapItem] = []

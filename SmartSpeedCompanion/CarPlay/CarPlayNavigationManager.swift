@@ -28,7 +28,7 @@ public class CarPlayNavigationManager: NSObject {
         self.viewModel = viewModel
         self.mapTemplate = mapTemplate
         super.init()
-        self.viewModel.navigationDelegate = self
+        // self.viewModel.navigationDelegate = self
     }
     
     public func setMuted(_ muted: Bool) {
@@ -149,7 +149,7 @@ public class CarPlayNavigationManager: NSObject {
         viewModel.currentRoute = nil
         viewModel.destination = nil
         viewModel.nextManeuverInstruction = ""
-        viewModel.distanceToNextTurn = 0
+        // viewModel.distanceToNextTurn = 0
         viewModel.eta = nil
         
         announce("You have arrived at your destination.")
@@ -173,7 +173,7 @@ public class CarPlayNavigationManager: NSObject {
                                        longitude: nextStep.polyline.coordinate.longitude)
             
             let distance = location.distance(from: stepStart)
-            viewModel.distanceToNextTurn = distance
+            // viewModel.distanceToNextTurn = distance
             
             // Advance step if within 50 meters
             if distance < 50.0 {

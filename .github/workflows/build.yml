@@ -16,6 +16,9 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Configure Git Safe Directory
+      run: git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+
     - name: Find and select latest Xcode
       run: |
         echo "Available Xcode versions:"
@@ -49,8 +52,22 @@ jobs:
           -scheme SmartSpeedCompanion \
           -clonedSourcePackagesDirPath .build
 
+    - name: Configure Git Safe Directory
+      run: git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+
+    - name: Resolve Package Dependencies
+      run: 
+        xcodebuild \
+          -showBuildSettings \
+          -resolvePackageDependencies 
+          -project SmartSpeedCompanion.xcodeproj 
+          -scheme SmartSpeedCompanion
+
     - name: Clean package cache
       run: rm -rf .build
+
+    - name: Configure Git Safe Directory
+      run: git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
 
     - name: Build and archive app
       run: |
@@ -67,6 +84,12 @@ jobs:
           CODE_SIGN_IDENTITY="" \
           archive
 
+    - name: Configure Git Safe Directory
+      run: git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+
+    - name: Clean package cache
+      run: rm -rf .build
+
     - name: Package unsigned IPA
       run: |
         mkdir -p ./Payload
@@ -79,4 +102,4 @@ jobs:
       with:
         name: SmartSpeedCompanion-unsigned-${{ github.run_number }}
         path: SmartSpeedCompanion-unsigned.ipa
-        retention-days: 7 
+        retention-days: 7

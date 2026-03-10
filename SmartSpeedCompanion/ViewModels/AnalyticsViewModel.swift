@@ -47,7 +47,7 @@ public final class AnalyticsViewModel: ObservableObject {
         var currentStart: Date?
         
         for reading in session.readings.sorted(by: { $0.timestamp < $1.timestamp }) {
-            if reading.speed > reading.speedLimit && reading.speedLimit > 0 {
+            if reading.speed > Double(reading.speedLimit) && Double(reading.speedLimit) > 0 {
                 if currentStart == nil {
                     currentStart = reading.timestamp
                 } else {
