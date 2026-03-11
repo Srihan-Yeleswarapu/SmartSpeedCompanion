@@ -131,6 +131,11 @@ public final class DriveViewModel: ObservableObject {
         locManager.requestAuthorization()
         locManager.startUpdatingLocation()
     }
+
+    public func configureModelContext(_ context: ModelContext) {
+        sessionRecorder.setModelContext(context)
+    }
+
     
     private func setupFlagPromptLogic() {
         // Only show "correct?" flag after displaying stable limit for 5s
@@ -208,3 +213,5 @@ public final class DriveViewModel: ObservableObject {
         navigationEngine.currentRoute = nil
     }
 }
+
+

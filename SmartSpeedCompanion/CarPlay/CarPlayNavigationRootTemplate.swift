@@ -19,14 +19,18 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
     @MainActor private var limitButton: CPBarButton!
 
     @MainActor
-    init(interfaceController: CPInterfaceController, viewModel: DriveViewModel) {
+    init(
+        interfaceController: CPInterfaceController,
+        viewModel: DriveViewModel,
+        navigationManager: CarPlayNavigationManager? = nil
+    ) {
         self.interfaceController = interfaceController
         self.viewModel = viewModel
         self.mapTemplate = CPMapTemplate()
         
         super.init()
         
-        self.navigationManager = CarPlayNavigationManager(viewModel: viewModel, mapTemplate: mapTemplate)
+        self.navigationManager = navigationManager ?? CarPlayNavigationManager(viewModel: viewModel, mapTemplate: mapTemplate)
         
         setupTemplate()
         bindViewModel()
@@ -156,3 +160,5 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         completionHandler()
     }
 }
+
+
