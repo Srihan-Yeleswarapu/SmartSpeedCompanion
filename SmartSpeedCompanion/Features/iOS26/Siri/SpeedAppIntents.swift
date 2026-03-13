@@ -51,18 +51,33 @@ struct GetCurrentSpeedIntent: AppIntent {
 
 struct SpeedAppShortcutsProvider: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
-        AppShortcut(intent: StartDriveSessionIntent(), phrases: [
-            "Start my drive in \(.applicationName)",
-            "Begin recording in \(.applicationName)",
-            "Start \(.applicationName)"
-        ])
-        AppShortcut(intent: EndDriveSessionIntent(), phrases: [
-            "End my drive in \(.applicationName)",
-            "Stop recording in \(.applicationName)"
-        ])
-        AppShortcut(intent: GetCurrentSpeedIntent(), phrases: [
-            "What's my speed in \(.applicationName)",
-            "How fast am I going in \(.applicationName)"
-        ])
+        AppShortcut(
+            intent: StartDriveSessionIntent(),
+            phrases: [
+                "Start my drive in \(.applicationName)",
+                "Begin recording in \(.applicationName)",
+                "Start \(.applicationName)"
+            ],
+            shortTitle: "Start Drive",
+            systemImageName: "play.fill"
+        )
+        AppShortcut(
+            intent: EndDriveSessionIntent(),
+            phrases: [
+                "End my drive in \(.applicationName)",
+                "Stop recording in \(.applicationName)"
+            ],
+            shortTitle: "End Drive",
+            systemImageName: "stop.fill"
+        )
+        AppShortcut(
+            intent: GetCurrentSpeedIntent(),
+            phrases: [
+                "What's my speed in \(.applicationName)",
+                "How fast am I going in \(.applicationName)"
+            ],
+            shortTitle: "Check Speed",
+            systemImageName: "speedometer"
+        )
     }
 }
