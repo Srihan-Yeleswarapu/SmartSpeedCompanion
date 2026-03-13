@@ -7,10 +7,12 @@ public struct SettingsView: View {
     @AppStorage("voiceNavEnabled") var voiceNavEnabled: Bool = true
     @AppStorage("speedUnit") var speedUnit: String = "mph"
     @AppStorage("avoidHighways") var avoidHighways: Bool = false
+    @AppStorage("measurementSystem") var measurementSystem: String = "Imperial"
     
     @EnvironmentObject var driveViewModel: DriveViewModel
     
     let units = ["mph", "km/h"]
+    let systems = ["Imperial", "Metric"]
     
     public init() {}
     
@@ -40,12 +42,27 @@ public struct SettingsView: View {
                     Toggle("Avoid Highways", isOn: $avoidHighways)
                         .tint(DesignSystem.neonGreen)
                     
-                    Picker("Speed Unit", selection: $speedUnit) {
-                        ForEach(units, id: \.self) {
-                            Text($0)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("SPEED UNIT")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                        Picker("Speed Unit", selection: $speedUnit) {
+                            ForEach(units, id: \.self) { Text($0) }
                         }
+                        .pickerStyle(SegmentedPickerStyle())
                     }
-                    .pickerStyle(SegmentedPickerStyle())
+                    .padding(.vertical, 4)
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("DISTANCE SYSTEM")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                        Picker("System", selection: $measurementSystem) {
+                            ForEach(systems, id: \.self) { Text($0) }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                    }
+                    .padding(.vertical, 4)
                 }
                 .listRowBackground(DesignSystem.bgPanel)
                 

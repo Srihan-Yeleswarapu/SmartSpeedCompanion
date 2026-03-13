@@ -136,7 +136,17 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         navigationSession = mapTemplate.startNavigationSession(for: trip)
         
         currentSteps = route.steps
+        
+        // Skip initial steps with 0 distance (usually just the starting point)
         currentStepIndex = 0
+        while currentStepIndex < currentSteps.count && currentSteps[currentStepIndex].distance <= 0 {
+            currentStepIndex += 1
+        }
+        
+        // If we skipped everything, reset to 0
+        if currentStepIndex >= currentSteps.count {
+            currentStepIndex = 0
+        }
         
         monitorProgress()
         announce("Starting route to \(destination.name ?? "destination").")

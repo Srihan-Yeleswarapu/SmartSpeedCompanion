@@ -94,12 +94,26 @@ fileprivate struct NavigationInstructionCard: View {
     }
     
     private func formatDistance(_ distance: CLLocationDistance) -> String {
-        if distance < 100 {
-            return "\(Int(distance)) m"
-        } else if distance < 1000 {
-            return "\(Int(distance)) m"
+        let system = UserDefaults.standard.string(forKey: "measurementSystem") ?? "Imperial"
+        
+        if system == "Metric" {
+            if distance < 1000 {
+                return "\(Int(distance)) m"
+            } else {
+                return String(format: "%.1f km", distance / 1000.0)
+            }
         } else {
-            return String(format: "%.1f km", distance / 1000.0)
+            // Imperial
+            let feet = distance * 3.28084
+            if feet < 1000 {
+                return "\(Int(feet)) ft"
+            } else if feet < 5280 {
+                let yards = feet / 3
+                return "\(Int(yards)) yd"
+            } else {
+                let miles = distance * 0.000621371
+                return String(format: "%.1f mi", miles)
+            }
         }
     }
 }
@@ -110,7 +124,7 @@ fileprivate struct SearchBarView: View {
     @FocusState private var isFocused: Bool
     
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(DesignSystem.cyan)
@@ -157,18 +171,23 @@ fileprivate struct SearchBarView: View {
                                         }
                                     }
                                 }) {
-                                    VStack(alignment: .leading, spacing: 4) {
+                                    HStack(alignment: .firstTextBaseline) {
                                         Text(completion.title)
                                             .font(.system(size: 16, weight: .semibold))
                                             .foregroundColor(.white)
+                                            .lineLimit(1)
+                                        
+                                        Spacer()
                                         
                                         if !completion.subtitle.isEmpty {
                                             Text(completion.subtitle)
-                                                .font(.system(size: 13))
-                                                .foregroundColor(.white.opacity(0.5))
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.white.opacity(0.4))
+                                                .lineLimit(1)
+                                                .frame(maxWidth: 160, alignment: .trailing)
                                         }
                                     }
-                                    .padding(.vertical, 12)
+                                    .padding(.vertical, 14)
                                     .padding(.horizontal, 16)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 }
@@ -181,10 +200,10 @@ fileprivate struct SearchBarView: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 280)
+                    .frame(maxHeight: 320)
                 }
-                .glassStyle()
-                .padding(.top, 4)
+                .glassStyle(cornerRadius: 16)
+                .padding(.top, 2)
             }
         }
     }

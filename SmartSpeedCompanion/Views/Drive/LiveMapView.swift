@@ -25,32 +25,22 @@ public struct LiveMapView: UIViewRepresentable {
     }
     
     public func updateUIView(_ uiView: MKMapView, context: Context) {
-        // Update tracking and Camera
-        if viewModel.isRecording || viewModel.isNavigating {
-            if uiView.userTrackingMode != .followWithHeading {
-                uiView.setUserTrackingMode(.followWithHeading, animated: true)
-            }
+        // Update tracking mode based on state
+        let targetMode: MKUserTrackingMode = (viewModel.isRecording || viewModel.isNavigating) ? .followWithHeading : .follow
+        
+        if uiView.userTrackingMode != targetMode {
+            uiView.setUserTrackingMode(targetMode, animated: true)
             
-            // 3D Perspective Camera
-            let camera = MKMapCamera(
-                lookingAtCenter: uiView.userLocation.coordinate,
-                fromDistance: 400,
-                pitch: 60,
-                heading: uiView.userLocation.heading?.trueHeading ?? 0
-            )
-            uiView.setCamera(camera, animated: true)
-            
-        } else {
-            if uiView.userTrackingMode != .follow {
-                uiView.setUserTrackingMode(.follow, animated: true)
+            // Initial camera configuration for the mode
+            let camera = MKMapCamera()
+            camera.centerCoordinate = uiView.userLocation.coordinate
+            if targetMode == .followWithHeading {
+                camera.pitch = 60
+                camera.altitude = 400
+            } else {
+                camera.pitch = 0
+                camera.altitude = 1000
             }
-            // Reset to flat view when not navigating
-            let camera = MKMapCamera(
-                lookingAtCenter: uiView.userLocation.coordinate,
-                fromDistance: 1000,
-                pitch: 0,
-                heading: 0
-            )
             uiView.setCamera(camera, animated: true)
         }
         
