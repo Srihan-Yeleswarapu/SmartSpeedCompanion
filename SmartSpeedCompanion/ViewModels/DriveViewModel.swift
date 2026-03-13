@@ -80,6 +80,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
         Task {
             await SpeedCameraService.shared.fetchCameras()
         }
+        
+        // Load Local Arizona GeoJSON Data
+        Task {
+            await ArizonaSpeedLimitService.shared.loadDataIfNeeded()
+        }
 
         // Setup Completer
 

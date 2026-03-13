@@ -114,6 +114,17 @@ public class SmartSpeedLimitService: ObservableObject {
     private init() {}
     
     public func updateSpeedLimit(at coordinate: CLLocationCoordinate2D, currentSpeedMph: Double) async -> Int {
+        // 1. Try Local Arizona GeoJSON Data First
+        do {
+            let localLimit = try await ArizonaSpeedLimitService.shared.fetchSpeedLimit(at: coordinate)
+            self.currentLimit = localLimit
+            self.dataSource = "Local Map"
+            return localLimit
+        } catch {
+            // Local AZ file didn't have it or isn't loaded yet. Proceed to OSM.
+        }
+        
+        // 2. Fallback to OpenStreetMap Overpass API
         do {
             let limit = try await withThrowingTaskGroup(of: Int.self) { group in
                 group.addTask {
@@ -134,6 +145,7 @@ public class SmartSpeedLimitService: ObservableObject {
             
         } catch {
             print("[OSM] Fetch failed or timed out: \(error), falling back to prototype.")
+            // 3. Fallback to Generic Estimation
             let limit = fallbackService.estimateLimit(for: currentSpeedMph)
             self.currentLimit = limit
             self.dataSource = "Estimated"
