@@ -1,6 +1,6 @@
-name: SpeedSense
+name: SmartSpeedCompanion
 options:
-  bundleIdPrefix: com.smartspeedcompanion
+  bundleIdPrefix: com.speedsense
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "15.0"
@@ -19,7 +19,7 @@ settings:
 targets:
 
   # ── Main iPhone App ──────────────────────────────────────────────
-  SpeedSense:
+  SmartSpeedCompanion:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
@@ -40,8 +40,6 @@ targets:
     # NOTE: LiveActivities and Widgets folders are excluded from main
     # app sources for now — they compile as separate extension targets
     # which are disabled below until Xcode 16 runner is available
-    # (Leaving folder paths as SmartSpeedCompanion for now to avoid massive file moving,
-    # but display names and bundle IDs are updated)
 
     resources:
       - path: SmartSpeedCompanion/Resources
@@ -86,7 +84,7 @@ targets:
 
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.speedsense.app
         INFOPLIST_FILE: SmartSpeedCompanion/Configuration/Info.plist
         CODE_SIGN_ENTITLEMENTS: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
@@ -96,10 +94,10 @@ targets:
     dependencies: []
 
 schemes:
-  SpeedSense:
+  SmartSpeedCompanion:
     build:
       targets:
-        SpeedSense: all
+        SmartSpeedCompanion: all
     run:
       config: Debug
     archive:
