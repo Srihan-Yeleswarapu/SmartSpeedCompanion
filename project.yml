@@ -36,6 +36,7 @@ targets:
       - path: SmartSpeedCompanion/Features/iOS26/Siri
       - path: SmartSpeedCompanion/Features/iOS26/StandBy
       - path: SmartSpeedCompanion/Features/iOS26/LiveActivities
+      - path: SmartSpeedCompanion/Resources/Assets.xcassets
 
     # NOTE: LiveActivities and Widgets folders are excluded from main
     # app sources for now — they compile as separate extension targets

@@ -55,16 +55,16 @@
       "filename" : "180.png"
     },
     {
-      "idiom" : "iphone",
-      "size" : "57x57",
-      "scale" : "1x",
-      "filename" : "57.png"
+      "idiom" : "carplay",
+      "size" : "60x60",
+      "scale" : "2x",
+      "filename" : "120.png"
     },
     {
-      "idiom" : "iphone",
-      "size" : "57x57",
-      "scale" : "2x",
-      "filename" : "114.png"
+      "idiom" : "carplay",
+      "size" : "60x60",
+      "scale" : "3x",
+      "filename" : "180.png"
     },
     {
       "idiom" : "ios-marketing",
