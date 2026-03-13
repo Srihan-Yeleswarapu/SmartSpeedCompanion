@@ -30,18 +30,19 @@ public struct LiveMapView: UIViewRepresentable {
             return
         }
 
-        // Update tracking mode and camera only if not manually interacting
+        // Use manual camera management only if the user isn't interacting
         if !context.coordinator.isUserInteracting {
-            let targetMode: MKUserTrackingMode = (viewModel.isRecording || viewModel.isNavigating) ? .followWithHeading : .follow
-            if uiView.userTrackingMode != targetMode {
-                uiView.setUserTrackingMode(targetMode, animated: true)
-            }
+            // Check if we have a valid location before moving the camera
+            guard let userLoc = uiView.userLocation.location, 
+                  CLLocationCoordinate2DIsValid(userLoc.coordinate),
+                  userLoc.coordinate.latitude != 0 else { return }
             
-            // Dynamic Camera logic based on sophisticated rules
+            // We manage center and heading manually in updateSmartCamera to allow for 
+            // sophisticated zoom rules without the default tracking mode fighting us.
             updateSmartCamera(uiView, context: context)
         }
         
-        // Update overlays (always keep these fresh)
+        // Update overlays (History, Route, Cameras)
         updateOverlays(uiView)
     }
     
@@ -88,38 +89,69 @@ public struct LiveMapView: UIViewRepresentable {
             targetPitch = 60 // 3D Perspective for navigation (Rule 7)
             
             // 1. Zoom In/Out based on Speed (Rule 1 & 4)
-            if speed > 60 { // Highway speeds
-                targetAltitude = 2500 // Wide zoom to see ahead
-            } else if speed > 40 {
-                targetAltitude = 1200
-            } else if speed < 5 { // Slower/Stopped (Rule 19)
-                targetAltitude = 250 // Precise detail at red lights/intersections
-            } else {
-                targetAltitude = 600 // City standard (Rule 8)
+            // Speed-based zoom scaling (smooth dynamic scaling)
+            switch speed {
+            case 0..<3:
+                targetAltitude = 200        // parked / red light
+            case 3..<15:
+                targetAltitude = 350        // parking lots / neighborhoods
+            case 15..<30:
+                targetAltitude = 600        // city streets
+            case 30..<50:
+                targetAltitude = 1000       // suburban roads
+            case 50..<70:
+                targetAltitude = 1800       // highways
+            default:
+                targetAltitude = 2600       // very high speed highways
             }
             
             // 2. Proximity to Turn (Rule 2)
-            if distanceToTurn < 100 { // ~300 feet: Final approach
-                targetAltitude = 150 // Deep zoom for road geometry
-            } else if distanceToTurn < 250 { // ~800 feet: Preparing
-                targetAltitude = min(targetAltitude, 350) 
+            // Turn proximity zoom (progressive zoom)
+            if distanceToTurn < 60 {
+                targetAltitude = 120
+            } else if distanceToTurn < 120 {
+                targetAltitude = min(targetAltitude, 200)
+            } else if distanceToTurn < 300 {
+                targetAltitude = min(targetAltitude, 350)
+            } else if distanceToTurn < 600 {
+                targetAltitude = min(targetAltitude, 500)
             }
             
             // 3. Destination Approach (Rule 17 & 18)
             if let dest = viewModel.destination {
                 let distToDest = uiView.userLocation.location?.distance(from: dest.placemark.location ?? CLLocation()) ?? 10000
-                if distToDest < 320 { // within ~0.2 miles
+                if distToDest < 150 {
+                    targetAltitude = 90
+                    targetPitch = 35
+                } else if distToDest < 300 {
                     targetAltitude = 150
-                    targetPitch = 45 // Lower pitch for final visibility
+                    targetPitch = 40
+                } else if distToDest < 600 {
+                    targetAltitude = min(targetAltitude, 250)
                 }
             }
             
             // 4. Highway Exit/Complex Interchanges (Rule 5 & 6)
-            if viewModel.nextManeuverInstruction.lowercased().contains("exit") || 
-               viewModel.nextManeuverInstruction.lowercased().contains("merge") {
-                targetAltitude = min(targetAltitude, 500) // Moderate zoom for clarity
+            let instruction = viewModel.nextManeuverInstruction.lowercased()
+
+            if instruction.contains("exit") ||
+               instruction.contains("merge") ||
+               instruction.contains("ramp") ||
+               instruction.contains("fork") {
+                
+                targetAltitude = min(targetAltitude, 450)
             }
-            
+
+            // Long straight road zoom out
+            if distanceToTurn > 2000 && speed > 50 {
+                targetAltitude = max(targetAltitude, 2800)
+            }
+
+            // Gentle curve zoom
+            if instruction.contains("turn") && distanceToTurn > 800 && speed < 50 {
+                targetAltitude = min(targetAltitude, 1200)
+            }
+
         } else if viewModel.isRecording {
             // Driving without navigation
             targetPitch = 45
@@ -133,17 +165,19 @@ public struct LiveMapView: UIViewRepresentable {
         
         // 5. Hazards / Speed Cameras (Rule 15 & 16)
         if viewModel.activeCameraAlert != nil {
-            targetAltitude = min(targetAltitude, 400) // Highlight the camera area
+            targetAltitude = min(targetAltitude, 280)
+            targetPitch = 50
         }
         
         // Apply camera with smooth animation if significant change detected
         let currentCamera = uiView.camera
-        if abs(currentCamera.altitude - targetAltitude) > 30 || abs(currentCamera.pitch - targetPitch) > 5 {
+        if abs(currentCamera.altitude - targetAltitude) > 60 ||
+           abs(currentCamera.pitch - targetPitch) > 3 {
             let newCamera = MKMapCamera(
                 lookingAtCenter: uiView.userLocation.coordinate,
                 fromDistance: targetAltitude,
                 pitch: targetPitch,
-                heading: uiView.userLocation.heading?.trueHeading ?? uiView.camera.heading
+                heading: viewModel.currentHeading ?? uiView.camera.heading
             )
             uiView.setCamera(newCamera, animated: true)
         }

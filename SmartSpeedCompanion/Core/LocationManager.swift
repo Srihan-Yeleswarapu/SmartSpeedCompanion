@@ -7,6 +7,7 @@ public final class LocationManager: NSObject, ObservableObject {
     private let manager = CLLocationManager()
     
     @Published public var latestLocation: CLLocation?
+    @Published public var latestHeading: CLHeading?
     @Published public var authorizationStatus: CLAuthorizationStatus = .notDetermined
     
     public override init() {
@@ -16,6 +17,9 @@ public final class LocationManager: NSObject, ObservableObject {
         manager.distanceFilter = kCLDistanceFilterNone
         manager.allowsBackgroundLocationUpdates = true // Requires 'location' in UIBackgroundModes
         manager.showsBackgroundLocationIndicator = true
+        
+        // Navigation-grade heading
+        manager.headingFilter = 2.0 // Update every 2 degrees
     }
     
     /// Requests Always authorization, required for CarPlay background operation.
@@ -25,6 +29,7 @@ public final class LocationManager: NSObject, ObservableObject {
     
     public func startUpdatingLocation() {
         manager.startUpdatingLocation()
+        manager.startUpdatingHeading()
     }
     
     public func stopUpdatingLocation() {
@@ -46,6 +51,12 @@ extension LocationManager: CLLocationManagerDelegate {
         }
     }
     
+    public func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        DispatchQueue.main.async {
+            self.latestHeading = newHeading
+        }
+    }
+
     public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("LocationManager failed with error: \(error.localizedDescription)")
     }

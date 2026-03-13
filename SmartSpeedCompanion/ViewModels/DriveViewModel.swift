@@ -14,6 +14,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     // Core driving state
     @Published public var speed: Double = 0.0
+    @Published public var currentHeading: Double? = nil
     @Published public var limit: Int = 25
     @Published public var status: SpeedStatus = .safe
     @Published public var isRecording: Bool = false
@@ -83,6 +84,17 @@ public final class DriveViewModel: NSObject, ObservableObject {
         completer.resultTypes = [.pointOfInterest, .address]
         
         // Bind UI state
+        // Use course for heading when moving > 5mph for stability, fall back to compass
+        Publishers.CombineLatest(locManager.$latestLocation, locManager.$latestHeading)
+            .map { location, heading -> Double? in
+                if let loc = location, loc.speed > 2.0 { // > ~4.5 mph
+                    return loc.course >= 0 ? loc.course : heading?.trueHeading
+                }
+                return heading?.trueHeading
+            }
+            .receive(on: RunLoop.main)
+            .assign(to: &$currentHeading)
+
         spdEngine.$speed.assign(to: &$speed)
         SmartSpeedLimitService.shared.$currentLimit.assign(to: &$limit)
         spdEngine.$status.assign(to: &$status)
