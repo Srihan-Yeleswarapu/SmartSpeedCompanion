@@ -12,10 +12,8 @@ public struct GlassView<Content: View>: View {
     public var body: some View {
         content()
             .padding()
-            .background(
-                DesignSystem.LiquidGlass.material
-                    .background(DesignSystem.glassVibrancy)
-            )
+            .background(DesignSystem.LiquidGlass.material)
+            .background(DesignSystem.glassVibrancy)
             .cornerRadius(cornerRadius)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
@@ -29,10 +27,8 @@ public extension View {
     func glassStyle(cornerRadius: CGFloat = DesignSystem.LiquidGlass.cornerRadius) -> some View {
         self
             .padding()
-            .background(
-                DesignSystem.LiquidGlass.material
-                    .background(DesignSystem.glassVibrancy)
-            )
+            .background(DesignSystem.LiquidGlass.material)
+            .background(DesignSystem.glassVibrancy)
             .cornerRadius(cornerRadius)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)

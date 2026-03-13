@@ -5,7 +5,7 @@ import MapKit
 
 /// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
-public final class DriveViewModel: ObservableObject {
+public final class DriveViewModel: NSObject, ObservableObject {
     public let locationManager: LocationManager
     public let speedEngine: SpeedEngine
     public let alertEngine: AlertEngine
@@ -182,7 +182,7 @@ public final class DriveViewModel: ObservableObject {
     }
 }
 
-extension DriveViewModel: MKLocalSearchCompleterDelegate {
+extension DriveViewModel: @preconcurrency MKLocalSearchCompleterDelegate {
     public func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         self.searchCompletions = completer.results
     }
