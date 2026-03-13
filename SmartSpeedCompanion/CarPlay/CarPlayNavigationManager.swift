@@ -206,9 +206,15 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         let maneuver = currentSteps[currentStepIndex]
         
         viewModel.nextManeuverInstruction = maneuver.instructions
+        viewModel.nextManeuverImageName = symbolName(for: maneuver)
         
         let cpManeuver = CPManeuver()
         cpManeuver.instructionVariants = [maneuver.instructions]
+        
+        // Premium Icons for CarPlay
+        if let icon = UIImage(systemName: symbolName(for: maneuver)) {
+            cpManeuver.symbolImage = icon
+        }
         
         let distanceMeasure = Measurement(value: maneuver.distance, unit: UnitLength.meters)
         cpManeuver.initialTravelEstimates = CPTravelEstimates(distanceRemaining: distanceMeasure, timeRemaining: 0) // Approximation
@@ -219,6 +225,17 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         if maneuver.distance > 0 {
             announce(maneuver.instructions)
         }
+    }
+    
+    private func symbolName(for step: MKRoute.Step) -> String {
+        // Basic mapping of instructions to SF Symbols
+        let inst = step.instructions.lowercased()
+        if inst.contains("left") { return "arrow.turn.up.left" }
+        if inst.contains("right") { return "arrow.turn.up.right" }
+        if inst.contains("exit") { return "arrow.up.right.circle" }
+        if inst.contains("roundabout") { return "arrow.counterclockwise" }
+        if inst.contains("destination") { return "mappin.and.ellipse" }
+        return "arrow.up"
     }
     
     private func announce(_ message: String) {

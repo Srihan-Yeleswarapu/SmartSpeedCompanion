@@ -22,18 +22,84 @@ public struct MapWithHUDView: View {
                 
                 // Overlay content
                 VStack(spacing: 0) {
-                    SearchBarView()
-                        .padding(.top, 12) // Below status bar (handled by GeometryReader safe area in combination)
-                        .padding(.horizontal, 16)
+                    if driveViewModel.isNavigating {
+                        NavigationInstructionCard()
+                            .padding(.top, geo.safeAreaInsets.top + 8)
+                            .padding(.horizontal, 16)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    } else {
+                        SearchBarView()
+                            .padding(.top, geo.safeAreaInsets.top + 12)
+                            .padding(.horizontal, 16)
+                    }
                     
                     Spacer()
                     
                     SpeedHUDPill(isLandscape: isLandscape)
-                        .padding(.bottom, 16)
+                        .padding(.bottom, geo.safeAreaInsets.bottom + 16)
                 }
-                .padding(.top, geo.safeAreaInsets.top)
-                .padding(.bottom, geo.safeAreaInsets.bottom)
             }
+            .animation(.spring(response: 0.5, dampingFraction: 0.8), value: driveViewModel.isNavigating)
+        }
+    }
+}
+
+fileprivate struct NavigationInstructionCard: View {
+    @EnvironmentObject var driveViewModel: DriveViewModel
+    
+    var body: some View {
+        HStack(spacing: 20) {
+            // Maneuver Icon
+            Image(systemName: driveViewModel.nextManeuverImageName)
+                .font(.system(size: 32, weight: .bold))
+                .foregroundColor(DesignSystem.cyan)
+                .frame(width: 60, height: 60)
+                .background(DesignSystem.cyan.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(driveViewModel.nextManeuverInstruction.uppercased())
+                    .font(.system(size: 18, weight: .black))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                
+                HStack(spacing: 8) {
+                    Text(formatDistance(driveViewModel.distanceToNextTurn))
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(DesignSystem.cyan)
+                    
+                    if let eta = driveViewModel.eta {
+                        Text("•")
+                            .foregroundColor(.white.opacity(0.4))
+                        Text("ETA \(eta, format: .dateTime.hour().minute())")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                }
+            }
+            
+            Spacer()
+            
+            Button(action: {
+                Task { await driveViewModel.endNavigation() }
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white.opacity(0.6))
+                    .padding(10)
+                    .background(Circle().fill(Color.white.opacity(0.1)))
+            }
+        }
+        .glassStyle()
+    }
+    
+    private func formatDistance(_ distance: CLLocationDistance) -> String {
+        if distance < 100 {
+            return "\(Int(distance)) m"
+        } else if distance < 1000 {
+            return "\(Int(distance)) m"
+        } else {
+            return String(format: "%.1f km", distance / 1000.0)
         }
     }
 }
@@ -41,69 +107,81 @@ public struct MapWithHUDView: View {
 fileprivate struct SearchBarView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @State private var searchText = ""
+    @FocusState private var isFocused: Bool
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundColor(Color(hex: "#00D4FF"))
-                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(DesignSystem.cyan)
+                    .font(.system(size: 18, weight: .bold))
                 
-                TextField("Search destination...", text: $searchText)
-                    .foregroundColor(Color(hex: "#FFFFFF"))
-                    .font(.system(size: 16))
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-                    .onSubmit {
-                        performSearch()
+                TextField("Where to?", text: $searchText)
+                    .foregroundColor(.white)
+                    .font(.system(size: 17, weight: .medium))
+                    .focused($isFocused)
+                    .onChange(of: searchText) { _, newValue in
+                        driveViewModel.updateSearchQuery(newValue)
                     }
                 
                 if !searchText.isEmpty {
-                    Button("Go") {
-                        performSearch()
+                    Button(action: { 
+                        searchText = ""
+                        driveViewModel.updateSearchQuery("")
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.white.opacity(0.4))
                     }
-                    .foregroundColor(Color(hex: "#00D4FF"))
-                    .font(.system(size: 16, weight: .bold))
                 }
             }
             .padding(.horizontal, 16)
-            .frame(height: 50)
-            .background(Color(hex: "#0F1022").opacity(0.92))
-            .cornerRadius(16)
+            .frame(height: 56)
+            .glassStyle()
             
-            if !driveViewModel.searchResults.isEmpty {
-                List(driveViewModel.searchResults, id: \.self) { item in
-                    Button(action: {
-                        Task {
-                            await driveViewModel.startNavigation(to: item)
-                            driveViewModel.searchResults.removeAll()
-                            searchText = ""
+            if !driveViewModel.searchCompletions.isEmpty && isFocused {
+                VStack(spacing: 0) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(driveViewModel.searchCompletions, id: \.self) { completion in
+                                Button(action: {
+                                    Task {
+                                        await driveViewModel.selectCompletion(completion)
+                                        if let item = driveViewModel.searchResults.first {
+                                            await driveViewModel.startNavigation(to: item)
+                                            searchText = ""
+                                            isFocused = false
+                                        }
+                                    }
+                                }) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(completion.title)
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .foregroundColor(.white)
+                                        
+                                        if !completion.subtitle.isEmpty {
+                                            Text(completion.subtitle)
+                                                .font(.system(size: 13))
+                                                .foregroundColor(.white.opacity(0.5))
+                                        }
+                                    }
+                                    .padding(.vertical, 12)
+                                    .padding(.horizontal, 16)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                
+                                if completion != driveViewModel.searchCompletions.last {
+                                    Divider()
+                                        .background(Color.white.opacity(0.1))
+                                        .padding(.horizontal, 16)
+                                }
+                            }
                         }
-                    }) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.name ?? "Unknown Location")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(Color(hex: "#FFFFFF"))
-                            
-                            Text(item.placemark.title ?? "")
-                                .font(.system(size: 12))
-                                .foregroundColor(Color(hex: "#8888AA"))
-                        }
-                        .padding(.vertical, 4)
                     }
-                    .listRowBackground(Color(hex: "#0F1022").opacity(0.92))
+                    .frame(maxHeight: 280)
                 }
-                .listStyle(PlainListStyle())
-                .frame(maxHeight: 300)
-                .cornerRadius(16)
-                .scrollContentBackground(.hidden)
+                .glassStyle()
+                .padding(.top, 4)
             }
-        }
-    }
-    
-    private func performSearch() {
-        Task {
-            await driveViewModel.searchDestination(query: searchText)
         }
     }
 }
@@ -113,7 +191,7 @@ fileprivate struct SpeedHUDPill: View {
     let isLandscape: Bool
     
     var body: some View {
-        HStack(alignment: .center, spacing: isLandscape ? 12 : 24) {
+        HStack(alignment: .center, spacing: isLandscape ? 16 : 24) {
             
             // Limit Sign
             LimitSignView(limit: driveViewModel.limit, source: driveViewModel.speedLimitSource, isLandscape: isLandscape)
@@ -123,35 +201,28 @@ fileprivate struct SpeedHUDPill: View {
                 if driveViewModel.isRecording {
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(Color(hex: "#FF3D71"))
+                            .fill(DesignSystem.alertRed)
                             .frame(width: 6, height: 6)
-                            // Basic blink simulation using timer could be added here, keeping simple for now
                         Text("REC \(formatDuration(driveViewModel.sessionDuration))")
-                            .font(.system(size: isLandscape ? 9 : 11, weight: .bold))
-                            .foregroundColor(Color(hex: "#FF3D71"))
+                            .font(.system(size: isLandscape ? 10 : 12, weight: .black))
+                            .foregroundColor(DesignSystem.alertRed)
                     }
                     .padding(.bottom, 2)
                 }
                 
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text("\(Int(driveViewModel.speed))")
-                        .font(.system(size: isLandscape ? 36 : 52, weight: .black, design: .rounded))
-                        .foregroundColor(speedColor(status: driveViewModel.status))
+                        .font(.system(size: isLandscape ? 44 : 56, weight: .black, design: .rounded))
+                        .foregroundColor(DesignSystem.colorForStatus(driveViewModel.status))
+                        .contentTransition(.numericText())
                     
                     Text("MPH")
-                        .font(.system(size: isLandscape ? 10 : 12, weight: .bold))
-                        .foregroundColor(Color(hex: "#8888AA"))
+                        .font(.system(size: isLandscape ? 12 : 14, weight: .black))
+                        .foregroundColor(.white.opacity(0.4))
                 }
             }
             
-            // Status Dot
-            Circle()
-                .fill(statusDotColor(status: driveViewModel.status))
-                .frame(width: 14, height: 14)
-                .shadow(color: statusDotColor(status: driveViewModel.status).opacity(0.5), radius: 6)
-                // We pulse the scale when over
-                .scaleEffect(driveViewModel.status == .over ? 1.4 : 1.0)
-                .animation(driveViewModel.status == .over ? Animation.easeInOut(duration: 0.6).repeatForever(autoreverses: true) : .default, value: driveViewModel.status)
+            Spacer(minLength: 0)
             
             // Start/Stop Button
             Button(action: {
@@ -162,38 +233,18 @@ fileprivate struct SpeedHUDPill: View {
                 }
             }) {
                 Text(driveViewModel.isRecording ? "STOP" : "START")
-                    .font(.system(size: isLandscape ? 11 : 13, weight: .bold))
+                    .font(.system(size: isLandscape ? 12 : 14, weight: .black))
                     .foregroundColor(driveViewModel.isRecording ? .white : .black)
-                    .frame(width: 72, height: 40)
-                    .background(driveViewModel.isRecording ? Color(hex: "#FF3D71") : Color(hex: "#00D4FF"))
-                    .cornerRadius(20)
+                    .frame(width: 80, height: 44)
+                    .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
+                    .cornerRadius(22)
+                    .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
             }
         }
-        .padding(.horizontal, isLandscape ? 16 : 24)
-        .padding(.vertical, isLandscape ? 12 : 16)
-        .frame(minWidth: 340)
-        .background(
-            Color(hex: "#0F1022").opacity(0.95)
-                .background(Material.ultraThinMaterial)
-        )
-        .cornerRadius(28)
-        .shadow(color: Color.black.opacity(0.4), radius: 20, x: 0, y: 10)
-    }
-    
-    private func speedColor(status: SpeedStatus) -> Color {
-        switch status {
-        case .over: return Color(hex: "#FF3D71")
-        case .warning: return Color(hex: "#FFB800")
-        case .safe: return Color(hex: "#FFFFFF")
-        }
-    }
-    
-    private func statusDotColor(status: SpeedStatus) -> Color {
-        switch status {
-        case .over: return Color(hex: "#FF3D71")
-        case .warning: return Color(hex: "#FFB800")
-        case .safe: return Color(hex: "#00FF9D")
-        }
+        .padding(.horizontal, isLandscape ? 20 : 24)
+        .padding(.vertical, isLandscape ? 14 : 18)
+        .frame(minWidth: 320)
+        .glassStyle()
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {

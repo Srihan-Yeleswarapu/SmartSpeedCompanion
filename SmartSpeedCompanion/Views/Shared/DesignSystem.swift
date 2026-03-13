@@ -26,4 +26,17 @@ public struct DesignSystem {
         case .over: return alertRed
         }
     }
+    
+    // Liquid Glass Tokens
+    public static let glassBg = Color(white: 1.0, opacity: 0.1)
+    public static let glassBorder = Color(white: 1.0, opacity: 0.2)
+    public static let glassVibrancy = Color(white: 1.0, opacity: 0.05)
+    
+    public struct LiquidGlass {
+        public static let material = Material.ultraThinMaterial
+        public static let shadowColor = Color.black.opacity(0.3)
+        public static let shadowRadius: CGFloat = 15
+        public static let cornerRadius: CGFloat = 20
+        public static let borderWidth: CGFloat = 0.5
+    }
 }

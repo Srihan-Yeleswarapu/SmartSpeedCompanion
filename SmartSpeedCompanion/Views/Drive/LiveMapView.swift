@@ -10,30 +10,48 @@ public struct LiveMapView: UIViewRepresentable {
         let map = MKMapView()
         map.delegate = context.coordinator
         map.overrideUserInterfaceStyle = .dark
-        map.mapType = .standard
+        map.mapType = .mutedStandard // Sleeker base for overlays
         map.showsUserLocation = true
-        
-        // Settings requested
         map.showsCompass = true
         map.showsScale = true
+        map.isPitchEnabled = true
+        map.isRotateEnabled = true
+        
+        // Premium Apple Maps defaults
+        let filter = MKPointOfInterestFilter(excluding: [.university, .school])
+        map.pointOfInterestFilter = filter
         
         return map
     }
     
     public func updateUIView(_ uiView: MKMapView, context: Context) {
-        // Update tracking mode
+        // Update tracking and Camera
         if viewModel.isRecording || viewModel.isNavigating {
             if uiView.userTrackingMode != .followWithHeading {
                 uiView.setUserTrackingMode(.followWithHeading, animated: true)
             }
-            if let cam = uiView.camera.copy() as? MKMapCamera {
-                cam.altitude = 500 // ~zoom level for driving
-                uiView.setCamera(cam, animated: true)
-            }
+            
+            // 3D Perspective Camera
+            let camera = MKMapCamera(
+                lookingAtCenter: uiView.userLocation.coordinate,
+                fromDistance: 400,
+                pitch: 60,
+                heading: uiView.userLocation.heading?.trueHeading ?? 0
+            )
+            uiView.setCamera(camera, animated: true)
+            
         } else {
             if uiView.userTrackingMode != .follow {
                 uiView.setUserTrackingMode(.follow, animated: true)
             }
+            // Reset to flat view when not navigating
+            let camera = MKMapCamera(
+                lookingAtCenter: uiView.userLocation.coordinate,
+                fromDistance: 1000,
+                pitch: 0,
+                heading: 0
+            )
+            uiView.setCamera(camera, animated: true)
         }
         
         // Clear all previous non-user overlays and annotations
@@ -43,8 +61,8 @@ public struct LiveMapView: UIViewRepresentable {
         // Display Route
         if viewModel.isNavigating, let route = viewModel.currentRoute {
             let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
-            polyline.statusColor = UIColor(red: 0.0, green: 0.83, blue: 1.0, alpha: 1.0) // #00D4FF setup
-            uiView.addOverlay(polyline)
+            polyline.statusColor = UIColor(DesignSystem.cyan)
+            uiView.addOverlay(polyline, level: .aboveRoads)
             
             if let dest = viewModel.destination {
                 let annotation = MKPointAnnotation()
@@ -55,6 +73,10 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         // Display Retroactive History Line
+        updateHistoryOverlays(uiView)
+    }
+    
+    private func updateHistoryOverlays(_ uiView: MKMapView) {
         if let session = viewModel.sessionRecorder.currentSession, !session.readings.isEmpty {
             var safeCoords: [CLLocationCoordinate2D] = []
             var overCoords: [CLLocationCoordinate2D] = []
@@ -64,16 +86,16 @@ public struct LiveMapView: UIViewRepresentable {
                 if reading.overLimit {
                     if !safeCoords.isEmpty {
                         let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                        polyline.statusColor = UIColor(red: 0.0, green: 0.83, blue: 1.0, alpha: 1.0) // Safe Cyan
-                        uiView.addOverlay(polyline)
+                        polyline.statusColor = UIColor(DesignSystem.cyan)
+                        uiView.addOverlay(polyline, level: .aboveRoads)
                         safeCoords.removeAll()
                     }
                     overCoords.append(coord)
                 } else {
                     if !overCoords.isEmpty {
                         let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
-                        polyline.statusColor = UIColor(red: 1.0, green: 0.24, blue: 0.44, alpha: 1.0) // Over Red
-                        uiView.addOverlay(polyline)
+                        polyline.statusColor = UIColor(DesignSystem.alertRed)
+                        uiView.addOverlay(polyline, level: .aboveRoads)
                         overCoords.removeAll()
                     }
                     safeCoords.append(coord)
@@ -81,13 +103,13 @@ public struct LiveMapView: UIViewRepresentable {
             }
             if !safeCoords.isEmpty {
                 let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                polyline.statusColor = UIColor(red: 0.0, green: 0.83, blue: 1.0, alpha: 1.0)
-                uiView.addOverlay(polyline)
+                polyline.statusColor = UIColor(DesignSystem.cyan)
+                uiView.addOverlay(polyline, level: .aboveRoads)
             }
             if !overCoords.isEmpty {
                 let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
-                polyline.statusColor = UIColor(red: 1.0, green: 0.24, blue: 0.44, alpha: 1.0)
-                uiView.addOverlay(polyline)
+                polyline.statusColor = UIColor(DesignSystem.alertRed)
+                uiView.addOverlay(polyline, level: .aboveRoads)
             }
         }
     }
@@ -107,7 +129,9 @@ public struct LiveMapView: UIViewRepresentable {
             if let polyline = overlay as? NavPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
                 renderer.strokeColor = polyline.statusColor
-                renderer.lineWidth = 6.0
+                renderer.lineWidth = 10.0 // Thicker, bolder lines for premium look
+                renderer.lineCap = .round
+                renderer.lineJoin = .round
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
