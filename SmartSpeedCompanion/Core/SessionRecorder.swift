@@ -28,6 +28,12 @@ public final class SessionRecorder: ObservableObject {
         currentSession = newSession
         isRecording = true
         
+        if let location = locationManager.latestLocation {
+            geocodeLocation(location) { name in
+                newSession.startLocationName = name
+            }
+        }
+        
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.recordDataPoint()
@@ -44,19 +50,48 @@ public final class SessionRecorder: ObservableObject {
         
         session.endTime = .now
         
-        // Save to SwiftData
-        if let context = modelContext {
-            context.insert(session)
-            do {
-                try context.save()
-            } catch {
-                print("Failed to save session: \(error)")
+        let completedSession = session
+        currentSession = nil
+        
+        if let location = locationManager.latestLocation {
+            geocodeLocation(location) { [weak self] name in
+                completedSession.endLocationName = name
+                self?.saveSession(completedSession)
             }
+        } else {
+            saveSession(completedSession)
         }
         
-        let completedSession = currentSession
-        currentSession = nil
         return completedSession
+    }
+    
+    private func saveSession(_ session: DriveSession) {
+        if let context = modelContext {
+            // We want to make sure it's on the main thread for mainactor modelContext
+            Task { @MainActor in
+                context.insert(session)
+                do {
+                    try context.save()
+                    print("Session saved successfully!")
+                } catch {
+                    print("Failed to save session: \(error)")
+                }
+            }
+        } else {
+            print("SessionRecorder lacks a ModelContext! Cannot save session.")
+        }
+    }
+    
+    private func geocodeLocation(_ location: CLLocation, completion: @escaping (String?) -> Void) {
+        let geocoder = CLGeocoder()
+        geocoder.reverseGeocodeLocation(location) { placemarks, error in
+            if let p = placemarks?.first {
+                let name = p.name ?? p.thoroughfare ?? p.locality ?? "Unknown Location"
+                completion(name)
+            } else {
+                completion("Unknown Location")
+            }
+        }
     }
     
     private func recordDataPoint() {

@@ -7,15 +7,23 @@ import WidgetKit
 struct SpeedSenseApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
-    // Global shared ViewModel
-    @StateObject private var driveViewModel = DriveViewModel()
+    // Create shared container so background and app intents work smoothly
+    let container: ModelContainer
+    
+    init() {
+        do {
+            container = try ModelContainer(for: DriveSession.self, SpeedReading.self)
+            AppDelegate.sharedDriveViewModel.sessionRecorder.setModelContext(container.mainContext)
+        } catch {
+            fatalError("Failed to initialize SwiftData model container.")
+        }
+    }
     
     var body: some Scene {
         WindowGroup {
             DriveRootView()
-                .environmentObject(driveViewModel)
-                // We use an explicit container for SwiftData persistence
-                .modelContainer(for: [DriveSession.self, SpeedReading.self])
+                .environmentObject(AppDelegate.sharedDriveViewModel)
+                .modelContainer(container) // Share same exact container with SwiftData queries
         }
     }
 }

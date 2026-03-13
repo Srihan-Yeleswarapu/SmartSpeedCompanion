@@ -7,6 +7,8 @@ public final class DriveSession {
     @Attribute(.unique) public var id: UUID
     public var startTime: Date
     public var endTime: Date?
+    public var startLocationName: String?
+    public var endLocationName: String?
     
     @Relationship(deleteRule: .cascade)
     public var readings: [SpeedReading]
@@ -15,6 +17,26 @@ public final class DriveSession {
         self.id = id
         self.startTime = startTime
         self.readings = readings
+    }
+    
+    public var title: String {
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "MMM d"
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "h:mm a"
+        
+        let dayStr = dayFormatter.string(from: startTime)
+        let timeStr = timeFormatter.string(from: startTime)
+        
+        let suffix = "at \(timeStr) on \(dayStr)"
+        
+        if let start = startLocationName, let end = endLocationName, start != "Unknown Location", end != "Unknown Location" {
+            return "\(start) to \(end) \(suffix)"
+        } else if let start = startLocationName, start != "Unknown Location" {
+            return "\(start) \(suffix)"
+        } else {
+            return "Drive Session \(suffix)"
+        }
     }
     
     /// Computes the duration of the drive session in seconds.

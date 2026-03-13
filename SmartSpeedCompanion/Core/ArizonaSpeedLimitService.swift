@@ -85,30 +85,49 @@ public class ArizonaSpeedLimitService {
             let c2 = coords[i+1]
             guard c1.count >= 2, c2.count >= 2 else { continue }
             
-            let p1 = CLLocationCoordinate2D(latitude: c1[1], longitude: c1[0]) // Lat is [1], Lon is [0]
+            let p1 = CLLocationCoordinate2D(latitude: c1[1], longitude: c1[0])
             let p2 = CLLocationCoordinate2D(latitude: c2[1], longitude: c2[0])
             
-            let midLat = (p1.latitude + p2.latitude) / 2.0
-            let midLon = (p1.longitude + p2.longitude) / 2.0
+            // Index at start, end, and middle to ensure the segment is found in all relevant grid cells
+            let pointsToStore = [
+                p1,
+                p2,
+                CLLocationCoordinate2D(latitude: (p1.latitude + p2.latitude) / 2.0, longitude: (p1.longitude + p2.longitude) / 2.0)
+            ]
             
-            let key = String(format: "%.2f_%.2f", midLat, midLon)
-            grid[key, default: []].append((p1, p2, limit))
+            var uniqueKeys = Set<String>()
+            for pt in pointsToStore {
+                uniqueKeys.insert(String(format: "%.2f_%.2f", pt.latitude, pt.longitude))
+            }
+            
+            for key in uniqueKeys {
+                grid[key, default: []].append((p1, p2, limit))
+            }
         }
     }
     
     public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int {
+        // If still loading, wait up to 2 seconds for it to finish
+        if isLoading && !isLoaded {
+            for _ in 0..<20 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                if isLoaded { break }
+            }
+        }
+
         if !isLoaded {
-            throw URLError(.cannotDecodeContentData) // Or custom error
+            throw URLError(.cannotDecodeContentData)
         }
         
         let searchLat = coordinate.latitude
         let searchLon = coordinate.longitude
         
-        // Search current 2-decimal grid cell and the 8 neighbors
+        // Search current cell and immediate neighbors (9 cells total)
+        // A 0.01 degree cell is ~1.1km, so 3x3 covers ~3.3km x 3.3km
         let offsets = [-0.01, 0.0, 0.01]
         
         var closestLimit: Int?
-        var minDistance: CLLocationDistance = 100 // Max 100 meters snap distance
+        var minDistance: CLLocationDistance = 60 // Snap to roads within 60 meters
         
         let targetLoc = CLLocation(latitude: searchLat, longitude: searchLon)
         

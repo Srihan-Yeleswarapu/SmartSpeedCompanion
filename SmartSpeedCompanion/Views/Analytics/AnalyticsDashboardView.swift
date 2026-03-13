@@ -28,7 +28,7 @@ public struct AnalyticsDashboardView: View {
                         Picker("Session", selection: $viewModel.selectedSession) {
                             Text("Select a Session").tag(DriveSession?.none)
                             ForEach(sessions) { session in
-                                Text(session.startTime, format: .dateTime.month().day().hour().minute()).tag(DriveSession?.some(session))
+                                Text(session.title).tag(DriveSession?.some(session))
                             }
                         }
                         .pickerStyle(.menu)
