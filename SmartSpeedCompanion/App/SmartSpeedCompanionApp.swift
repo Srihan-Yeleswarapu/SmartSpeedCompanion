@@ -4,7 +4,7 @@ import ActivityKit
 import WidgetKit
 
 @main
-struct SmartSpeedCompanionApp: App {
+struct SpeedSenseApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     // Global shared ViewModel

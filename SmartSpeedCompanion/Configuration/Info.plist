@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Smart Speed Companion needs constant background location access to monitor speed and provide CarPlay navigation alerts even when the app is backgrounded.</string>
+    <string>Speed Sense needs constant background location access to monitor speed and provide CarPlay navigation alerts even when the app is backgrounded.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>We need your location to show current speed in the dashboard.</string>
     <key>UIBackgroundModes</key>

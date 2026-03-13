@@ -1,4 +1,4 @@
-name: SmartSpeedCompanion
+name: SpeedSense
 options:
   bundleIdPrefix: com.smartspeedcompanion
   deploymentTarget:
@@ -19,7 +19,7 @@ settings:
 targets:
 
   # ── Main iPhone App ──────────────────────────────────────────────
-  SmartSpeedCompanion:
+  SpeedSense:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
@@ -40,6 +40,8 @@ targets:
     # NOTE: LiveActivities and Widgets folders are excluded from main
     # app sources for now — they compile as separate extension targets
     # which are disabled below until Xcode 16 runner is available
+    # (Leaving folder paths as SmartSpeedCompanion for now to avoid massive file moving,
+    # but display names and bundle IDs are updated)
 
     resources:
       - path: SmartSpeedCompanion/Resources
@@ -50,9 +52,9 @@ targets:
     info:
       path: SmartSpeedCompanion/Configuration/Info.plist
       properties:
-        CFBundleName: Smart Speed
-        CFBundleDisplayName: Smart Speed Companion
-        CFBundleIdentifier: com.smartspeedcompanion.app
+        CFBundleName: Speed Sense
+        CFBundleDisplayName: Speed Sense
+        CFBundleIdentifier: com.speedsense.app
         CFBundleVersion: "1"
         CFBundleShortVersionString: "1.0.0"
         UILaunchScreen:
@@ -71,8 +73,8 @@ targets:
           - audio
           - fetch
           - remote-notification
-        NSLocationAlwaysAndWhenInUseUsageDescription: "Smart Speed Companion needs your location to monitor your speed in real time."
-        NSLocationWhenInUseUsageDescription: "Smart Speed Companion needs your location to monitor your speed."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Speed Sense needs your location to monitor your speed in real time."
+        NSLocationWhenInUseUsageDescription: "Speed Sense needs your location to monitor your speed."
         NSMotionUsageDescription: "Used to detect sudden deceleration for crash detection."
         NSSiriUsageDescription: "Use Siri to start and stop your drive sessions."
         CPSupportedTemplates:
@@ -84,7 +86,7 @@ targets:
 
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.smartspeedcompanion.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.speedsense.app
         INFOPLIST_FILE: SmartSpeedCompanion/Configuration/Info.plist
         CODE_SIGN_ENTITLEMENTS: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
@@ -94,10 +96,10 @@ targets:
     dependencies: []
 
 schemes:
-  SmartSpeedCompanion:
+  SpeedSense:
     build:
       targets:
-        SmartSpeedCompanion: all
+        SpeedSense: all
     run:
       config: Debug
     archive:

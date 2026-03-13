@@ -1,5 +1,5 @@
 // CarPlaySceneDelegate.swift
-// CarPlay is the PRIMARY interface for Smart Speed Companion.
+// CarPlay is the PRIMARY interface for Speed Sense.
 // The entire driving experience lives here.
 
 import CarPlay
