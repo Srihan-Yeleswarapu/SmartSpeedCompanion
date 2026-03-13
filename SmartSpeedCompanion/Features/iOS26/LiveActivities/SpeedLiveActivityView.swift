@@ -2,6 +2,7 @@
 import SwiftUI
 import WidgetKit
 import ActivityKit
+import CoreLocation
 
 @available(iOS 16.1, *)
 struct SpeedLiveActivityView: Widget {
