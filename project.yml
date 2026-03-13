@@ -38,7 +38,7 @@ targets:
 
     # NOTE: LiveActivities and Widgets folders are excluded from main
     # app sources for now — they compile as separate extension targets
-    # which are disabled below until Xcode 16 runner is available.
+    # which are disabled below until Xcode 16 runner is available
 
     resources:
       - path: SmartSpeedCompanion/Resources
