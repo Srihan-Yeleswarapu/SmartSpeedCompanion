@@ -88,6 +88,7 @@ targets:
         INFOPLIST_FILE: SmartSpeedCompanion/Configuration/Info.plist
         CODE_SIGN_ENTITLEMENTS: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
     # SpeedWidget and SpeedLiveActivity removed from dependencies
     # until iOS 26 / Xcode 16 runner is available on GitHub Actions
