@@ -4,7 +4,7 @@ import ActivityKit
 
 @available(iOS 16.1, *)
 public class LiveActivityManager {
-    static let shared = LiveActivityManager()
+    public static let shared = LiveActivityManager()
     
     private var currentActivity: Activity<SpeedActivityAttributes>?
     

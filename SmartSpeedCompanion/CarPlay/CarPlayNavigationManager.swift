@@ -62,12 +62,16 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         return await searchDestination(query: query, near: viewModel.locationManager.latestLocation?.coordinate ?? CLLocationCoordinate2D())
     }
     
-    public func startNavigationTrigger(to destination: MKMapItem) async {
-        do {
-            let route = try await calculateRoute(to: destination)
-            startNavigation(route: route, destination: destination)
-        } catch {
-            print("Failed to calculate route: \(error)")
+    public func startNavigationTrigger(to destination: MKMapItem, route: MKRoute?) async {
+        if let providedRoute = route {
+            startNavigation(route: providedRoute, destination: destination)
+        } else {
+            do {
+                let route = try await calculateRoute(to: destination)
+                startNavigation(route: route, destination: destination)
+            } catch {
+                print("Failed to calculate route: \(error)")
+            }
         }
     }
     

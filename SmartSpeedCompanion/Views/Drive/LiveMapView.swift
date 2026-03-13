@@ -34,6 +34,38 @@ public struct LiveMapView: UIViewRepresentable {
         
         // Dynamic Camera logic for Premium Navigation experience
         updateSmartCamera(uiView)
+        
+        // Update overlays (History, Route, Cameras)
+        updateOverlays(uiView)
+    }
+    
+    private func updateOverlays(_ uiView: MKMapView) {
+        // Clear all previous non-user overlays and annotations
+        uiView.removeOverlays(uiView.overlays)
+        uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
+        
+        // Display Routes & Destination
+        if viewModel.isNavigating, let route = viewModel.currentRoute {
+            let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
+            polyline.statusColor = UIColor(DesignSystem.cyan)
+            uiView.addOverlay(polyline, level: .aboveRoads)
+            
+            if let dest = viewModel.destination {
+                let annotation = MKPointAnnotation()
+                annotation.coordinate = dest.placemark.coordinate
+                annotation.title = dest.name
+                uiView.addAnnotation(annotation)
+            }
+        }
+        
+        // Display Speed Cameras
+        for camera in viewModel.nearbyCameras {
+            let annotation = SpeedCameraAnnotation(camera: camera)
+            uiView.addAnnotation(annotation)
+        }
+        
+        // Display Retroactive History Line
+        updateHistoryOverlays(uiView)
     }
     
     private func updateSmartCamera(_ uiView: MKMapView) {
@@ -81,33 +113,7 @@ public struct LiveMapView: UIViewRepresentable {
         }
     }
         
-        // Clear all previous non-user overlays and annotations
-        uiView.removeOverlays(uiView.overlays)
-        uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
-        
-        // Display Routes & Destination
-        if viewModel.isNavigating, let route = viewModel.currentRoute {
-            let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
-            polyline.statusColor = UIColor(DesignSystem.cyan)
-            uiView.addOverlay(polyline, level: .aboveRoads)
-            
-            if let dest = viewModel.destination {
-                let annotation = MKPointAnnotation()
-                annotation.coordinate = dest.placemark.coordinate
-                annotation.title = dest.name
-                uiView.addAnnotation(annotation)
-            }
-        }
-        
-        // Display Speed Cameras
-        for camera in viewModel.nearbyCameras {
-            let annotation = SpeedCameraAnnotation(camera: camera)
-            uiView.addAnnotation(annotation)
-        }
-        
-        // Display Retroactive History Line
-        updateHistoryOverlays(uiView)
-    }
+
     
     private func updateHistoryOverlays(_ uiView: MKMapView) {
         if let session = viewModel.sessionRecorder.currentSession, !session.readings.isEmpty {
