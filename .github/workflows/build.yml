@@ -2,7 +2,7 @@ name: Build SmartSpeedCompanion (Unsigned)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ version2 ]
   workflow_dispatch:
 
 jobs:
