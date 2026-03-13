@@ -30,25 +30,62 @@ public struct LiveMapView: UIViewRepresentable {
         
         if uiView.userTrackingMode != targetMode {
             uiView.setUserTrackingMode(targetMode, animated: true)
-            
-            // Initial camera configuration for the mode
-            let camera = MKMapCamera()
-            camera.centerCoordinate = uiView.userLocation.coordinate
-            if targetMode == .followWithHeading {
-                camera.pitch = 60
-                camera.altitude = 400
-            } else {
-                camera.pitch = 0
-                camera.altitude = 1000
-            }
-            uiView.setCamera(camera, animated: true)
         }
+        
+        // Dynamic Camera logic for Premium Navigation experience
+        updateSmartCamera(uiView)
+    }
+    
+    private func updateSmartCamera(_ uiView: MKMapView) {
+        let speed = viewModel.speed
+        let distanceToTurn = viewModel.distanceToNextTurn
+        let isNavigating = viewModel.isNavigating
+        
+        var targetAltitude: Double = 1000
+        var targetPitch: Double = 0
+        
+        if isNavigating {
+            // Navigation Mode: 3D perspective
+            targetPitch = 60
+            
+            if distanceToTurn < 200 {
+                // Approaching turn: zoom in deep
+                targetAltitude = 150
+            } else if speed > 50 {
+                // Highway speeds: zoom out to see ahead
+                targetAltitude = 800
+            } else {
+                // City driving
+                targetAltitude = 400
+            }
+        } else if viewModel.isRecording {
+            // Just recording: milder perspective
+            targetPitch = 45
+            targetAltitude = speed > 40 ? 1200 : 600
+        } else {
+            // Idle/Browsing: flat view
+            targetPitch = 0
+            targetAltitude = 1000
+        }
+        
+        // Only update if difference is significant to avoid jitter
+        let currentCamera = uiView.camera
+        if abs(currentCamera.altitude - targetAltitude) > 50 || abs(currentCamera.pitch - targetPitch) > 5 {
+            let newCamera = MKMapCamera(
+                lookingAtCenter: uiView.userLocation.coordinate,
+                fromDistance: targetAltitude,
+                pitch: targetPitch,
+                heading: uiView.userLocation.heading?.trueHeading ?? uiView.camera.heading
+            )
+            uiView.setCamera(newCamera, animated: true)
+        }
+    }
         
         // Clear all previous non-user overlays and annotations
         uiView.removeOverlays(uiView.overlays)
         uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
         
-        // Display Route
+        // Display Routes & Destination
         if viewModel.isNavigating, let route = viewModel.currentRoute {
             let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
             polyline.statusColor = UIColor(DesignSystem.cyan)
@@ -60,6 +97,12 @@ public struct LiveMapView: UIViewRepresentable {
                 annotation.title = dest.name
                 uiView.addAnnotation(annotation)
             }
+        }
+        
+        // Display Speed Cameras
+        for camera in viewModel.nearbyCameras {
+            let annotation = SpeedCameraAnnotation(camera: camera)
+            uiView.addAnnotation(annotation)
         }
         
         // Display Retroactive History Line
@@ -126,6 +169,43 @@ public struct LiveMapView: UIViewRepresentable {
             }
             return MKOverlayRenderer(overlay: overlay)
         }
+        
+        public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if let cameraAnnotation = annotation as? SpeedCameraAnnotation {
+                let identifier = "SpeedCamera"
+                var view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier)
+                if view == nil {
+                    view = MKAnnotationView(annotation: cameraAnnotation, reuseIdentifier: identifier)
+                    view?.canShowCallout = true
+                    
+                    // Create a custom icon for speed camera
+                    let imageView = UIImageView(image: UIImage(systemName: "camera.badge.ellipsis"))
+                    imageView.tintColor = .white
+                    imageView.backgroundColor = UIColor(DesignSystem.alertRed)
+                    imageView.layer.cornerRadius = 16
+                    imageView.frame = CGRect(x: 0, y: 0, width: 32, height: 32)
+                    imageView.contentMode = .center
+                    view?.addSubview(imageView)
+                    view?.frame = imageView.frame
+                } else {
+                    view?.annotation = cameraAnnotation
+                }
+                return view
+            }
+            return nil
+        }
+    }
+}
+
+class SpeedCameraAnnotation: NSObject, MKAnnotation {
+    let coordinate: CLLocationCoordinate2D
+    let title: String?
+    let subtitle: String?
+    
+    init(camera: SpeedCamera) {
+        self.coordinate = CLLocationCoordinate2D(latitude: camera.latitude, longitude: camera.longitude)
+        self.title = "Speed Camera"
+        self.subtitle = camera.location ?? camera.roadway
     }
 }
 

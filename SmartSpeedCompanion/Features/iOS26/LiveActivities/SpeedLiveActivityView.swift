@@ -28,6 +28,20 @@ struct SpeedLiveActivityView: Widget {
                         Text(formatTime(context.state.sessionDuration))
                             .font(.system(.body, design: .monospaced))
                     }
+                } else if let maneuver = context.state.nextManeuver {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        HStack(spacing: 4) {
+                            if let img = context.state.nextManeuverImageName {
+                                Image(systemName: img)
+                                    .foregroundColor(DesignSystem.cyan)
+                            }
+                            Text(formatDistance(context.state.distanceToNextTurn ?? 0))
+                                .font(.headline.bold())
+                        }
+                        Text(maneuver)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
                 }
             }
             .padding()
@@ -46,20 +60,50 @@ struct SpeedLiveActivityView: Widget {
             DynamicIsland {
                 // Expanded
                 DynamicIslandExpandedRegion(.center) {
-                    VStack {
-                        Text("\(Int(context.state.speed))")
-                            .font(.system(size: 60, weight: .black, design: .rounded))
-                            .foregroundColor(colorForStatus(context.state.status))
-                        
+                    if let maneuver = context.state.nextManeuver {
                         HStack(spacing: 20) {
-                            Text("LIMIT: \(context.state.speedLimit)")
-                            if context.state.isRecording {
-                                Text(formatTime(context.state.sessionDuration))
-                                    .monospacedDigit()
+                            if let img = context.state.nextManeuverImageName {
+                                Image(systemName: img)
+                                    .font(.title)
+                                    .foregroundColor(DesignSystem.cyan)
+                            }
+                            
+                            VStack(alignment: .leading) {
+                                Text(maneuver)
+                                    .font(.headline)
+                                Text(formatDistance(context.state.distanceToNextTurn ?? 0))
+                                    .font(.subheadline.bold())
+                                    .foregroundColor(DesignSystem.cyan)
+                            }
+                            
+                            Spacer()
+                            
+                            if let eta = context.state.eta {
+                                VStack(alignment: .trailing) {
+                                    Text("ETA")
+                                        .font(.caption)
+                                    Text(eta, format: .dateTime.hour().minute())
+                                        .font(.headline)
+                                }
                             }
                         }
-                        .font(.caption.bold())
-                        .foregroundColor(.gray)
+                        .padding(.horizontal)
+                    } else {
+                        VStack {
+                            Text("\(Int(context.state.speed))")
+                                .font(.system(size: 60, weight: .black, design: .rounded))
+                                .foregroundColor(colorForStatus(context.state.status))
+                            
+                            HStack(spacing: 20) {
+                                Text("LIMIT: \(context.state.speedLimit)")
+                                if context.state.isRecording {
+                                    Text(formatTime(context.state.sessionDuration))
+                                        .monospacedDigit()
+                                }
+                            }
+                            .font(.caption.bold())
+                            .foregroundColor(.gray)
+                        }
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -75,19 +119,44 @@ struct SpeedLiveActivityView: Widget {
                     .padding(.horizontal)
                 }
             } compactLeading: {
-                Text("\(Int(context.state.speed))")
-                    .font(.system(.headline, design: .rounded).bold())
-                    .foregroundColor(colorForStatus(context.state.status))
+                if let img = context.state.nextManeuverImageName {
+                    Image(systemName: img)
+                        .foregroundColor(DesignSystem.cyan)
+                } else {
+                    Text("\(Int(context.state.speed))")
+                        .font(.system(.headline, design: .rounded).bold())
+                        .foregroundColor(colorForStatus(context.state.status))
+                }
             } compactTrailing: {
-                Circle()
-                    .fill(colorForStatus(context.state.status))
-                    .frame(width: 8, height: 8)
+                if context.state.nextManeuver != nil {
+                    Text(formatDistance(context.state.distanceToNextTurn ?? 0))
+                        .font(.caption.bold())
+                        .foregroundColor(DesignSystem.cyan)
+                } else {
+                    Circle()
+                        .fill(colorForStatus(context.state.status))
+                        .frame(width: 8, height: 8)
+                }
             } minimal: {
-                Text("\(Int(context.state.speed))")
-                    .font(.system(.caption, design: .rounded).bold())
-                    .foregroundColor(colorForStatus(context.state.status))
+                if let img = context.state.nextManeuverImageName {
+                    Image(systemName: img)
+                        .foregroundColor(DesignSystem.cyan)
+                } else {
+                    Text("\(Int(context.state.speed))")
+                        .font(.system(.caption, design: .rounded).bold())
+                        .foregroundColor(colorForStatus(context.state.status))
+                }
             }
         }
+    }
+    
+    private func formatDistance(_ distance: CLLocationDistance) -> String {
+        let miles = distance * 0.000621371
+        if miles < 0.1 {
+            let feet = distance * 3.28084
+            return "\(Int(feet)) ft"
+        }
+        return String(format: "%.1f mi", miles)
     }
     
     private func colorForStatus(_ status: String) -> Color {

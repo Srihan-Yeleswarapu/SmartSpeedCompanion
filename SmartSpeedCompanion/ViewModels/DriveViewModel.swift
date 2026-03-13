@@ -19,7 +19,8 @@ public final class DriveViewModel: NSObject, ObservableObject {
     @Published public var sessionDuration: TimeInterval = 0
     @Published public var alertActive: Bool = false
     @Published public var speedLimitSource: String = "Estimating..."
-    
+    @Published public var nearbyCameras: [SpeedCamera] = []
+    @Published public var activeCameraAlert: SpeedCamera? = nil
     // Navigation state
     @Published public var isNavigating: Bool = false
     @Published public var currentRoute: MKRoute? = nil
@@ -27,6 +28,12 @@ public final class DriveViewModel: NSObject, ObservableObject {
     @Published public var searchResults: [MKMapItem] = []
     @Published public var searchCompletions: [MKLocalSearchCompletion] = []
     @Published public var isSearching: Bool = false
+    @Published public var recentSearches: [String] = []
+    
+    // Route Selection State
+    @Published public var isSelectingRoute: Bool = false
+    @Published public var availableRoutes: [MKRoute] = []
+
     
     // Guidance details
     @Published public var nextManeuverInstruction: String = ""
@@ -59,10 +66,17 @@ public final class DriveViewModel: NSObject, ObservableObject {
         self.speedEngine = spdEngine
         self.alertEngine = alrtEngine
         self.sessionRecorder = rec
+        self.recentSearches = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
 
         super.init()
 
+        // Fetch cameras
+        Task {
+            await SpeedCameraService.shared.fetchCameras()
+        }
+
         // Setup Completer
+
         completer.delegate = self
         completer.resultTypes = [.pointOfInterest, .address]
         
@@ -81,6 +95,28 @@ public final class DriveViewModel: NSObject, ObservableObject {
         // Request Location Authorization
         locManager.requestAuthorization()
         locManager.startUpdatingLocation()
+        
+        // Listen to location updates for nearby cameras
+        locManager.$latestLocation
+            .compactMap { $0 }
+            .sink { [weak self] location in
+                if let self = self {
+                    let cameras = SpeedCameraService.shared.getNearbyCameras(to: location)
+                    self.nearbyCameras = cameras
+                    
+                    // Alert if a camera is within 1000 meters
+                    self.activeCameraAlert = cameras.first { camera in
+                        let camLoc = CLLocation(latitude: camera.latitude, longitude: camera.longitude)
+                        return location.distance(from: camLoc) <= 1000
+                    }
+                    
+                    if self.isNavigating {
+                        self.updateNavigationProgress(at: location)
+                        self.updateLiveActivity()
+                    }
+                }
+            }
+            .store(in: &cancellables)
     }
     
     public func startSession() {
@@ -93,7 +129,28 @@ public final class DriveViewModel: NSObject, ObservableObject {
             .sink { [weak self] _ in
                 guard let start = self?.sessionStartTime else { return }
                 self?.sessionDuration = Date().timeIntervalSince(start)
+                self?.updateLiveActivity()
             }
+        
+        LiveActivityManager.shared.startActivity(sessionStartDate: sessionStartTime ?? Date())
+    }
+    
+    private func updateLiveActivity() {
+        if #available(iOS 16.1, *) {
+            let state = SpeedActivityAttributes.ContentState(
+                speed: speed,
+                speedLimit: limit,
+                status: status.rawValue,
+                isRecording: isRecording,
+                consecutiveOverSeconds: 0, // Should be tracked in SpeedEngine
+                sessionDuration: sessionDuration,
+                nextManeuver: isNavigating ? nextManeuverInstruction : nil,
+                nextManeuverImageName: isNavigating ? nextManeuverImageName : nil,
+                distanceToNextTurn: isNavigating ? distanceToNextTurn : nil,
+                eta: isNavigating ? eta : nil
+            )
+            LiveActivityManager.shared.updateActivity(with: state)
+        }
     }
     
     public func endSession() {
@@ -101,24 +158,76 @@ public final class DriveViewModel: NSObject, ObservableObject {
         
         sessionTimer?.cancel()
         sessionTimer = nil
-        sessionDuration = 0
         sessionStartTime = nil
+        
+        if !isNavigating {
+            LiveActivityManager.shared.endActivity()
+        }
     }
     
-    // Navigation controls  
+    public func selectDestinationAndCalculateRoutes(to destination: MKMapItem) async {
+        self.destination = destination
+        saveRecentSearch(destination.name ?? "Unknown Location")
+        
+        let request = MKDirections.Request()
+        request.source = MKMapItem.forCurrentLocation()
+        request.destination = destination
+        request.transportType = .automobile
+        request.requestsAlternateRoutes = true
+        
+        if UserDefaults.standard.bool(forKey: "avoidHighways") {
+            request.highwayPreference = .avoid
+        }
+        
+        do {
+            let directions = MKDirections(request: request)
+            let response = try await directions.calculate()
+            self.availableRoutes = response.routes
+            self.isSelectingRoute = true
+        } catch {
+            print("Route error: \(error)")
+        }
+    }
+    
+    public func startNavigation(with route: MKRoute) async {
+        self.isSelectingRoute = false
+        self.isNavigating = true
+        self.currentRoute = route
+        if let dest = self.destination {
+            await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
+        }
+        
+        if #available(iOS 16.1, *) {
+            LiveActivityManager.shared.startActivity(sessionStartDate: Date())
+            updateLiveActivity()
+        }
+    }
+    
     public func startNavigation(to destination: MKMapItem) async {
         self.destination = destination
         self.isNavigating = true
-        // If there's a specific route calculation needed locally, perform it.
-        // Or proxy it to CarPlay navigation delegate if active:
-        await navigationDelegate?.startNavigationTrigger(to: destination)
+        await navigationDelegate?.startNavigationTrigger(to: destination, route: nil)
     }
+    
+    public func saveRecentSearch(_ title: String) {
+        if !recentSearches.contains(title) {
+            recentSearches.insert(title, at: 0)
+            if recentSearches.count > 10 {
+                recentSearches.removeLast()
+            }
+            UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
+        }
+    }
+
     
     public func endNavigation() async {
         self.isNavigating = false
-        self.destination = nil
         self.currentRoute = nil
         await navigationDelegate?.endNavigationTrigger()
+        
+        if !isRecording {
+            LiveActivityManager.shared.endActivity()
+        }
     }
     
     // Search completions update
@@ -180,6 +289,54 @@ public final class DriveViewModel: NSObject, ObservableObject {
     public func searchDestinationTrigger(_ query: String) async -> [MKMapItem] {
         return await navigationDelegate?.searchDestinationTrigger(query) ?? []
     }
+    
+    private func updateNavigationProgress(at location: CLLocation) {
+        guard let route = currentRoute else { return }
+        
+        // Find the next step
+        // A simple logic: find the first step whose distance from current location is 'ahead' or just use the steps in order
+        // For a real app, we'd use a more robust map-matching algorithm
+        
+        let steps = route.steps
+        var upcomingStep: MKRoute.Step?
+        
+        for step in steps {
+            let stepLocation = CLLocation(latitude: step.polyline.coordinate.latitude, longitude: step.polyline.coordinate.longitude)
+            let distanceToStep = location.distance(from: stepLocation)
+            
+            // If we are more than 50 meters from the step, it's likely upcoming
+            if distanceToStep > 50 {
+                upcomingStep = step
+                self.distanceToNextTurn = distanceToStep
+                break
+            }
+        }
+        
+        if let step = upcomingStep {
+            self.nextManeuverInstruction = step.instructions
+            self.nextManeuverImageName = getImageForManeuver(step.instructions)
+        }
+        
+        // Simple ETA calculation: distance / speed (or just use route.expectedTravelTime)
+        // For simulation, we'll just subtract some time from the initial ETA
+        if self.eta == nil {
+            self.eta = Date().addingTimeInterval(route.expectedTravelTime)
+        }
+    }
+    
+    private func getImageForManeuver(_ instruction: String) -> String {
+        let lower = instruction.lowercased()
+        if lower.contains("right") { return "arrow.turn.up.right" }
+        if lower.contains("left") { return "arrow.turn.up.left" }
+        if lower.contains("slight right") { return "arrow.up.right" }
+        if lower.contains("slight left") { return "arrow.up.left" }
+        if lower.contains("keep right") { return "arrow.up.right" }
+        if lower.contains("keep left") { return "arrow.up.left" }
+        if lower.contains("u-turn") { return "arrow.uturn.left" }
+        if lower.contains("exit") { return "arrow.up.right.square" }
+        if lower.contains("merge") { return "arrow.merge" }
+        return "arrow.up"
+    }
 }
 
 extension DriveViewModel: @preconcurrency MKLocalSearchCompleterDelegate {
@@ -193,7 +350,7 @@ extension DriveViewModel: @preconcurrency MKLocalSearchCompleterDelegate {
 }
 
 public protocol NavigationActionDelegate: AnyObject {
-    func startNavigationTrigger(to destination: MKMapItem) async
+    func startNavigationTrigger(to destination: MKMapItem, route: MKRoute?) async
     func endNavigationTrigger() async
     func searchDestinationTrigger(_ query: String) async -> [MKMapItem]
 }

@@ -10,6 +10,12 @@ public struct SpeedActivityAttributes: ActivityAttributes {
         public var isRecording: Bool
         public var consecutiveOverSeconds: Int
         public var sessionDuration: TimeInterval
+        
+        // Navigation metadata
+        public var nextManeuver: String?
+        public var nextManeuverImageName: String?
+        public var distanceToNextTurn: Double?
+        public var eta: Date?
     }
     
     public var sessionStartDate: Date

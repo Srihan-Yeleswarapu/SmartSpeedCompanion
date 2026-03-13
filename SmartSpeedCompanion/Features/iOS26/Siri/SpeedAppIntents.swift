@@ -49,6 +49,25 @@ struct GetCurrentSpeedIntent: AppIntent {
     }
 }
 
+struct NavigateToDestinationIntent: AppIntent {
+    static var title: LocalizedStringResource = "Navigate to Destination"
+    static var description = IntentDescription("Start navigation to a specific place")
+    
+    @Parameter(title: "Destination")
+    var destinationName: String
+    
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let items = await AppDelegate.sharedDriveViewModel.searchDestinationTrigger(destinationName)
+        if let first = items.first {
+            await AppDelegate.sharedDriveViewModel.startNavigation(to: first)
+            return .result(dialog: "Navigating to \(first.name ?? "destination").")
+        } else {
+            return .result(dialog: "I couldn't find \(destinationName).")
+        }
+    }
+}
+
 struct SpeedAppShortcutsProvider: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -78,6 +97,15 @@ struct SpeedAppShortcutsProvider: AppShortcutsProvider {
             ],
             shortTitle: "Check Speed",
             systemImageName: "speedometer"
+        )
+        AppShortcut(
+            intent: NavigateToDestinationIntent(),
+            phrases: [
+                "Navigate to \(\.$destinationName) in \(.applicationName)",
+                "Take me to \(\.$destinationName) in \(.applicationName)"
+            ],
+            shortTitle: "Navigate",
+            systemImageName: "arrow.turn.up.right"
         )
     }
 }

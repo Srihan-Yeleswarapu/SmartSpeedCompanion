@@ -27,16 +27,30 @@ public struct MapWithHUDView: View {
                             .padding(.top, geo.safeAreaInsets.top + 8)
                             .padding(.horizontal, 16)
                             .transition(.move(edge: .top).combined(with: .opacity))
+                    } else if driveViewModel.isSelectingRoute {
+                        RouteSelectionCard()
+                            .padding(.top, geo.safeAreaInsets.top + 12)
+                            .padding(.horizontal, 16)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     } else {
                         SearchBarView()
                             .padding(.top, geo.safeAreaInsets.top + 12)
                             .padding(.horizontal, 16)
                     }
                     
+                    if let camera = driveViewModel.activeCameraAlert {
+                        SpeedCameraAlertBanner(camera: camera)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    
                     Spacer()
                     
-                    SpeedHUDPill(isLandscape: isLandscape)
-                        .padding(.bottom, geo.safeAreaInsets.bottom + 16)
+                    if !driveViewModel.isSelectingRoute {
+                        SpeedHUDPill(isLandscape: isLandscape)
+                            .padding(.bottom, geo.safeAreaInsets.bottom + 16)
+                    }
                 }
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: driveViewModel.isNavigating)
@@ -156,6 +170,58 @@ fileprivate struct SearchBarView: View {
             .frame(height: 56)
             .glassStyle()
             
+            if isFocused && searchText.isEmpty && !driveViewModel.recentSearches.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("RECENT SEARCHES")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundColor(.white.opacity(0.4))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 8)
+                    
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(driveViewModel.recentSearches.prefix(5), id: \.self) { search in
+                                Button(action: {
+                                    searchText = search
+                                    Task {
+                                        await driveViewModel.searchDestination(query: search)
+                                        if let item = driveViewModel.searchResults.first {
+                                            await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
+                                            searchText = ""
+                                            isFocused = false
+                                        }
+                                    }
+                                }) {
+                                    HStack {
+                                        Image(systemName: "clock.arrow.circlepath")
+                                            .font(.system(size: 14))
+                                            .foregroundColor(DesignSystem.cyan)
+                                        
+                                        Text(search)
+                                            .font(.system(size: 16, weight: .medium))
+                                            .foregroundColor(.white)
+                                        
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 14)
+                                    .padding(.horizontal, 16)
+                                }
+                                
+                                if search != driveViewModel.recentSearches.prefix(5).last {
+                                    Divider()
+                                        .background(Color.white.opacity(0.1))
+                                        .padding(.horizontal, 16)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 240)
+                }
+                .glassStyle(cornerRadius: 16)
+                .padding(.top, 2)
+            }
+            
             if !driveViewModel.searchCompletions.isEmpty && isFocused {
                 VStack(spacing: 0) {
                     ScrollView {
@@ -165,7 +231,7 @@ fileprivate struct SearchBarView: View {
                                     Task {
                                         await driveViewModel.selectCompletion(completion)
                                         if let item = driveViewModel.searchResults.first {
-                                            await driveViewModel.startNavigation(to: item)
+                                            await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
                                             searchText = ""
                                             isFocused = false
                                         }
@@ -218,9 +284,9 @@ fileprivate struct SearchBarView: View {
                 await driveViewModel.searchDestination(query: searchText)
             }
             
-            // Start navigation to the first finding
+            // Show route options for the first finding
             if let firstItem = driveViewModel.searchResults.first {
-                await driveViewModel.startNavigation(to: firstItem)
+                await driveViewModel.selectDestinationAndCalculateRoutes(to: firstItem)
                 searchText = ""
                 isFocused = false
             }
@@ -330,5 +396,100 @@ fileprivate struct LimitSignView: View {
                 .font(.system(size: isLandscape ? 8 : 10, weight: .bold))
                 .foregroundColor(source == "OpenStreetMap" ? Color(hex: "#00D4FF") : Color(hex: "#8888AA"))
         }
+    }
+}
+
+fileprivate struct SpeedCameraAlertBanner: View {
+    let camera: SpeedCamera
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "camera.badge.ellipsis")
+                .font(.system(size: 24, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(Color(hex: "#FF3D71")))
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text("SPEED CAMERA AHEAD")
+                    .font(.system(size: 14, weight: .black))
+                    .foregroundColor(Color(hex: "#FF3D71"))
+                
+                Text(camera.location ?? camera.roadway ?? "Unknown Location")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+            }
+            
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .glassStyle(cornerRadius: 16)
+    }
+}
+
+fileprivate struct RouteSelectionCard: View {
+    @EnvironmentObject var driveViewModel: DriveViewModel
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("Select Route")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Button(action: {
+                    driveViewModel.isSelectingRoute = false
+                    driveViewModel.availableRoutes = []
+                    driveViewModel.destination = nil
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(Array(driveViewModel.availableRoutes.enumerated()), id: \.offset) { index, route in
+                        Button(action: {
+                            Task {
+                                await driveViewModel.startNavigation(with: route)
+                            }
+                        }) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Route \(index + 1)")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundColor(.white)
+                                
+                                Text("\(Int(route.expectedTravelTime / 60)) min")
+                                    .font(.system(size: 20, weight: .black))
+                                    .foregroundColor(DesignSystem.cyan)
+                                
+                                Text(String(format: "%.1f mi", route.distance * 0.000621371))
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.6))
+                            }
+                            .padding(16)
+                            .frame(width: 140, alignment: .leading)
+                            .background(Color.white.opacity(0.1))
+                            .cornerRadius(16)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(DesignSystem.cyan.opacity(index == 0 ? 1 : 0), lineWidth: 2)
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            }
+        }
+        .glassStyle(cornerRadius: 24)
     }
 }

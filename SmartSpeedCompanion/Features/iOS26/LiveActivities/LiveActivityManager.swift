@@ -23,7 +23,11 @@ public class LiveActivityManager {
             status: "safe",
             isRecording: true,
             consecutiveOverSeconds: 0,
-            sessionDuration: 0
+            sessionDuration: 0,
+            nextManeuver: nil,
+            nextManeuverImageName: nil,
+            distanceToNextTurn: nil,
+            eta: nil
         )
         
         do {
