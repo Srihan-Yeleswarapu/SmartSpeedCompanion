@@ -1,7 +1,7 @@
 import Foundation
 import CoreLocation
 
-public struct SpeedCamera: Codable, Identifiable {
+public struct SpeedCamera: Codable, Identifiable, Sendable {
     public let id: Int
     public let source: String?
     public let sourceId: String?
@@ -25,6 +25,7 @@ public struct SpeedCamera: Codable, Identifiable {
     }
 }
 
+@MainActor
 public class SpeedCameraService: ObservableObject {
     public static let shared = SpeedCameraService()
     

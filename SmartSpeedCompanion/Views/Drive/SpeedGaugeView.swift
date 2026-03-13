@@ -20,7 +20,6 @@ public struct SpeedGaugeView: View {
                 // Speed Arc
                 let maxSpeed: Double = 120.0
                 let speedRatio = min(max(viewModel.speed / maxSpeed, 0), 1)
-                let endAngleDegrees = (speedRatio * 270.0) - 135.0
                 
                 var speedPath = Path()
                 speedPath.addArc(center: center, radius: radius, startAngle: .degrees(135), endAngle: .degrees(135 + (speedRatio * 270)), clockwise: false)
