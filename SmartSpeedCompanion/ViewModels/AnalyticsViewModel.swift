@@ -42,4 +42,13 @@ public final class AnalyticsViewModel: ObservableObject {
         guard let session = selectedSession else { return 100 }
         return session.drivingScore
     }
+    
+    public func deleteSession(_ session: DriveSession, context: ModelContext) {
+        context.delete(session)
+        // No need to explicitly save as SwiftData handles it, but good for immediate persistence
+        try? context.save()
+        if selectedSession?.id == session.id {
+            selectedSession = nil
+        }
+    }
 }

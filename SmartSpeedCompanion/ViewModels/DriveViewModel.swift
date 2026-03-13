@@ -39,6 +39,10 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     // Map Interaction State
     @Published public var isMapDetached: Bool = false
+    
+    // Deletion states
+    @Published public var showShortSessionPrompt: Bool = false
+    public var lastSessionToPotentialDelete: DriveSession? = nil
 
     
     // Guidance details
@@ -176,14 +180,29 @@ public final class DriveViewModel: NSObject, ObservableObject {
     }
     
     public func endSession() {
-        _ = sessionRecorder.endSession()
+        if let session = sessionRecorder.endSession() {
+            // Requirement: If trip < 1.5 mins (90s), prompt user
+            if session.durationSeconds < 90 {
+                self.lastSessionToPotentialDelete = session
+                self.showShortSessionPrompt = true
+            }
+        }
         
         sessionTimer?.cancel()
         sessionTimer = nil
         sessionStartTime = nil
+        self.sessionDuration = 0
         
         if !isNavigating {
             LiveActivityManager.shared.endActivity()
+        }
+    }
+    
+    public func deleteLastSession(context: ModelContext) {
+        if let session = lastSessionToPotentialDelete {
+            context.delete(session)
+            lastSessionToPotentialDelete = nil
+            showShortSessionPrompt = false
         }
     }
     

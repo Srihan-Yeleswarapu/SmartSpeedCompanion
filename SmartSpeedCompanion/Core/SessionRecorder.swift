@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import CoreLocation
 
 /// Records the drive session by capturing GPS data points every second.
 @MainActor
@@ -29,7 +30,7 @@ public final class SessionRecorder: ObservableObject {
         isRecording = true
         
         if let location = locationManager.latestLocation {
-            geocodeLocation(location) { name in
+            geocodeLocation(location) { (name: String?) in
                 newSession.startLocationName = name
             }
         }
@@ -54,7 +55,7 @@ public final class SessionRecorder: ObservableObject {
         currentSession = nil
         
         if let location = locationManager.latestLocation {
-            geocodeLocation(location) { [weak self] name in
+            geocodeLocation(location) { [weak self] (name: String?) in
                 completedSession.endLocationName = name
                 self?.saveSession(completedSession)
             }

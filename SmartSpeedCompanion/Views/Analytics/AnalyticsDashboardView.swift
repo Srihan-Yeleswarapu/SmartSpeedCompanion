@@ -33,6 +33,16 @@ public struct AnalyticsDashboardView: View {
                         }
                         .pickerStyle(.menu)
                         .tint(DesignSystem.cyan)
+                        
+                        if let selected = viewModel.selectedSession {
+                            Button(action: {
+                                viewModel.deleteSession(selected, context: modelContext)
+                            }) {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.red.opacity(0.7))
+                            }
+                            .padding(.leading, 4)
+                        }
                     }
                     .padding()
                     
