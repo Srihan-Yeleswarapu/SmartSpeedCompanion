@@ -36,6 +36,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
     // Route Selection State
     @Published public var isSelectingRoute: Bool = false
     @Published public var availableRoutes: [MKRoute] = []
+    
+    // Map Interaction State
+    @Published public var isMapDetached: Bool = false
 
     
     // Guidance details

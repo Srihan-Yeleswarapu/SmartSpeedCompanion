@@ -31,7 +31,7 @@ public struct LiveMapView: UIViewRepresentable {
         }
 
         // Use manual camera management only if the user isn't interacting
-        if !context.coordinator.isUserInteracting {
+        if !viewModel.isMapDetached {
             // Check if we have a valid location before moving the camera
             guard let userLoc = uiView.userLocation.location, 
                   CLLocationCoordinate2DIsValid(userLoc.coordinate),
@@ -229,7 +229,6 @@ public struct LiveMapView: UIViewRepresentable {
     
     public class Coordinator: NSObject, MKMapViewDelegate {
         var parent: LiveMapView
-        public var isUserInteracting: Bool = false
         private var interactionTimer: Timer?
         
         init(_ parent: LiveMapView) {
@@ -245,11 +244,11 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         private func startManualMode() {
-            isUserInteracting = true
+            parent.viewModel.isMapDetached = true
             interactionTimer?.invalidate()
             // Auto-resume navigation zoom after 10 seconds of inactivity
             interactionTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
-                self?.isUserInteracting = false
+                self?.parent.viewModel.isMapDetached = false
             }
         }
         

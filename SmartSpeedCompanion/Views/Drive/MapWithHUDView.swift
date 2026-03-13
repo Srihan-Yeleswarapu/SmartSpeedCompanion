@@ -49,6 +49,26 @@ public struct MapWithHUDView: View {
                     
                     Spacer()
                     
+                    if driveViewModel.isMapDetached {
+                        HStack {
+                            Button(action: {
+                                driveViewModel.isMapDetached = false
+                            }) {
+                                Image(systemName: "location.fill")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 48, height: 48)
+                                    .glassStyle(cornerRadius: 24)
+                                    .shadow(color: DesignSystem.cyan.opacity(0.3), radius: 10)
+                            }
+                            .padding(.leading, 16)
+                            .padding(.bottom, 8)
+                            .transition(.scale.combined(with: .opacity))
+                            
+                            Spacer()
+                        }
+                    }
+                    
                     if !driveViewModel.isSelectingRoute && !driveViewModel.isSearchingLocally {
                         SpeedHUDPill(isLandscape: isLandscape)
                             .padding(.bottom, geo.safeAreaInsets.bottom + 16)
