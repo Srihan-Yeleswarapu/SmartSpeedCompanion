@@ -64,7 +64,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
 
         // Setup Completer
         completer.delegate = self
-        completer.resultTypes = .pointOfInterest
+        completer.resultTypes = [.pointOfInterest, .address]
         
         // Bind UI state
         spdEngine.$speed.assign(to: &$speed)

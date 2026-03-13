@@ -101,6 +101,9 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         request.transportType = .automobile
         request.requestsAlternateRoutes = true
         
+        let avoidHighways = UserDefaults.standard.bool(forKey: "avoidHighways")
+        request.blocksHighways = avoidHighways
+        
         let directions = MKDirections(request: request)
         let response = try await directions.calculate()
         

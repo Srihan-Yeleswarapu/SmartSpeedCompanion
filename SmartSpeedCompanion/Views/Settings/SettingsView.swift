@@ -6,6 +6,7 @@ public struct SettingsView: View {
     @AppStorage("hapticsEnabled") var hapticsEnabled: Bool = true
     @AppStorage("voiceNavEnabled") var voiceNavEnabled: Bool = true
     @AppStorage("speedUnit") var speedUnit: String = "mph"
+    @AppStorage("avoidHighways") var avoidHighways: Bool = false
     
     @EnvironmentObject var driveViewModel: DriveViewModel
     
@@ -34,6 +35,9 @@ public struct SettingsView: View {
                 
                 Section(header: Text("NAVIGATION").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
                     Toggle("Voice Navigation", isOn: $voiceNavEnabled)
+                        .tint(DesignSystem.neonGreen)
+                    
+                    Toggle("Avoid Highways", isOn: $avoidHighways)
                         .tint(DesignSystem.neonGreen)
                     
                     Picker("Speed Unit", selection: $speedUnit) {

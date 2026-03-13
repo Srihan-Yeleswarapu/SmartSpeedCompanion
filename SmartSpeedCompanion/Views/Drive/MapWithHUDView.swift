@@ -120,6 +120,10 @@ fileprivate struct SearchBarView: View {
                     .foregroundColor(.white)
                     .font(.system(size: 17, weight: .medium))
                     .focused($isFocused)
+                    .submitLabel(.search)
+                    .onSubmit {
+                        executeSubmitSearch()
+                    }
                     .onChange(of: searchText) { _, newValue in
                         driveViewModel.updateSearchQuery(newValue)
                     }
@@ -181,6 +185,25 @@ fileprivate struct SearchBarView: View {
                 }
                 .glassStyle()
                 .padding(.top, 4)
+            }
+        }
+    }
+    
+    private func executeSubmitSearch() {
+        Task {
+            // If completions are available, take the first one
+            if let firstCompletion = driveViewModel.searchCompletions.first {
+                await driveViewModel.selectCompletion(firstCompletion)
+            } else if !searchText.isEmpty {
+                // Otherwise do a natural language search
+                await driveViewModel.searchDestination(query: searchText)
+            }
+            
+            // Start navigation to the first finding
+            if let firstItem = driveViewModel.searchResults.first {
+                await driveViewModel.startNavigation(to: firstItem)
+                searchText = ""
+                isFocused = false
             }
         }
     }
