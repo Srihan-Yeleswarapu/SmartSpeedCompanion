@@ -25,17 +25,23 @@ public struct LiveMapView: UIViewRepresentable {
     }
     
     public func updateUIView(_ uiView: MKMapView, context: Context) {
-        // Update tracking mode based on state
-        let targetMode: MKUserTrackingMode = (viewModel.isRecording || viewModel.isNavigating) ? .followWithHeading : .follow
-        
-        if uiView.userTrackingMode != targetMode {
-            uiView.setUserTrackingMode(targetMode, animated: true)
+        // Block updates if searching to prevent "random zoom"
+        if viewModel.isSearching || viewModel.isSearchingLocally {
+            return
+        }
+
+        // Update tracking mode and camera only if not manually interacting
+        if !context.coordinator.isUserInteracting {
+            let targetMode: MKUserTrackingMode = (viewModel.isRecording || viewModel.isNavigating) ? .followWithHeading : .follow
+            if uiView.userTrackingMode != targetMode {
+                uiView.setUserTrackingMode(targetMode, animated: true)
+            }
+            
+            // Dynamic Camera logic based on sophisticated rules
+            updateSmartCamera(uiView, context: context)
         }
         
-        // Dynamic Camera logic for Premium Navigation experience
-        updateSmartCamera(uiView)
-        
-        // Update overlays (History, Route, Cameras)
+        // Update overlays (always keep these fresh)
         updateOverlays(uiView)
     }
     
@@ -68,7 +74,7 @@ public struct LiveMapView: UIViewRepresentable {
         updateHistoryOverlays(uiView)
     }
     
-    private func updateSmartCamera(_ uiView: MKMapView) {
+    private func updateSmartCamera(_ uiView: MKMapView, context: Context) {
         let speed = viewModel.speed
         let distanceToTurn = viewModel.distanceToNextTurn
         let isNavigating = viewModel.isNavigating
@@ -76,33 +82,63 @@ public struct LiveMapView: UIViewRepresentable {
         var targetAltitude: Double = 1000
         var targetPitch: Double = 0
         
+        // --- Core Design Principle: Show exactly the amount of map needed for the next decision ---
+        
         if isNavigating {
-            // Navigation Mode: 3D perspective
-            targetPitch = 60
+            targetPitch = 60 // 3D Perspective for navigation (Rule 7)
             
-            if distanceToTurn < 200 {
-                // Approaching turn: zoom in deep
-                targetAltitude = 150
-            } else if speed > 50 {
-                // Highway speeds: zoom out to see ahead
-                targetAltitude = 800
+            // 1. Zoom In/Out based on Speed (Rule 1 & 4)
+            if speed > 60 { // Highway speeds
+                targetAltitude = 2500 // Wide zoom to see ahead
+            } else if speed > 40 {
+                targetAltitude = 1200
+            } else if speed < 5 { // Slower/Stopped (Rule 19)
+                targetAltitude = 250 // Precise detail at red lights/intersections
             } else {
-                // City driving
-                targetAltitude = 400
+                targetAltitude = 600 // City standard (Rule 8)
             }
+            
+            // 2. Proximity to Turn (Rule 2)
+            if distanceToTurn < 100 { // ~300 feet: Final approach
+                targetAltitude = 150 // Deep zoom for road geometry
+            } else if distanceToTurn < 250 { // ~800 feet: Preparing
+                targetAltitude = min(targetAltitude, 350) 
+            }
+            
+            // 3. Destination Approach (Rule 17 & 18)
+            if let dest = viewModel.destination {
+                let distToDest = uiView.userLocation.location?.distance(from: dest.placemark.location ?? CLLocation()) ?? 10000
+                if distToDest < 320 { // within ~0.2 miles
+                    targetAltitude = 150
+                    targetPitch = 45 // Lower pitch for final visibility
+                }
+            }
+            
+            // 4. Highway Exit/Complex Interchanges (Rule 5 & 6)
+            if viewModel.nextManeuverInstruction.lowercased().contains("exit") || 
+               viewModel.nextManeuverInstruction.lowercased().contains("merge") {
+                targetAltitude = min(targetAltitude, 500) // Moderate zoom for clarity
+            }
+            
         } else if viewModel.isRecording {
-            // Just recording: milder perspective
+            // Driving without navigation
             targetPitch = 45
-            targetAltitude = speed > 40 ? 1200 : 600
+            // Pure speed-based zoom (Rule 1)
+            targetAltitude = speed > 60 ? 3000 : (speed > 30 ? 1500 : 800)
         } else {
-            // Idle/Browsing: flat view
+            // Idle/Browsing
             targetPitch = 0
-            targetAltitude = 1000
+            targetAltitude = 2000
         }
         
-        // Only update if difference is significant to avoid jitter
+        // 5. Hazards / Speed Cameras (Rule 15 & 16)
+        if viewModel.activeCameraAlert != nil {
+            targetAltitude = min(targetAltitude, 400) // Highlight the camera area
+        }
+        
+        // Apply camera with smooth animation if significant change detected
         let currentCamera = uiView.camera
-        if abs(currentCamera.altitude - targetAltitude) > 50 || abs(currentCamera.pitch - targetPitch) > 5 {
+        if abs(currentCamera.altitude - targetAltitude) > 30 || abs(currentCamera.pitch - targetPitch) > 5 {
             let newCamera = MKMapCamera(
                 lookingAtCenter: uiView.userLocation.coordinate,
                 fromDistance: targetAltitude,
@@ -159,16 +195,35 @@ public struct LiveMapView: UIViewRepresentable {
     
     public class Coordinator: NSObject, MKMapViewDelegate {
         var parent: LiveMapView
+        public var isUserInteracting: Bool = false
+        private var interactionTimer: Timer?
         
         init(_ parent: LiveMapView) {
             self.parent = parent
+        }
+        
+        public func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
+            // Check if the region change was initiated by a gesture (manual)
+            let view = mapView.subviews.first { $0.gestureRecognizers?.contains { $0.state == .began || $0.state == .changed } ?? false }
+            if view != nil {
+                startManualMode()
+            }
+        }
+        
+        private func startManualMode() {
+            isUserInteracting = true
+            interactionTimer?.invalidate()
+            // Auto-resume navigation zoom after 10 seconds of inactivity
+            interactionTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
+                self?.isUserInteracting = false
+            }
         }
         
         public func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? NavPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
                 renderer.strokeColor = polyline.statusColor
-                renderer.lineWidth = 10.0 // Thicker, bolder lines for premium look
+                renderer.lineWidth = 10.0
                 renderer.lineCap = .round
                 renderer.lineJoin = .round
                 return renderer
@@ -184,7 +239,6 @@ public struct LiveMapView: UIViewRepresentable {
                     view = MKAnnotationView(annotation: cameraAnnotation, reuseIdentifier: identifier)
                     view?.canShowCallout = true
                     
-                    // Create a custom icon for speed camera
                     let imageView = UIImageView(image: UIImage(systemName: "camera.badge.ellipsis"))
                     imageView.tintColor = .white
                     imageView.backgroundColor = UIColor(DesignSystem.alertRed)

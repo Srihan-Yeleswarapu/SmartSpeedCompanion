@@ -29,6 +29,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     @Published public var searchResults: [MKMapItem] = []
     @Published public var searchCompletions: [MKLocalSearchCompletion] = []
     @Published public var isSearching: Bool = false
+    @Published public var isSearchingLocally: Bool = false
     @Published public var recentSearches: [String] = []
     
     // Route Selection State
@@ -236,8 +237,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
         if query.isEmpty {
             searchCompletions = []
             searchResults = []
+            isSearchingLocally = false
             return
         }
+        
+        isSearchingLocally = true
         
         if let userLocation = locationManager.latestLocation {
             completer.region = MKCoordinateRegion(

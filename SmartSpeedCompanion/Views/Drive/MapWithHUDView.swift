@@ -22,23 +22,25 @@ public struct MapWithHUDView: View {
                 
                 // Overlay content
                 VStack(spacing: 0) {
-                    if driveViewModel.isNavigating {
-                        NavigationInstructionCard()
-                            .padding(.top, geo.safeAreaInsets.top + 8)
-                            .padding(.horizontal, 16)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    } else if driveViewModel.isSelectingRoute {
-                        RouteSelectionCard()
-                            .padding(.top, geo.safeAreaInsets.top + 12)
-                            .padding(.horizontal, 16)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    if (driveViewModel.isNavigating || driveViewModel.isSelectingRoute) && !driveViewModel.isSearchingLocally {
+                        if driveViewModel.isNavigating {
+                            NavigationInstructionCard()
+                                .padding(.top, geo.safeAreaInsets.top + 8)
+                                .padding(.horizontal, 16)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        } else if driveViewModel.isSelectingRoute {
+                            RouteSelectionCard()
+                                .padding(.top, geo.safeAreaInsets.top + 12)
+                                .padding(.horizontal, 16)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     } else {
                         SearchBarView()
                             .padding(.top, geo.safeAreaInsets.top + 12)
                             .padding(.horizontal, 16)
                     }
                     
-                    if let camera = driveViewModel.activeCameraAlert {
+                    if let camera = driveViewModel.activeCameraAlert, !driveViewModel.isSearchingLocally {
                         SpeedCameraAlertBanner(camera: camera)
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
@@ -47,7 +49,7 @@ public struct MapWithHUDView: View {
                     
                     Spacer()
                     
-                    if !driveViewModel.isSelectingRoute {
+                    if !driveViewModel.isSelectingRoute && !driveViewModel.isSearchingLocally {
                         SpeedHUDPill(isLandscape: isLandscape)
                             .padding(.bottom, geo.safeAreaInsets.bottom + 16)
                     }
@@ -94,6 +96,16 @@ fileprivate struct NavigationInstructionCard: View {
             
             Spacer()
             
+            Button(action: {
+                driveViewModel.isSearchingLocally = true
+            }) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white.opacity(0.6))
+                    .padding(10)
+                    .background(Circle().fill(Color.white.opacity(0.1)))
+            }
+
             Button(action: {
                 Task { await driveViewModel.endNavigation() }
             }) {
@@ -155,6 +167,9 @@ fileprivate struct SearchBarView: View {
                     .onChange(of: searchText) { _, newValue in
                         driveViewModel.updateSearchQuery(newValue)
                     }
+                    .onChange(of: isFocused) { _, newValue in
+                        driveViewModel.isSearchingLocally = newValue
+                    }
                 
                 if !searchText.isEmpty {
                     Button(action: { 
@@ -170,56 +185,60 @@ fileprivate struct SearchBarView: View {
             .frame(height: 56)
             .glassStyle()
             
-            if isFocused && searchText.isEmpty && !driveViewModel.recentSearches.isEmpty {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("RECENT SEARCHES")
-                        .font(.system(size: 10, weight: .black))
-                        .foregroundColor(.white.opacity(0.4))
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                        .padding(.bottom, 8)
-                    
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(driveViewModel.recentSearches.prefix(5), id: \.self) { search in
-                                Button(action: {
-                                    searchText = search
-                                    Task {
-                                        await driveViewModel.searchDestination(query: search)
-                                        if let item = driveViewModel.searchResults.first {
-                                            await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
-                                            searchText = ""
-                                            isFocused = false
+            if isFocused && !driveViewModel.recentSearches.isEmpty {
+                let filteredSearches = searchText.isEmpty ? driveViewModel.recentSearches : driveViewModel.recentSearches.filter { $0.lowercased().contains(searchText.lowercased()) }
+                
+                if !filteredSearches.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(searchText.isEmpty ? "RECENT SEARCHES" : "MATCHING RECENT")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundColor(.white.opacity(0.4))
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                            .padding(.bottom, 8)
+                        
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(filteredSearches.prefix(5), id: \.self) { search in
+                                    Button(action: {
+                                        searchText = search
+                                        Task {
+                                            await driveViewModel.searchDestination(query: search)
+                                            if let item = driveViewModel.searchResults.first {
+                                                await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
+                                                searchText = ""
+                                                isFocused = false
+                                            }
                                         }
-                                    }
-                                }) {
-                                    HStack {
-                                        Image(systemName: "clock.arrow.circlepath")
-                                            .font(.system(size: 14))
-                                            .foregroundColor(DesignSystem.cyan)
-                                        
-                                        Text(search)
-                                            .font(.system(size: 16, weight: .medium))
-                                            .foregroundColor(.white)
-                                        
-                                        Spacer()
-                                    }
-                                    .padding(.vertical, 14)
-                                    .padding(.horizontal, 16)
-                                }
-                                
-                                if search != driveViewModel.recentSearches.prefix(5).last {
-                                    Divider()
-                                        .background(Color.white.opacity(0.1))
+                                    }) {
+                                        HStack {
+                                            Image(systemName: "clock.arrow.circlepath")
+                                                .font(.system(size: 14))
+                                                .foregroundColor(DesignSystem.cyan)
+                                            
+                                            Text(search)
+                                                .font(.system(size: 16, weight: .medium))
+                                                .foregroundColor(.white)
+                                            
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 14)
                                         .padding(.horizontal, 16)
+                                    }
+                                    
+                                    if search != filteredSearches.prefix(5).last {
+                                        Divider()
+                                            .background(Color.white.opacity(0.1))
+                                            .padding(.horizontal, 16)
+                                    }
                                 }
                             }
                         }
+                        .frame(maxHeight: 240)
                     }
-                    .frame(maxHeight: 240)
+                    .glassStyle(cornerRadius: 16)
+                    .padding(.top, 2)
                 }
-                .glassStyle(cornerRadius: 16)
-                .padding(.top, 2)
             }
             
             if !driveViewModel.searchCompletions.isEmpty && isFocused {
