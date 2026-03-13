@@ -15,7 +15,7 @@ public struct SpeedChartView: View {
     
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("SPEED VS. LIMIT")
+            Text("SPEED VS. TIME")
                 .font(.headline)
                 .foregroundColor(.white)
             
@@ -27,8 +27,9 @@ public struct SpeedChartView: View {
                 Chart {
                     // Speed Area Gradient
                     ForEach(downsampled, id: \.timestamp) { point in
+                        let elapsedMinutes = point.timestamp.timeIntervalSince(session.startTime) / 60.0
                         AreaMark(
-                            x: .value("Time", point.timestamp),
+                            x: .value("Time", elapsedMinutes),
                             yStart: .value("Base", 0),
                             yEnd: .value("Speed", point.speed)
                         )
@@ -42,8 +43,9 @@ public struct SpeedChartView: View {
                     
                     // Speed Line
                     ForEach(downsampled, id: \.timestamp) { point in
+                        let elapsedMinutes = point.timestamp.timeIntervalSince(session.startTime) / 60.0
                         LineMark(
-                            x: .value("Time", point.timestamp),
+                            x: .value("Time", elapsedMinutes),
                             y: .value("Speed", point.speed)
                         )
                         .foregroundStyle(DesignSystem.cyan)
@@ -52,8 +54,9 @@ public struct SpeedChartView: View {
                     
                     // Limit Line
                     ForEach(downsampled, id: \.timestamp) { point in
+                        let elapsedMinutes = point.timestamp.timeIntervalSince(session.startTime) / 60.0
                         LineMark(
-                            x: .value("Time", point.timestamp),
+                            x: .value("Time", elapsedMinutes),
                             y: .value("Limit", Double(point.speedLimit))
                         )
                         .foregroundStyle(DesignSystem.amber)
@@ -64,9 +67,13 @@ public struct SpeedChartView: View {
                     AxisMarks(values: .automatic(desiredCount: 5)) { value in
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 1, dash: [4]))
                             .foregroundStyle(.gray.opacity(0.2))
-                        AxisValueLabel(format: .dateTime.minute().second())
-                            .font(DesignSystem.labelFont)
-                            .foregroundStyle(.gray)
+                        AxisValueLabel() {
+                            if let minutes = value.as(Double.self) {
+                                Text(String(format: "%.0fm", minutes))
+                                    .font(DesignSystem.labelFont)
+                                    .foregroundStyle(.gray)
+                            }
+                        }
                     }
                 }
                 .chartYAxis {

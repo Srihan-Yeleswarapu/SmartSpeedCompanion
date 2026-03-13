@@ -75,10 +75,20 @@ public final class DriveSession {
         return totalOver / Double(overReadings.count)
     }
     
-    /// Computes the driving score based on the prototype's formula: max(0, min(100, 100 - (percentTimeOver * 1.5)))
+    /// Computes the driving score based on a comprehensive penalty formula.
     public var drivingScore: Int {
+        guard !readings.isEmpty else { return 100 }
+        
         let percentTimeOver = (1.0 - percentWithinLimit) * 100.0
-        let score = 100.0 - (percentTimeOver * 1.5)
+        let avgOver = avgMphOverLimit
+        
+        // Severity multiplier: increases if the driver sped heavily when they were over the limit
+        let severityMultiplier = 1.0 + (avgOver / 8.0)
+        
+        // Streak penalty: penalizes long continuous stretches of speeding
+        let streakPenalty = min(20.0, Double(longestOverstreak) / 5.0)
+        
+        let score = 100.0 - (percentTimeOver * severityMultiplier) - streakPenalty
         return Int(max(0, min(100, score)))
     }
 }
