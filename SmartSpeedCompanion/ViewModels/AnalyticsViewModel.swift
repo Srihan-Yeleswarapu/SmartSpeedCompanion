@@ -15,12 +15,19 @@ public final class AnalyticsViewModel: ObservableObject {
     
     // Extracted formatted stats for the UI
     public var formattedDuration: String {
-        guard let session = selectedSession else { return "0h 0m 0s" }
-        let duration = Int(session.durationSeconds) // Extract the property safely here
+        guard let session = selectedSession else { return "--" }
+        let duration = Int(session.durationSeconds)
         let h = duration / 3600
         let m = (duration % 3600) / 60
         let s = duration % 60
-        return "\(h)h \(m)m \(s)s"
+        
+        if h > 0 {
+            return "\(h)h \(m)m"
+        } else if m > 0 {
+            return "\(m)m \(s)s"
+        } else {
+            return "\(s)s"
+        }
     }
     
     public var formattedPercentSafe: String {

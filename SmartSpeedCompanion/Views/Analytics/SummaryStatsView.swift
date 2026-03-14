@@ -25,18 +25,16 @@ fileprivate struct StatChip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .foregroundColor(.gray)
                 .lineLimit(1)
             
             Text(value)
-                .font(DesignSystem.displayFont)
-                .scaleEffect(0.4, anchor: .leading)
-                .frame(height: 24)
+                .font(.system(size: 22, weight: .black, design: .rounded))
                 .foregroundColor(color)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(16)
         .background(DesignSystem.bgCard)
         .cornerRadius(12)
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(red: 0, green: 212/255, blue: 255/255, opacity: 0.12), lineWidth: 1))

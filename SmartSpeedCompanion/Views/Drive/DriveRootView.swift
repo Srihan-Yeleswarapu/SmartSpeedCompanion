@@ -26,7 +26,9 @@ public struct DriveRootView: View {
         }
         .accentColor(Color(hex: "#00D4FF"))
         .alert("Short Drive Detected", isPresented: $driveViewModel.showShortSessionPrompt) {
-            Button("Keep", role: .cancel) { }
+            Button("Keep", role: .cancel) {
+                driveViewModel.saveLastSession()
+            }
             Button("Delete Drive", role: .destructive) {
                 driveViewModel.deleteLastSession(context: modelContext)
             }

@@ -181,10 +181,13 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     public func endSession() {
         if let session = sessionRecorder.endSession() {
-            // Requirement: If trip < 1.5 mins (90s), prompt user
             if session.durationSeconds < 90 {
+                // Short trip: Prompt user before saving
                 self.lastSessionToPotentialDelete = session
                 self.showShortSessionPrompt = true
+            } else {
+                // Normal trip: Save immediately
+                sessionRecorder.saveSession(session)
             }
         }
         
@@ -198,12 +201,18 @@ public final class DriveViewModel: NSObject, ObservableObject {
         }
     }
     
-    public func deleteLastSession(context: ModelContext) {
+    public func saveLastSession() {
         if let session = lastSessionToPotentialDelete {
-            context.delete(session)
+            sessionRecorder.saveSession(session)
             lastSessionToPotentialDelete = nil
-            showShortSessionPrompt = false
         }
+    }
+    
+    public func deleteLastSession(context: ModelContext) {
+        // Since we stopped auto-saving short trips in endSession,
+        // we just need to clear our local reference to it.
+        lastSessionToPotentialDelete = nil
+        showShortSessionPrompt = false
     }
     
     public func selectDestinationAndCalculateRoutes(to destination: MKMapItem) async {

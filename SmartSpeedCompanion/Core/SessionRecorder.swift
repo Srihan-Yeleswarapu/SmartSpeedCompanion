@@ -55,18 +55,15 @@ public final class SessionRecorder: ObservableObject {
         currentSession = nil
         
         if let location = locationManager.latestLocation {
-            geocodeLocation(location) { [weak self] (name: String?) in
+            geocodeLocation(location) { (name: String?) in
                 completedSession.endLocationName = name
-                self?.saveSession(completedSession)
             }
-        } else {
-            saveSession(completedSession)
         }
         
         return completedSession
     }
     
-    private func saveSession(_ session: DriveSession) {
+    public func saveSession(_ session: DriveSession) {
         if let context = modelContext {
             // We want to make sure it's on the main thread for mainactor modelContext
             Task { @MainActor in

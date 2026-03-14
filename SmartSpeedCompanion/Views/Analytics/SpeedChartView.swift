@@ -39,6 +39,7 @@ public struct SpeedChartView: View {
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
+                        .interpolationMethod(.linear)
                     }
                     
                     // Speed Line
@@ -49,7 +50,7 @@ public struct SpeedChartView: View {
                             y: .value("Speed", point.speed)
                         )
                         .foregroundStyle(DesignSystem.cyan)
-                        .interpolationMethod(.catmullRom)
+                        .interpolationMethod(.linear)
                     }
                     
                     // Limit Line
@@ -60,20 +61,26 @@ public struct SpeedChartView: View {
                             y: .value("Limit", Double(point.speedLimit))
                         )
                         .foregroundStyle(DesignSystem.amber)
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                        .lineStyle(StrokeStyle(lineWidth: 2.5, dash: [6, 4]))
+                        .interpolationMethod(.linear)
                     }
                 }
                 .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 5)) { value in
-                        AxisGridLine(stroke: StrokeStyle(lineWidth: 1, dash: [4]))
-                            .foregroundStyle(.gray.opacity(0.2))
+                    AxisMarks(values: .automatic(desiredCount: 8)) { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 1, dash: [2]))
+                            .foregroundStyle(.white.opacity(0.1))
                         AxisValueLabel() {
                             if let minutes = value.as(Double.self) {
-                                Text(String(format: "%.0fm", minutes))
-                                    .font(DesignSystem.labelFont)
-                                    .foregroundStyle(.gray)
+                                if minutes < 1.0 {
+                                    let seconds = Int(minutes * 60)
+                                    Text("\(seconds)s")
+                                } else {
+                                    Text(String(format: "%.1fm", minutes))
+                                }
                             }
                         }
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.gray)
                     }
                 }
                 .chartYAxis {
