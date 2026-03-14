@@ -44,9 +44,29 @@ public actor ArizonaSpeedLimitService {
         return false
     }
     
+    /// Opens the geodatabase from the app bundle.
+    public func loadDataIfNeeded() {
+        // Try both possible filenames
+        let possibleNames = [
+            ("HPMS_2024_Data_-2111065798425599378", "geodatabase"),
+            ("ArizonaSpeedLimits", "sqlite"),
+            ("ArizonaSpeedLimits", "db")
+        ]
+        
+        for (name, ext) in possibleNames {
+            if let url = Bundle.main.url(forResource: name, withExtension: ext) {
+                if loadDatabase(at: url.path) {
+                    print("[AZ Data] Successfully loaded geodatabase: \(name).\(ext)")
+                    return
+                }
+            }
+        }
+        print("[AZ Data] No supported geodatabase file found in bundle.")
+    }
+
     /// Finds the legal speed limit for a given coordinate.
     public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int {
-        guard isLoaded, let db = db else {
+        guard isLoaded else {
             throw URLError(.noPermissionsToReadFile)
         }
 
@@ -151,7 +171,7 @@ public actor ArizonaSpeedLimitService {
         let isLittleEndian = data[0] == 1
         let numPoints = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> UInt32 in
             let val = ptr.load(fromByteOffset: 5, as: UInt32.self)
-            return isLittleEndian ? val.littleEndian : val.bigEndian
+            return isLittleEndian ? UInt32(littleEndian: val) : UInt32(bigEndian: val)
         }
         
         for i in 0..<Int(numPoints) {
@@ -159,9 +179,13 @@ public actor ArizonaSpeedLimitService {
             guard data.count >= offset + 16 else { break }
             
             let (lon, lat) = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> (Double, Double) in
-                let lo = ptr.load(fromByteOffset: offset, as: Double.self)
-                let la = ptr.load(fromByteOffset: offset + 8, as: Double.self)
-                return isLittleEndian ? (lo.littleEndian, la.littleEndian) : (lo.bigEndian, la.bigEndian)
+                let loUInt = ptr.load(fromByteOffset: offset, as: UInt64.self)
+                let laUInt = ptr.load(fromByteOffset: offset + 8, as: UInt64.self)
+                
+                let loBits = isLittleEndian ? UInt64(littleEndian: loUInt) : UInt64(bigEndian: loUInt)
+                let laBits = isLittleEndian ? UInt64(littleEndian: laUInt) : UInt64(bigEndian: laUInt)
+                
+                return (Double(bitPattern: loBits), Double(bitPattern: laBits))
             }
             points.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
         }
