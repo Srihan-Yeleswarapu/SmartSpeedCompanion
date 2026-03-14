@@ -25,9 +25,27 @@ public actor ArizonaSpeedLimitService {
     // MARK: - Data Models
     
     struct RoadSegment: Sendable {
-        let p1: CLLocationCoordinate2D
-        let p2: CLLocationCoordinate2D
+        let minx: Double
+        let maxx: Double
+        let miny: Double
+        let maxy: Double
         let limit: Int
+        
+        var area: Double {
+            return (maxx - minx) * (maxy - miny)
+        }
+        
+        func distance(to coord: CLLocationCoordinate2D) -> CLLocationDistance {
+            let dx = max(0.0, minx - coord.longitude, coord.longitude - maxx)
+            let dy = max(0.0, miny - coord.latitude, coord.latitude - maxy)
+            
+            if dx == 0 && dy == 0 { return 0 }
+            
+            // Geographic to meters approximation
+            let latDist = dy * 111111.0
+            let lonDist = dx * 111111.0 * cos(coord.latitude * .pi / 180.0)
+            return sqrt(latDist * latDist + lonDist * lonDist)
+        }
     }
 
     // MARK: - Public API
@@ -66,31 +84,40 @@ public actor ArizonaSpeedLimitService {
 
     /// Finds the legal speed limit for a given coordinate.
     public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int {
+        if !isLoaded {
+            loadDataIfNeeded()
+        }
         guard isLoaded else {
             throw URLError(.noPermissionsToReadFile)
         }
 
-        let searchOffsets = [-gridPrecision, 0.0, gridPrecision]
-        var closestLimit: Int?
-        var minDistance: CLLocationDistance = 50.0 // 50 meters threshold
+        // Search in a window around the coordinate
+        let segments = getSegmentsForGrid(lat: coordinate.latitude, lon: coordinate.longitude)
         
-        for latOff in searchOffsets {
-            for lonOff in searchOffsets {
-                // We call the local private function to check cache/db
-                let segments = getSegmentsForGrid(lat: coordinate.latitude + latOff, 
-                                                lon: coordinate.longitude + lonOff)
-                
-                for segment in segments {
-                    let distance = distanceToSegment(target: coordinate, p1: segment.p1, p2: segment.p2)
-                    if distance < minDistance {
-                        minDistance = distance
+        var closestLimit: Int?
+        var minDistance: CLLocationDistance = 100.0 // 100 meters threshold for AABB
+        var smallestArea: Double = Double.infinity
+        
+        for segment in segments {
+            let distance = segment.distance(to: coordinate)
+            
+            if distance <= minDistance {
+                // If we are inside the box (distance 0), or significantly closer than before
+                if distance < minDistance - 0.1 {
+                    minDistance = distance
+                    closestLimit = segment.limit
+                    smallestArea = segment.area
+                } else if distance <= 0.1 { 
+                    // Already inside a box, pick the smallest box (most specific segment)
+                    if segment.area < smallestArea {
                         closestLimit = segment.limit
+                        smallestArea = segment.area
                     }
                 }
             }
         }
         
-        if let limit = closestLimit { return limit }
+        if let limit = closestLimit, limit > 0 { return limit }
         throw URLError(.resourceUnavailable)
     }
 
@@ -118,6 +145,7 @@ public actor ArizonaSpeedLimitService {
         guard let db = db else { return [] }
         var segments: [RoadSegment] = []
         
+        // Search window: gridPrecision (0.01 is ~1.1km)
         let sql = """
             SELECT a.SpeedLimit, b.minx, b.maxx, b.miny, b.maxy
             FROM SpeedLimit_2024 a
@@ -128,11 +156,11 @@ public actor ArizonaSpeedLimitService {
         
         var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-            // Target bounding box expanded by gridPrecision (~1km)
-            sqlite3_bind_double(stmt, 1, lon + gridPrecision) // target max x
-            sqlite3_bind_double(stmt, 2, lon - gridPrecision) // target min x
-            sqlite3_bind_double(stmt, 3, lat + gridPrecision) // target max y
-            sqlite3_bind_double(stmt, 4, lat - gridPrecision) // target min y
+            let searchBuffer = gridPrecision
+            sqlite3_bind_double(stmt, 1, lon - searchBuffer)
+            sqlite3_bind_double(stmt, 2, lon + searchBuffer)
+            sqlite3_bind_double(stmt, 3, lat - searchBuffer)
+            sqlite3_bind_double(stmt, 4, lat + searchBuffer)
             
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let limit = Int(sqlite3_column_int(stmt, 0))
@@ -141,38 +169,18 @@ public actor ArizonaSpeedLimitService {
                 let miny = sqlite3_column_double(stmt, 3)
                 let maxy = sqlite3_column_double(stmt, 4)
                 
-                // Represent segment bounding box mathematically as a diagonal line 
-                // for distance approximation.
-                let p1 = CLLocationCoordinate2D(latitude: miny, longitude: minx)
-                let p2 = CLLocationCoordinate2D(latitude: maxy, longitude: maxx)
-                segments.append(RoadSegment(p1: p1, p2: p2, limit: limit))
+                segments.append(RoadSegment(minx: minx, maxx: maxx, miny: miny, maxy: maxy, limit: limit))
             }
         } else {
             let errmsg = String(cString: sqlite3_errmsg(db)!)
-            print("[AZ Data] Query prepraration failed: \(errmsg)")
+            print("[AZ Data] Query preparation failed: \(errmsg)")
         }
         sqlite3_finalize(stmt)
         return segments
     }
 
-    private func distanceToSegment(target: CLLocationCoordinate2D, 
-                                   p1: CLLocationCoordinate2D, 
-                                   p2: CLLocationCoordinate2D) -> CLLocationDistance {
-        let dx = p2.longitude - p1.longitude
-        let dy = p2.latitude - p1.latitude
-        
-        if dx == 0 && dy == 0 { return target.distance(from: p1) }
-        
-        let t = ((target.longitude - p1.longitude) * dx + (target.latitude - p1.latitude) * dy) / (dx * dx + dy * dy)
-        let clampedT = max(0, min(1, t))
-        
-        let nearestPoint = CLLocationCoordinate2D(
-            latitude: p1.latitude + clampedT * dy,
-            longitude: p1.longitude + clampedT * dx
-        )
-        
-        return target.distance(from: nearestPoint)
-    }
+    // Distance logic moved into RoadSegment struct.
+
     
     // parseWKBLineString is removed as Esri geodatabases use proprietary 
     // Compressed Geometry. We use spatial index bounding boxes instead natively.
