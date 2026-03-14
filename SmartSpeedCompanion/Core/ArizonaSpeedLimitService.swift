@@ -3,13 +3,14 @@ import CoreLocation
 import SQLite3
 
 /// A thread-safe actor service that queries Arizona speed limit data.
+/// Updated for Swift 6 Concurrency and Xcode 16 compatibility.
 public actor ArizonaSpeedLimitService {
     public static let shared = ArizonaSpeedLimitService()
     
     private var db: OpaquePointer?
     private var isLoaded = false
     
-    // Grid precision: 0.01 degree is roughly 1.1km at the equator.
+    // Grid precision: 0.01 degree is roughly 1.1km.
     private let gridPrecision = 0.01
     private var spatialCache: [String: [RoadSegment]] = [:]
     
@@ -23,7 +24,7 @@ public actor ArizonaSpeedLimitService {
 
     // MARK: - Data Models
     
-    struct RoadSegment {
+    struct RoadSegment: Sendable {
         let p1: CLLocationCoordinate2D
         let p2: CLLocationCoordinate2D
         let limit: Int
@@ -35,14 +36,15 @@ public actor ArizonaSpeedLimitService {
     public func loadDatabase(at path: String) -> Bool {
         guard !isLoaded else { return true }
         
-        if sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
+        // Open with Multi-thread mode for safety with Actors
+        if sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK {
             isLoaded = true
             return true
         }
         return false
     }
     
-    /// Finds the legal speed limit for a given coordinate by finding the nearest road segment.
+    /// Finds the legal speed limit for a given coordinate.
     public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int {
         guard isLoaded, let db = db else {
             throw URLError(.noPermissionsToReadFile)
@@ -50,12 +52,13 @@ public actor ArizonaSpeedLimitService {
 
         let searchOffsets = [-gridPrecision, 0.0, gridPrecision]
         var closestLimit: Int?
-        var minDistance: CLLocationDistance = 50.0 // Narrowed search radius to 50 meters for accuracy
+        var minDistance: CLLocationDistance = 50.0 // 50 meters threshold
         
         for latOff in searchOffsets {
             for lonOff in searchOffsets {
-                let segments = await getSegmentsForGrid(lat: coordinate.latitude + latOff, 
-                                                        lon: coordinate.longitude + lonOff)
+                // We call the local private function to check cache/db
+                let segments = getSegmentsForGrid(lat: coordinate.latitude + latOff, 
+                                                lon: coordinate.longitude + lonOff)
                 
                 for segment in segments {
                     let distance = distanceToSegment(target: coordinate, p1: segment.p1, p2: segment.p2)
@@ -95,16 +98,13 @@ public actor ArizonaSpeedLimitService {
         guard let db = db else { return [] }
         var segments: [RoadSegment] = []
         
-        let sql = """
-        SELECT SHAPE, SpeedLimit FROM ArizonaSpeedLimits 
-        WHERE MBRIntersects(SHAPE, BuildMBR(?, ?, ?, ?));
-        """
+        // Ensure your SQLite table name matches "ArizonaSpeedLimits"
+        let sql = "SELECT SHAPE, SpeedLimit FROM ArizonaSpeedLimits WHERE MBRIntersects(SHAPE, BuildMBR(?, ?, ?, ?));"
         
         var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-            // Bind MBR coordinates to prevent SQL injection and handle precision
-            sqlite3_bind_double(stmt, 1, lon)
-            sqlite3_bind_double(stmt, 2, lat)
+            sqlite3_bind_double(stmt, 1, lon - gridPrecision)
+            sqlite3_bind_double(stmt, 2, lat - gridPrecision)
             sqlite3_bind_double(stmt, 3, lon + gridPrecision)
             sqlite3_bind_double(stmt, 4, lat + gridPrecision)
             
@@ -128,7 +128,6 @@ public actor ArizonaSpeedLimitService {
     private func distanceToSegment(target: CLLocationCoordinate2D, 
                                    p1: CLLocationCoordinate2D, 
                                    p2: CLLocationCoordinate2D) -> CLLocationDistance {
-        // Standard geometric projection for point-to-line segment distance
         let dx = p2.longitude - p1.longitude
         let dy = p2.latitude - p1.latitude
         
@@ -146,7 +145,6 @@ public actor ArizonaSpeedLimitService {
     }
 
     private func parseWKBLineString(_ data: Data) -> [CLLocationCoordinate2D] {
-        // Minimal WKB parser for LineStrings
         guard data.count > 9 else { return [] }
         var points: [CLLocationCoordinate2D] = []
         
@@ -160,12 +158,12 @@ public actor ArizonaSpeedLimitService {
             let offset = 9 + (i * 16)
             guard data.count >= offset + 16 else { break }
             
-            let coords = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> (Double, Double) in
-                let lon = ptr.load(fromByteOffset: offset, as: Double.self)
-                let lat = ptr.load(fromByteOffset: offset + 8, as: Double.self)
-                return isLittleEndian ? (lon.littleEndian, lat.littleEndian) : (lon.bigEndian, lat.bigEndian)
+            let (lon, lat) = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> (Double, Double) in
+                let lo = ptr.load(fromByteOffset: offset, as: Double.self)
+                let la = ptr.load(fromByteOffset: offset + 8, as: Double.self)
+                return isLittleEndian ? (lo.littleEndian, la.littleEndian) : (lo.bigEndian, la.bigEndian)
             }
-            points.append(CLLocationCoordinate2D(latitude: coords.1, longitude: coords.0))
+            points.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
         }
         return points
     }
