@@ -3,6 +3,7 @@ import Combine
 import SwiftData
 import MapKit
 import ActivityKit
+import AVFoundation
 
 /// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
