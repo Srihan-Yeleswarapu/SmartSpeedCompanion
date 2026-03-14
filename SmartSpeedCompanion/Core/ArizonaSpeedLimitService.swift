@@ -2,65 +2,66 @@ import Foundation
 import CoreLocation
 import SQLite3
 
-/// Service that queries an Esri File Geodatabase for Arizona speed limits.
-public class ArizonaSpeedLimitService {
+/// A thread-safe actor service that queries Arizona speed limit data.
+public actor ArizonaSpeedLimitService {
     public static let shared = ArizonaSpeedLimitService()
     
     private var db: OpaquePointer?
     private var isLoaded = false
     
-    /// Grid precision for caching: 0.01 degree ~1 km
+    // Grid precision: 0.01 degree is roughly 1.1km at the equator.
     private let gridPrecision = 0.01
-    private var spatialCache: [String: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)]] = [:]
+    private var spatialCache: [String: [RoadSegment]] = [:]
     
     private init() {}
     
-    // MARK: - Public
-    
-    /// Open the geodatabase (SQLite-based)
-    public func loadDatabase(at path: String) -> Bool {
-        if isLoaded { return true }
-        if sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
-            isLoaded = true
-            print("[AZ DB] Opened geodatabase at \(path)")
-            return true
-        } else {
-            print("[AZ DB] Failed to open geodatabase at \(path)")
-            return false
+    deinit {
+        if let db = db {
+            sqlite3_close_v2(db)
         }
     }
+
+    // MARK: - Data Models
     
-    /// Fetch speed limit at a coordinate
+    struct RoadSegment {
+        let p1: CLLocationCoordinate2D
+        let p2: CLLocationCoordinate2D
+        let limit: Int
+    }
+
+    // MARK: - Public API
+    
+    /// Opens the SQLite-based geodatabase at the specified file path.
+    public func loadDatabase(at path: String) -> Bool {
+        guard !isLoaded else { return true }
+        
+        if sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
+            isLoaded = true
+            return true
+        }
+        return false
+    }
+    
+    /// Finds the legal speed limit for a given coordinate by finding the nearest road segment.
     public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int {
-        guard isLoaded, let db = db else { throw URLError(.cannotOpenFile) }
-        
-        let targetLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        let offsets = [-gridPrecision, 0.0, gridPrecision]
+        guard isLoaded, let db = db else {
+            throw URLError(.noPermissionsToReadFile)
+        }
+
+        let searchOffsets = [-gridPrecision, 0.0, gridPrecision]
         var closestLimit: Int?
-        var minDistance: CLLocationDistance = 1000 // 1 km default
+        var minDistance: CLLocationDistance = 50.0 // Narrowed search radius to 50 meters for accuracy
         
-        for latOffset in offsets {
-            for lonOffset in offsets {
-                let keyLat = coordinate.latitude + latOffset
-                let keyLon = coordinate.longitude + lonOffset
-                let cacheKey = gridKey(lat: keyLat, lon: keyLon)
+        for latOff in searchOffsets {
+            for lonOff in searchOffsets {
+                let segments = await getSegmentsForGrid(lat: coordinate.latitude + latOff, 
+                                                        lon: coordinate.longitude + lonOff)
                 
-                var segments: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)] = []
-                
-                // Check cache first
-                if let cached = spatialCache[cacheKey] {
-                    segments = cached
-                } else {
-                    segments = querySegments(db: db, lat: keyLat, lon: keyLon)
-                    spatialCache[cacheKey] = segments
-                }
-                
-                // Find closest segment
-                for (p1, p2, limit) in segments {
-                    let d = distanceToSegment(target: targetLoc.coordinate, p1: p1, p2: p2)
-                    if d < minDistance {
-                        minDistance = d
-                        closestLimit = limit
+                for segment in segments {
+                    let distance = distanceToSegment(target: coordinate, p1: segment.p1, p2: segment.p2)
+                    if distance < minDistance {
+                        minDistance = distance
+                        closestLimit = segment.limit
                     }
                 }
             }
@@ -69,109 +70,112 @@ public class ArizonaSpeedLimitService {
         if let limit = closestLimit { return limit }
         throw URLError(.resourceUnavailable)
     }
+
+    // MARK: - Private Logic
     
-    // MARK: - Helpers
-    
-    /// Create a unique key for caching a grid cell
+    private func getSegmentsForGrid(lat: Double, lon: Double) -> [RoadSegment] {
+        let key = gridKey(lat: lat, lon: lon)
+        
+        if let cached = spatialCache[key] {
+            return cached
+        }
+        
+        let segments = queryDatabase(lat: lat, lon: lon)
+        spatialCache[key] = segments
+        return segments
+    }
+
     private func gridKey(lat: Double, lon: Double) -> String {
         let latK = round(lat / gridPrecision) * gridPrecision
         let lonK = round(lon / gridPrecision) * gridPrecision
-        return "\(latK)_\(lonK)"
+        return String(format: "%.2f_%.2f", latK, lonK)
     }
-    
-    /// Query segments from the geodatabase for a grid cell
-    private func querySegments(db: OpaquePointer, lat: Double, lon: Double) -> [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)] {
-        var segments: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)] = []
+
+    private func queryDatabase(lat: Double, lon: Double) -> [RoadSegment] {
+        guard let db = db else { return [] }
+        var segments: [RoadSegment] = []
         
         let sql = """
-        SELECT SHAPE, SpeedLimit
-        FROM ArizonaSpeedLimits
-        WHERE MBRIntersects(SHAPE,
-            BuildMBR(\(lon), \(lat), \(lon + gridPrecision), \(lat + gridPrecision))
-        );
+        SELECT SHAPE, SpeedLimit FROM ArizonaSpeedLimits 
+        WHERE MBRIntersects(SHAPE, BuildMBR(?, ?, ?, ?));
         """
+        
         var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            // Bind MBR coordinates to prevent SQL injection and handle precision
+            sqlite3_bind_double(stmt, 1, lon)
+            sqlite3_bind_double(stmt, 2, lat)
+            sqlite3_bind_double(stmt, 3, lon + gridPrecision)
+            sqlite3_bind_double(stmt, 4, lat + gridPrecision)
+            
             while sqlite3_step(stmt) == SQLITE_ROW {
                 if let blob = sqlite3_column_blob(stmt, 0) {
                     let size = sqlite3_column_bytes(stmt, 0)
                     let data = Data(bytes: blob, count: Int(size))
-                    let lines = parseLineSegments(fromWKB: data)
                     let limit = Int(sqlite3_column_int(stmt, 1))
-                    for line in lines {
-                        segments.append((line.0, line.1, limit))
+                    
+                    let points = parseWKBLineString(data)
+                    for i in 0..<(points.count - 1) {
+                        segments.append(RoadSegment(p1: points[i], p2: points[i+1], limit: limit))
                     }
                 }
             }
-            sqlite3_finalize(stmt)
         }
-        
+        sqlite3_finalize(stmt)
         return segments
     }
-    
-    /// Distance from a point to a segment (meters) using equirectangular approximation
-    private func distanceToSegment(target: CLLocationCoordinate2D,
-                                   p1: CLLocationCoordinate2D,
+
+    private func distanceToSegment(target: CLLocationCoordinate2D, 
+                                   p1: CLLocationCoordinate2D, 
                                    p2: CLLocationCoordinate2D) -> CLLocationDistance {
-        let latMid = (p1.latitude + p2.latitude) / 2.0 * .pi / 180.0
-        let mPerDegLat = 111132.92 - 559.82 * cos(2 * latMid) + 1.175 * cos(4 * latMid)
-        let mPerDegLon = 111412.84 * cos(latMid) - 93.5 * cos(3 * latMid)
+        // Standard geometric projection for point-to-line segment distance
+        let dx = p2.longitude - p1.longitude
+        let dy = p2.latitude - p1.latitude
         
-        let x0 = target.longitude * mPerDegLon
-        let y0 = target.latitude * mPerDegLat
-        let x1 = p1.longitude * mPerDegLon
-        let y1 = p1.latitude * mPerDegLat
-        let x2 = p2.longitude * mPerDegLon
-        let y2 = p2.latitude * mPerDegLat
+        if dx == 0 && dy == 0 { return target.distance(from: p1) }
         
-        let dx = x2 - x1
-        let dy = y2 - y1
-        let t = max(0, min(1, ((x0 - x1) * dx + (y0 - y1) * dy) / (dx*dx + dy*dy)))
-        let xx = x1 + t * dx
-        let yy = y1 + t * dy
-        let dist = sqrt((x0 - xx)*(x0 - xx) + (y0 - yy)*(y0 - yy))
-        return dist
+        let t = ((target.longitude - p1.longitude) * dx + (target.latitude - p1.latitude) * dy) / (dx * dx + dy * dy)
+        let clampedT = max(0, min(1, t))
+        
+        let nearestPoint = CLLocationCoordinate2D(
+            latitude: p1.latitude + clampedT * dy,
+            longitude: p1.longitude + clampedT * dx
+        )
+        
+        return target.distance(from: nearestPoint)
     }
-    
-    /// Parse WKB LineString into line segments
-    private func parseLineSegments(fromWKB data: Data) -> [(CLLocationCoordinate2D, CLLocationCoordinate2D)] {
-        var segments: [(CLLocationCoordinate2D, CLLocationCoordinate2D)] = []
+
+    private func parseWKBLineString(_ data: Data) -> [CLLocationCoordinate2D] {
+        // Minimal WKB parser for LineStrings
         guard data.count > 9 else { return [] }
-        
-        var cursor = 0
-        let byteOrder = data[cursor]
-        cursor += 1
-        let isLittleEndian = byteOrder == 1
-        cursor += 4 // Skip geometry type (LineString)
-        
-        func readUInt32() -> UInt32 {
-            let sub = data[cursor..<cursor+4]
-            cursor += 4
-            return isLittleEndian ? sub.withUnsafeBytes { $0.load(as: UInt32.self) }.littleEndian
-                                  : sub.withUnsafeBytes { $0.load(as: UInt32.self) }.bigEndian
-        }
-        
-        func readDouble() -> Double {
-            let sub = data[cursor..<cursor+8]
-            cursor += 8
-            return isLittleEndian ? sub.withUnsafeBytes { $0.load(as: Double.self) }.littleEndian
-                                  : sub.withUnsafeBytes { $0.load(as: Double.self) }.bigEndian
-        }
-        
-        let numPoints = Int(readUInt32())
-        guard numPoints >= 2 else { return [] }
-        
         var points: [CLLocationCoordinate2D] = []
-        for _ in 0..<numPoints {
-            let lon = readDouble()
-            let lat = readDouble()
-            points.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
+        
+        let isLittleEndian = data[0] == 1
+        let numPoints = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> UInt32 in
+            let val = ptr.load(fromByteOffset: 5, as: UInt32.self)
+            return isLittleEndian ? val.littleEndian : val.bigEndian
         }
         
-        for i in 0..<(points.count-1) {
-            segments.append((points[i], points[i+1]))
+        for i in 0..<Int(numPoints) {
+            let offset = 9 + (i * 16)
+            guard data.count >= offset + 16 else { break }
+            
+            let coords = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> (Double, Double) in
+                let lon = ptr.load(fromByteOffset: offset, as: Double.self)
+                let lat = ptr.load(fromByteOffset: offset + 8, as: Double.self)
+                return isLittleEndian ? (lon.littleEndian, lat.littleEndian) : (lon.bigEndian, lat.bigEndian)
+            }
+            points.append(CLLocationCoordinate2D(latitude: coords.1, longitude: coords.0))
         }
-        
-        return segments
+        return points
+    }
+}
+
+// MARK: - Extensions
+extension CLLocationCoordinate2D {
+    func distance(from other: CLLocationCoordinate2D) -> CLLocationDistance {
+        let locA = CLLocation(latitude: self.latitude, longitude: self.longitude)
+        let locB = CLLocation(latitude: other.latitude, longitude: other.longitude)
+        return locA.distance(from: locB)
     }
 }
