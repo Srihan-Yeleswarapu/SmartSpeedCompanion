@@ -1,144 +1,92 @@
 import Foundation
 import CoreLocation
+import SQLite3
 
-/// Service that parses the local ArizonaSpeedLimits.geojson and provides rapid
-/// spatial lookups using a memory-based grid spatial index.
+/// Service that queries an Esri File Geodatabase for Arizona speed limits.
 public class ArizonaSpeedLimitService {
     public static let shared = ArizonaSpeedLimitService()
     
+    private var db: OpaquePointer?
     private var isLoaded = false
-    private var isLoading = false
     
-    // Grid: Key is "lat_lon" (rounded to 2 decimals, ~1km precision), Value is array of segments.
-    private var spatialGrid: [String: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)]] = [:]
+    // Grid precision for caching: 0.01 degree ~1km
+    private let gridPrecision = 0.01
+    private var spatialCache: [String: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)]] = [:]
     
-    private init() { }
+    private init() {}
     
-    public func loadDataIfNeeded() async {
-        if isLoaded || isLoading { return }
-        isLoading = true
-        
-        defer { isLoading = false }
-        
-        guard let url = Bundle.main.url(forResource: "ArizonaSpeedLimits", withExtension: "geojson") else {
-            print("[AZ Data] ArizonaSpeedLimits.geojson not found in bundle.")
-            return
-        }
-        
-        do {
-            let data = try Data(contentsOf: url)
-            
-            // Dispatch parsing to a background thread to prevent UI hangs (57MB file)
-            let resultGrid = try await Task.detached(priority: .background) { () -> [String: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)]] in
-                var grid = [String: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)]]()
-                
-                guard let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                      let features = json["features"] as? [[String: Any]] else {
-                    return [:]
-                }
-                
-                for feature in features {
-                    guard let properties = feature["properties"] as? [String: Any],
-                          let limitStr = properties["SpeedLimit"] else { continue }
-                    
-                    // Parse limit
-                    let limit: Int
-                    if let lInt = limitStr as? Int {
-                        limit = lInt
-                    } else if let lStr = limitStr as? String, let parsed = Int(lStr) {
-                        limit = parsed
-                    } else {
-                        continue
-                    }
-                    
-                    guard let geometry = feature["geometry"] as? [String: Any],
-                          let coordinates = geometry["coordinates"] as? [Any] else { continue }
-                    
-                    let type = geometry["type"] as? String ?? ""
-                    
-                    if type == "LineString", let coords = coordinates as? [[Double]] {
-                        ArizonaSpeedLimitService.addSegments(coords: coords, limit: limit, grid: &grid)
-                    } else if type == "MultiLineString", let lines = coordinates as? [[[Double]]] {
-                        for line in lines {
-                            ArizonaSpeedLimitService.addSegments(coords: line, limit: limit, grid: &grid)
-                        }
-                    }
-                }
-                
-                return grid
-            }.value
-            
-            self.spatialGrid = resultGrid
-            self.isLoaded = true
-            print("[AZ Data] Successfully loaded and indexed \(resultGrid.count) spatial grid cells.")
-            
-        } catch {
-            print("[AZ Data] Error loading geojson: \(error)")
+    /// Opens the geodatabase (SQLite-based) once
+    public func loadDatabase(at path: String) -> Bool {
+        if isLoaded { return true }
+        let dbPath = path
+        if sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
+            isLoaded = true
+            print("[AZ DB] Opened geodatabase at \(path)")
+            return true
+        } else {
+            print("[AZ DB] Failed to open geodatabase at \(path)")
+            return false
         }
     }
     
-    private static func addSegments(coords: [[Double]], limit: Int, grid: inout [String: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)]]) {
-        guard coords.count >= 2 else { return }
-        
-        for i in 0..<(coords.count - 1) {
-            let c1 = coords[i]
-            let c2 = coords[i+1]
-            guard c1.count >= 2, c2.count >= 2 else { continue }
-            
-            let p1 = CLLocationCoordinate2D(latitude: c1[1], longitude: c1[0])
-            let p2 = CLLocationCoordinate2D(latitude: c2[1], longitude: c2[0])
-            
-            // Interpolate points along the segment to ensure it's indexed in every grid cell it crosses
-            let dist = CLLocation(latitude: p1.latitude, longitude: p1.longitude).distance(from: CLLocation(latitude: p2.latitude, longitude: p2.longitude))
-            let numSteps = max(3, Int(dist / 500)) // At least every 500m
-            
-            var uniqueKeys = Set<String>()
-            for step in 0...numSteps {
-                let fraction = Double(step) / Double(numSteps)
-                let lat = p1.latitude + (p2.latitude - p1.latitude) * fraction
-                let lon = p1.longitude + (p2.longitude - p1.longitude) * fraction
-                uniqueKeys.insert(String(format: "%.2f_%.2f", lat, lon))
-            }
-            
-            for key in uniqueKeys {
-                grid[key, default: []].append((p1, p2, limit))
-            }
-        }
-    }
-    
+    /// Fetches the speed limit at a given coordinate
     public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int {
-        // If still loading, wait up to 2 seconds for it to finish
-        if isLoading && !isLoaded {
-            for _ in 0..<20 {
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                if isLoaded { break }
-            }
-        }
-
-        if !isLoaded {
-            throw URLError(.cannotDecodeContentData)
+        guard isLoaded, let db = db else {
+            throw URLError(.cannotOpenFile)
         }
         
-        let searchLat = coordinate.latitude
-        let searchLon = coordinate.longitude
-        
-        // Search current cell and immediate neighbors (9 cells total)
-        // A 0.01 degree cell is ~1.1km, so 3x3 covers ~3.3km x 3.3km
-        let offsets = [-0.01, 0.0, 0.01]
+        // Compute 3x3 grid around target
+        let latKey = round(coordinate.latitude / gridPrecision) * gridPrecision
+        let lonKey = round(coordinate.longitude / gridPrecision) * gridPrecision
+        let offsets = [-gridPrecision, 0.0, gridPrecision]
         
         var closestLimit: Int?
-        var minDistance: CLLocationDistance = 60 // Snap to roads within 60 meters
-        
-        let targetLoc = CLLocation(latitude: searchLat, longitude: searchLon)
+        var minDistance: CLLocationDistance = 60 // meters
         
         for latOffset in offsets {
             for lonOffset in offsets {
-                let cellLat = searchLat + latOffset
-                let cellLon = searchLon + lonOffset
-                let key = String(format: "%.2f_%.2f", cellLat, cellLon)
+                let keyLat = latKey + latOffset
+                let keyLon = lonKey + lonOffset
+                let cacheKey = "\(keyLat)_\(keyLon)"
                 
-                guard let segments = spatialGrid[key] else { continue }
+                var segments: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)] = []
                 
+                // Check cache first
+                if let cached = spatialCache[cacheKey] {
+                    segments = cached
+                } else {
+                    // Query the geodatabase table: adjust table/field names based on your .gdb schema
+                    let sql = """
+                    SELECT SHAPE, SpeedLimit
+                    FROM ArizonaSpeedLimits
+                    WHERE MBRIntersects(SHAPE,
+                        BuildMBR(\(keyLon), \(keyLat), \(keyLon + gridPrecision), \(keyLat + gridPrecision))
+                    );
+                    """
+                    var stmt: OpaquePointer?
+                    if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                        while sqlite3_step(stmt) == SQLITE_ROW {
+                            // SHAPE is stored as WKB (Binary)
+                            if let shapeBlob = sqlite3_column_blob(stmt, 0) {
+                                let shapeSize = sqlite3_column_bytes(stmt, 0)
+                                let data = Data(bytes: shapeBlob, count: Int(shapeSize))
+                                
+                                // Parse line segments from WKB (simplified: LineString only)
+                                let lineSegments = parseLineSegments(fromWKB: data)
+                                
+                                // Speed limit
+                                let limit = Int(sqlite3_column_int(stmt, 1))
+                                for seg in lineSegments {
+                                    segments.append((seg.0, seg.1, limit))
+                                }
+                            }
+                        }
+                        sqlite3_finalize(stmt)
+                    }
+                    spatialCache[cacheKey] = segments
+                }
+                
+                let targetLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
                 for (p1, p2, limit) in segments {
                     let d = distanceToSegment(target: targetLoc.coordinate, p1: p1, p2: p2)
                     if d < minDistance {
@@ -152,12 +100,16 @@ public class ArizonaSpeedLimitService {
         if let best = closestLimit {
             return best
         }
+        
         throw URLError(.resourceUnavailable)
     }
     
-    // Cross-track distance point-to-line segment in meters (approximate)
-    private func distanceToSegment(target: CLLocationCoordinate2D, p1: CLLocationCoordinate2D, p2: CLLocationCoordinate2D) -> CLLocationDistance {
-        // Convert to meters using equirectangular approximation
+    // MARK: - Helpers
+    
+    private func distanceToSegment(target: CLLocationCoordinate2D,
+                                   p1: CLLocationCoordinate2D,
+                                   p2: CLLocationCoordinate2D) -> CLLocationDistance {
+        // Same equirectangular approximation as before
         let latMid = (p1.latitude + p2.latitude) / 2.0 * .pi / 180.0
         let m_per_deg_lat = 111132.92 - 559.82 * cos(2 * latMid) + 1.175 * cos(4 * latMid)
         let m_per_deg_lon = 111412.84 * cos(latMid) - 93.5 * cos(3 * latMid)
@@ -182,11 +134,9 @@ public class ArizonaSpeedLimitService {
         let yy: Double
         
         if param < 0 {
-            xx = x1
-            yy = y1
+            xx = x1; yy = y1
         } else if param > 1 {
-            xx = x2
-            yy = y2
+            xx = x2; yy = y2
         } else {
             xx = x1 + param * C
             yy = y1 + param * D
@@ -194,6 +144,12 @@ public class ArizonaSpeedLimitService {
         
         let dx = x0 - xx
         let dy = y0 - yy
-        return sqrt(dx * dx + dy * dy)
+        return sqrt(dx*dx + dy*dy)
+    }
+    
+    /// Parse LineString WKB into array of segment tuples (simplified)
+    private func parseLineSegments(fromWKB data: Data) -> [(CLLocationCoordinate2D, CLLocationCoordinate2D)] {
+        // Implement proper WKB parsing for your geodatabase; placeholder:
+        return []
     }
 }
