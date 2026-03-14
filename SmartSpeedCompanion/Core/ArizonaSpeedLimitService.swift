@@ -9,17 +9,18 @@ public class ArizonaSpeedLimitService {
     private var db: OpaquePointer?
     private var isLoaded = false
     
-    // Grid precision for caching: 0.01 degree ~1km
+    /// Grid precision for caching: 0.01 degree ~1 km
     private let gridPrecision = 0.01
     private var spatialCache: [String: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)]] = [:]
     
     private init() {}
     
-    /// Opens the geodatabase (SQLite-based) once
+    // MARK: - Public
+    
+    /// Open the geodatabase (SQLite-based)
     public func loadDatabase(at path: String) -> Bool {
         if isLoaded { return true }
-        let dbPath = path
-        if sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
+        if sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
             isLoaded = true
             print("[AZ DB] Opened geodatabase at \(path)")
             return true
@@ -29,25 +30,20 @@ public class ArizonaSpeedLimitService {
         }
     }
     
-    /// Fetches the speed limit at a given coordinate
+    /// Fetch speed limit at a coordinate
     public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int {
-        guard isLoaded, let db = db else {
-            throw URLError(.cannotOpenFile)
-        }
+        guard isLoaded, let db = db else { throw URLError(.cannotOpenFile) }
         
-        // Compute 3x3 grid around target
-        let latKey = round(coordinate.latitude / gridPrecision) * gridPrecision
-        let lonKey = round(coordinate.longitude / gridPrecision) * gridPrecision
+        let targetLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         let offsets = [-gridPrecision, 0.0, gridPrecision]
-        
         var closestLimit: Int?
-        var minDistance: CLLocationDistance = 60 // meters
+        var minDistance: CLLocationDistance = 1000 // 1 km default
         
         for latOffset in offsets {
             for lonOffset in offsets {
-                let keyLat = latKey + latOffset
-                let keyLon = lonKey + lonOffset
-                let cacheKey = "\(keyLat)_\(keyLon)"
+                let keyLat = coordinate.latitude + latOffset
+                let keyLon = coordinate.longitude + lonOffset
+                let cacheKey = gridKey(lat: keyLat, lon: keyLon)
                 
                 var segments: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)] = []
                 
@@ -55,38 +51,11 @@ public class ArizonaSpeedLimitService {
                 if let cached = spatialCache[cacheKey] {
                     segments = cached
                 } else {
-                    // Query the geodatabase table: adjust table/field names based on your .gdb schema
-                    let sql = """
-                    SELECT SHAPE, SpeedLimit
-                    FROM ArizonaSpeedLimits
-                    WHERE MBRIntersects(SHAPE,
-                        BuildMBR(\(keyLon), \(keyLat), \(keyLon + gridPrecision), \(keyLat + gridPrecision))
-                    );
-                    """
-                    var stmt: OpaquePointer?
-                    if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-                        while sqlite3_step(stmt) == SQLITE_ROW {
-                            // SHAPE is stored as WKB (Binary)
-                            if let shapeBlob = sqlite3_column_blob(stmt, 0) {
-                                let shapeSize = sqlite3_column_bytes(stmt, 0)
-                                let data = Data(bytes: shapeBlob, count: Int(shapeSize))
-                                
-                                // Parse line segments from WKB (simplified: LineString only)
-                                let lineSegments = parseLineSegments(fromWKB: data)
-                                
-                                // Speed limit
-                                let limit = Int(sqlite3_column_int(stmt, 1))
-                                for seg in lineSegments {
-                                    segments.append((seg.0, seg.1, limit))
-                                }
-                            }
-                        }
-                        sqlite3_finalize(stmt)
-                    }
+                    segments = querySegments(db: db, lat: keyLat, lon: keyLon)
                     spatialCache[cacheKey] = segments
                 }
                 
-                let targetLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                // Find closest segment
                 for (p1, p2, limit) in segments {
                     let d = distanceToSegment(target: targetLoc.coordinate, p1: p1, p2: p2)
                     if d < minDistance {
@@ -97,59 +66,112 @@ public class ArizonaSpeedLimitService {
             }
         }
         
-        if let best = closestLimit {
-            return best
-        }
-        
+        if let limit = closestLimit { return limit }
         throw URLError(.resourceUnavailable)
     }
     
     // MARK: - Helpers
     
+    /// Create a unique key for caching a grid cell
+    private func gridKey(lat: Double, lon: Double) -> String {
+        let latK = round(lat / gridPrecision) * gridPrecision
+        let lonK = round(lon / gridPrecision) * gridPrecision
+        return "\(latK)_\(lonK)"
+    }
+    
+    /// Query segments from the geodatabase for a grid cell
+    private func querySegments(db: OpaquePointer, lat: Double, lon: Double) -> [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)] {
+        var segments: [(CLLocationCoordinate2D, CLLocationCoordinate2D, Int)] = []
+        
+        let sql = """
+        SELECT SHAPE, SpeedLimit
+        FROM ArizonaSpeedLimits
+        WHERE MBRIntersects(SHAPE,
+            BuildMBR(\(lon), \(lat), \(lon + gridPrecision), \(lat + gridPrecision))
+        );
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let blob = sqlite3_column_blob(stmt, 0) {
+                    let size = sqlite3_column_bytes(stmt, 0)
+                    let data = Data(bytes: blob, count: Int(size))
+                    let lines = parseLineSegments(fromWKB: data)
+                    let limit = Int(sqlite3_column_int(stmt, 1))
+                    for line in lines {
+                        segments.append((line.0, line.1, limit))
+                    }
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+        
+        return segments
+    }
+    
+    /// Distance from a point to a segment (meters) using equirectangular approximation
     private func distanceToSegment(target: CLLocationCoordinate2D,
                                    p1: CLLocationCoordinate2D,
                                    p2: CLLocationCoordinate2D) -> CLLocationDistance {
-        // Same equirectangular approximation as before
         let latMid = (p1.latitude + p2.latitude) / 2.0 * .pi / 180.0
-        let m_per_deg_lat = 111132.92 - 559.82 * cos(2 * latMid) + 1.175 * cos(4 * latMid)
-        let m_per_deg_lon = 111412.84 * cos(latMid) - 93.5 * cos(3 * latMid)
+        let mPerDegLat = 111132.92 - 559.82 * cos(2 * latMid) + 1.175 * cos(4 * latMid)
+        let mPerDegLon = 111412.84 * cos(latMid) - 93.5 * cos(3 * latMid)
         
-        let x0 = target.longitude * m_per_deg_lon
-        let y0 = target.latitude * m_per_deg_lat
-        let x1 = p1.longitude * m_per_deg_lon
-        let y1 = p1.latitude * m_per_deg_lat
-        let x2 = p2.longitude * m_per_deg_lon
-        let y2 = p2.latitude * m_per_deg_lat
+        let x0 = target.longitude * mPerDegLon
+        let y0 = target.latitude * mPerDegLat
+        let x1 = p1.longitude * mPerDegLon
+        let y1 = p1.latitude * mPerDegLat
+        let x2 = p2.longitude * mPerDegLon
+        let y2 = p2.latitude * mPerDegLat
         
-        let A = x0 - x1
-        let B = y0 - y1
-        let C = x2 - x1
-        let D = y2 - y1
-        
-        let dot = A * C + B * D
-        let len_sq = C * C + D * D
-        let param = len_sq != 0 ? dot / len_sq : -1
-        
-        let xx: Double
-        let yy: Double
-        
-        if param < 0 {
-            xx = x1; yy = y1
-        } else if param > 1 {
-            xx = x2; yy = y2
-        } else {
-            xx = x1 + param * C
-            yy = y1 + param * D
-        }
-        
-        let dx = x0 - xx
-        let dy = y0 - yy
-        return sqrt(dx*dx + dy*dy)
+        let dx = x2 - x1
+        let dy = y2 - y1
+        let t = max(0, min(1, ((x0 - x1) * dx + (y0 - y1) * dy) / (dx*dx + dy*dy)))
+        let xx = x1 + t * dx
+        let yy = y1 + t * dy
+        let dist = sqrt((x0 - xx)*(x0 - xx) + (y0 - yy)*(y0 - yy))
+        return dist
     }
     
-    /// Parse LineString WKB into array of segment tuples (simplified)
+    /// Parse WKB LineString into line segments
     private func parseLineSegments(fromWKB data: Data) -> [(CLLocationCoordinate2D, CLLocationCoordinate2D)] {
-        // Implement proper WKB parsing for your geodatabase; placeholder:
-        return []
+        var segments: [(CLLocationCoordinate2D, CLLocationCoordinate2D)] = []
+        guard data.count > 9 else { return [] }
+        
+        var cursor = 0
+        let byteOrder = data[cursor]
+        cursor += 1
+        let isLittleEndian = byteOrder == 1
+        cursor += 4 // Skip geometry type (LineString)
+        
+        func readUInt32() -> UInt32 {
+            let sub = data[cursor..<cursor+4]
+            cursor += 4
+            return isLittleEndian ? sub.withUnsafeBytes { $0.load(as: UInt32.self) }.littleEndian
+                                  : sub.withUnsafeBytes { $0.load(as: UInt32.self) }.bigEndian
+        }
+        
+        func readDouble() -> Double {
+            let sub = data[cursor..<cursor+8]
+            cursor += 8
+            return isLittleEndian ? sub.withUnsafeBytes { $0.load(as: Double.self) }.littleEndian
+                                  : sub.withUnsafeBytes { $0.load(as: Double.self) }.bigEndian
+        }
+        
+        let numPoints = Int(readUInt32())
+        guard numPoints >= 2 else { return [] }
+        
+        var points: [CLLocationCoordinate2D] = []
+        for _ in 0..<numPoints {
+            let lon = readDouble()
+            let lat = readDouble()
+            points.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
+        }
+        
+        for i in 0..<(points.count-1) {
+            segments.append((points[i], points[i+1]))
+        }
+        
+        return segments
     }
 }
