@@ -191,6 +191,25 @@ public actor ArizonaSpeedLimitService {
         }
         return points
     }
+
+    /// Clears the spatial cache.
+    public func clearCache() {
+        spatialCache.removeAll()
+    }
+    
+    /// Pre-caches speed limits along a planned route.
+    public func preCacheRoute(coordinates: [CLLocationCoordinate2D]) async {
+        for coord in coordinates {
+            // We search in 3x3 grid around each point to ensure coverage
+            let searchOffsets = [-gridPrecision, 0.0, gridPrecision]
+            for latOff in searchOffsets {
+                for lonOff in searchOffsets {
+                    _ = getSegmentsForGrid(lat: coord.latitude + latOff, 
+                                         lon: coord.longitude + lonOff)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Extensions

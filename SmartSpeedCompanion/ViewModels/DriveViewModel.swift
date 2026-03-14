@@ -201,6 +201,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
         
         if !isNavigating {
             LiveActivityManager.shared.endActivity()
+            
+            // Clear Arizona Speed Limit cache when session fully ends
+            Task {
+                await ArizonaSpeedLimitService.shared.clearCache()
+            }
         }
     }
     
@@ -246,6 +251,24 @@ public final class DriveViewModel: NSObject, ObservableObject {
         self.isSelectingRoute = false
         self.isNavigating = true
         self.currentRoute = route
+        
+        // Pre-cache speed limits along the route polyline points
+        Task {
+            let polylinePoints = route.polyline.points()
+            let pointCount = route.polyline.pointCount
+            var coordinates: [CLLocationCoordinate2D] = []
+            
+            // Sample points along the route (every ~20th point for performance, 
+            // the service handles 3x3 grid around each)
+            for i in stride(from: 0, to: pointCount, by: 20) {
+                coordinates.append(polylinePoints[i].coordinate)
+            }
+            // Always include last
+            if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
+            
+            await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
+        }
+
         if let dest = self.destination {
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
         }
