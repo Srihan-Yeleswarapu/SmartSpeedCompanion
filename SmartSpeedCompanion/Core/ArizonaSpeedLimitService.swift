@@ -88,16 +88,16 @@ public class ArizonaSpeedLimitService {
             let p1 = CLLocationCoordinate2D(latitude: c1[1], longitude: c1[0])
             let p2 = CLLocationCoordinate2D(latitude: c2[1], longitude: c2[0])
             
-            // Index at start, end, and middle to ensure the segment is found in all relevant grid cells
-            let pointsToStore = [
-                p1,
-                p2,
-                CLLocationCoordinate2D(latitude: (p1.latitude + p2.latitude) / 2.0, longitude: (p1.longitude + p2.longitude) / 2.0)
-            ]
+            // Interpolate points along the segment to ensure it's indexed in every grid cell it crosses
+            let dist = CLLocation(latitude: p1.latitude, longitude: p1.longitude).distance(from: CLLocation(latitude: p2.latitude, longitude: p2.longitude))
+            let numSteps = max(3, Int(dist / 500)) // At least every 500m
             
             var uniqueKeys = Set<String>()
-            for pt in pointsToStore {
-                uniqueKeys.insert(String(format: "%.2f_%.2f", pt.latitude, pt.longitude))
+            for step in 0...numSteps {
+                let fraction = Double(step) / Double(numSteps)
+                let lat = p1.latitude + (p2.latitude - p1.latitude) * fraction
+                let lon = p1.longitude + (p2.longitude - p1.longitude) * fraction
+                uniqueKeys.insert(String(format: "%.2f_%.2f", lat, lon))
             }
             
             for key in uniqueKeys {

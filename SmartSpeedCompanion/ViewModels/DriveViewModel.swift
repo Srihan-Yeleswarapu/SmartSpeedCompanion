@@ -54,6 +54,8 @@ public final class DriveViewModel: NSObject, ObservableObject {
     // Search Completer
     private let completer = MKLocalSearchCompleter()
     
+    private let speechSynthesizer = AVSpeechSynthesizer()
+    
     // Timer properties
     private var sessionStartTime: Date? = nil
     private var sessionTimer: AnyCancellable? = nil
@@ -346,10 +348,25 @@ public final class DriveViewModel: NSObject, ObservableObject {
     private func updateNavigationProgress(at location: CLLocation) {
         guard let route = currentRoute else { return }
         
-        // Find the next step
-        // A simple logic: find the first step whose distance from current location is 'ahead' or just use the steps in order
-        // For a real app, we'd use a more robust map-matching algorithm
+        // 1. Off-Route Detection
+        // Check distance to the closest point on the polyline logic (simplified)
+        let distanceToRoute = location.distance(from: CLLocation(latitude: route.polyline.coordinate.latitude, longitude: route.polyline.coordinate.longitude))
         
+        // If > 150 meters away from the route start (simplified proxy for 'off route'), reroute
+        if distanceToRoute > 150 {
+            print("Off route detected (\(Int(distanceToRoute))m), recalculating...")
+            if let dest = destination {
+                Task {
+                    await selectDestinationAndCalculateRoutes(to: dest)
+                    if let newRoute = availableRoutes.first {
+                        await startNavigation(with: newRoute)
+                    }
+                }
+            }
+            return
+        }
+
+        // 2. Step Progress Tracking
         let steps = route.steps
         var upcomingStep: MKRoute.Step?
         
@@ -360,6 +377,12 @@ public final class DriveViewModel: NSObject, ObservableObject {
             // If we are more than 50 meters from the step, it's likely upcoming
             if distanceToStep > 50 {
                 upcomingStep = step
+                
+                // Announcement Logic: If we just got the distance to next turn and it's a new step or a distance milestone
+                if self.nextManeuverInstruction != step.instructions {
+                    announce(step.instructions)
+                }
+                
                 self.distanceToNextTurn = distanceToStep
                 break
             }
@@ -370,11 +393,19 @@ public final class DriveViewModel: NSObject, ObservableObject {
             self.nextManeuverImageName = getImageForManeuver(step.instructions)
         }
         
-        // Simple ETA calculation: distance / speed (or just use route.expectedTravelTime)
-        // For simulation, we'll just subtract some time from the initial ETA
+        // Simple ETA calculation
         if self.eta == nil {
             self.eta = Date().addingTimeInterval(route.expectedTravelTime)
         }
+    }
+    
+    private func announce(_ message: String) {
+        let voiceEnabled = UserDefaults.standard.bool(forKey: "voiceNavEnabled")
+        guard voiceEnabled else { return }
+        
+        let utterance = AVSpeechUtterance(string: message)
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        speechSynthesizer.speak(utterance)
     }
     
     private func getImageForManeuver(_ instruction: String) -> String {

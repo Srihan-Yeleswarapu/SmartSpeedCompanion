@@ -363,7 +363,7 @@ fileprivate struct SpeedHUDPill: View {
                         .foregroundColor(DesignSystem.colorForStatus(driveViewModel.status))
                         .contentTransition(.numericText())
                     
-                    Text("MPH")
+                    Text(UserDefaults.standard.string(forKey: "measurementSystem") == "Metric" ? "KMH" : "MPH")
                         .font(.system(size: isLandscape ? 12 : 14, weight: .black))
                         .foregroundColor(.white.opacity(0.4))
                 }
@@ -419,12 +419,14 @@ fileprivate struct LimitSignView: View {
                     .frame(width: isLandscape ? 40 : 52, height: isLandscape ? 40 : 52)
                 
                 VStack(spacing: 0) {
-                    Text(limit == 0 ? "--" : "\(limit)")
+                    let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
+                    let displayLimit = isMetric ? Int(Double(limit) * 1.60934) : limit
+                    Text(limit == 0 ? "--" : "\(displayLimit)")
                         .font(.system(size: isLandscape ? 16 : 20, weight: .bold))
                         .foregroundColor(.black)
                         .padding(.top, isLandscape ? 2 : 4)
                     
-                    Text("MPH")
+                    Text(UserDefaults.standard.string(forKey: "measurementSystem") == "Metric" ? "KMH" : "MPH")
                         .font(.system(size: isLandscape ? 7 : 9, weight: .black))
                         .foregroundColor(Color(hex: "#FF3D71"))
                         .padding(.bottom, isLandscape ? 4 : 6)

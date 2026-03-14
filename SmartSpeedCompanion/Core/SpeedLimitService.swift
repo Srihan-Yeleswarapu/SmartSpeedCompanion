@@ -88,18 +88,6 @@ public class OpenStreetMapSpeedLimitService {
     }
 }
 
-public class PrototypeSpeedLimitService {
-    public init() {}
-    public func estimateLimit(for currentMph: Double) -> Int {
-        if currentMph < 30 {
-            return 25 // 25 mph zone
-        } else if currentMph <= 55 {
-            return 45 // 45 mph zone
-        } else {
-            return 65 // 65 mph zone
-        }
-    }
-}
 
 @MainActor
 public class SmartSpeedLimitService: ObservableObject {
@@ -109,7 +97,6 @@ public class SmartSpeedLimitService: ObservableObject {
     @Published public var dataSource: String = "Estimating..."
     
     private let osmService = OpenStreetMapSpeedLimitService()
-    private let fallbackService = PrototypeSpeedLimitService()
     
     private init() {}
     
@@ -144,12 +131,11 @@ public class SmartSpeedLimitService: ObservableObject {
             return limit
             
         } catch {
-            print("[OSM] Fetch failed or timed out: \(error), falling back to prototype.")
-            // 3. Fallback to Generic Estimation
-            let limit = fallbackService.estimateLimit(for: currentSpeedMph)
-            self.currentLimit = limit
-            self.dataSource = "Estimated"
-            return limit
+            print("[OSM] Fetch failed or timed out: \(error), reporting unknown.")
+            // 3. No fallback estimation per user request
+            self.currentLimit = 0
+            self.dataSource = "Unknown"
+            return 0
         }
     }
 }

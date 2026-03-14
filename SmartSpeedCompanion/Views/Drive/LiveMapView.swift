@@ -171,10 +171,19 @@ public struct LiveMapView: UIViewRepresentable {
         
         // Apply camera with smooth animation if significant change detected
         let currentCamera = uiView.camera
-        if abs(currentCamera.altitude - targetAltitude) > 60 ||
+        let userCoord = uiView.userLocation.coordinate
+        
+        // Check distance between current camera center and user location
+        let cameraLoc = CLLocation(latitude: currentCamera.centerCoordinate.latitude, longitude: currentCamera.centerCoordinate.longitude)
+        let userLoc = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+        let distanceOff = cameraLoc.distance(from: userLoc)
+        
+        if distanceOff > 5 || 
+           abs(currentCamera.altitude - targetAltitude) > 60 ||
            abs(currentCamera.pitch - targetPitch) > 3 {
+            
             let newCamera = MKMapCamera(
-                lookingAtCenter: uiView.userLocation.coordinate,
+                lookingAtCenter: userCoord,
                 fromDistance: targetAltitude,
                 pitch: targetPitch,
                 heading: viewModel.currentHeading ?? uiView.camera.heading
