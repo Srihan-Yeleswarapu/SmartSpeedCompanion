@@ -93,9 +93,7 @@ public struct AnalyticsDashboardView: View {
                                 SummaryStatsView(viewModel: viewModel)
                                     .padding(.horizontal)
                                 
-                                SpeedChartView(session: session)
-                                    .frame(height: 250)
-                                    .padding(.horizontal)
+                                // SpeedChartView removed per user request
                                 
                                 OverspeedHeatMapView(session: session)
                                     .frame(height: 320)
