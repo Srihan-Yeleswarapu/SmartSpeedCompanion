@@ -170,25 +170,21 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         // Apply camera with smooth animation if significant change detected
-        let currentCamera = uiView.camera
-        let userCoord = uiView.userLocation.coordinate
+        let currentAltitude = uiView.camera.centerCoordinateDistance
+        let altDiff = abs(currentAltitude - targetAltitude)
         
-        // Check distance between current camera center and user location
-        let cameraLoc = CLLocation(latitude: currentCamera.centerCoordinate.latitude, longitude: currentCamera.centerCoordinate.longitude)
-        let userLoc = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
-        let distanceOff = cameraLoc.distance(from: userLoc)
+        // Ensure tracking mode is active for perfect centering (60fps native tracking)
+        if uiView.userTrackingMode != .followWithHeading {
+            uiView.setUserTrackingMode(.followWithHeading, animated: true)
+        }
         
-        if distanceOff > 5 || 
-           abs(currentCamera.altitude - targetAltitude) > 60 ||
-           abs(currentCamera.pitch - targetPitch) > 3 {
-            
-            let newCamera = MKMapCamera(
-                lookingAtCenter: userCoord,
-                fromDistance: targetAltitude,
-                pitch: targetPitch,
-                heading: viewModel.currentHeading ?? uiView.camera.heading
+        // Update altitude natively without breaking tracking mode via CameraZoomRange
+        if altDiff > 60 {
+            let zoomRange = MKMapView.CameraZoomRange(
+                minCenterCoordinateDistance: targetAltitude,
+                maxCenterCoordinateDistance: targetAltitude
             )
-            uiView.setCamera(newCamera, animated: true)
+            uiView.setCameraZoomRange(zoomRange, animated: true)
         }
     }
         

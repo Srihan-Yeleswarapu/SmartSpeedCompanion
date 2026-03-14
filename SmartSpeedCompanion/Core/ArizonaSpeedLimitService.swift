@@ -118,28 +118,38 @@ public actor ArizonaSpeedLimitService {
         guard let db = db else { return [] }
         var segments: [RoadSegment] = []
         
-        // Ensure your SQLite table name matches "ArizonaSpeedLimits"
-        let sql = "SELECT SHAPE, SpeedLimit FROM ArizonaSpeedLimits WHERE MBRIntersects(SHAPE, BuildMBR(?, ?, ?, ?));"
+        let sql = """
+            SELECT a.SpeedLimit, b.minx, b.maxx, b.miny, b.maxy
+            FROM SpeedLimit_2024 a
+            JOIN st_spindex__SpeedLimit_2024_SHAPE b ON a.OBJECTID = b.pkid
+            WHERE ? <= b.maxx AND ? >= b.minx
+              AND ? <= b.maxy AND ? >= b.miny
+        """
         
         var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-            sqlite3_bind_double(stmt, 1, lon - gridPrecision)
-            sqlite3_bind_double(stmt, 2, lat - gridPrecision)
-            sqlite3_bind_double(stmt, 3, lon + gridPrecision)
-            sqlite3_bind_double(stmt, 4, lat + gridPrecision)
+            // Target bounding box expanded by gridPrecision (~1km)
+            sqlite3_bind_double(stmt, 1, lon + gridPrecision) // target max x
+            sqlite3_bind_double(stmt, 2, lon - gridPrecision) // target min x
+            sqlite3_bind_double(stmt, 3, lat + gridPrecision) // target max y
+            sqlite3_bind_double(stmt, 4, lat - gridPrecision) // target min y
             
             while sqlite3_step(stmt) == SQLITE_ROW {
-                if let blob = sqlite3_column_blob(stmt, 0) {
-                    let size = sqlite3_column_bytes(stmt, 0)
-                    let data = Data(bytes: blob, count: Int(size))
-                    let limit = Int(sqlite3_column_int(stmt, 1))
-                    
-                    let points = parseWKBLineString(data)
-                    for i in 0..<(points.count - 1) {
-                        segments.append(RoadSegment(p1: points[i], p2: points[i+1], limit: limit))
-                    }
-                }
+                let limit = Int(sqlite3_column_int(stmt, 0))
+                let minx = sqlite3_column_double(stmt, 1)
+                let maxx = sqlite3_column_double(stmt, 2)
+                let miny = sqlite3_column_double(stmt, 3)
+                let maxy = sqlite3_column_double(stmt, 4)
+                
+                // Represent segment bounding box mathematically as a diagonal line 
+                // for distance approximation.
+                let p1 = CLLocationCoordinate2D(latitude: miny, longitude: minx)
+                let p2 = CLLocationCoordinate2D(latitude: maxy, longitude: maxx)
+                segments.append(RoadSegment(p1: p1, p2: p2, limit: limit))
             }
+        } else {
+            let errmsg = String(cString: sqlite3_errmsg(db)!)
+            print("[AZ Data] Query prepraration failed: \(errmsg)")
         }
         sqlite3_finalize(stmt)
         return segments
@@ -163,34 +173,9 @@ public actor ArizonaSpeedLimitService {
         
         return target.distance(from: nearestPoint)
     }
-
-    private func parseWKBLineString(_ data: Data) -> [CLLocationCoordinate2D] {
-        guard data.count > 9 else { return [] }
-        var points: [CLLocationCoordinate2D] = []
-        
-        let isLittleEndian = data[0] == 1
-        let numPoints = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> UInt32 in
-            let val = ptr.load(fromByteOffset: 5, as: UInt32.self)
-            return isLittleEndian ? UInt32(littleEndian: val) : UInt32(bigEndian: val)
-        }
-        
-        for i in 0..<Int(numPoints) {
-            let offset = 9 + (i * 16)
-            guard data.count >= offset + 16 else { break }
-            
-            let (lon, lat) = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> (Double, Double) in
-                let loUInt = ptr.load(fromByteOffset: offset, as: UInt64.self)
-                let laUInt = ptr.load(fromByteOffset: offset + 8, as: UInt64.self)
-                
-                let loBits = isLittleEndian ? UInt64(littleEndian: loUInt) : UInt64(bigEndian: loUInt)
-                let laBits = isLittleEndian ? UInt64(littleEndian: laUInt) : UInt64(bigEndian: laUInt)
-                
-                return (Double(bitPattern: loBits), Double(bitPattern: laBits))
-            }
-            points.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
-        }
-        return points
-    }
+    
+    // parseWKBLineString is removed as Esri geodatabases use proprietary 
+    // Compressed Geometry. We use spatial index bounding boxes instead natively.
 
     /// Clears the spatial cache.
     public func clearCache() {

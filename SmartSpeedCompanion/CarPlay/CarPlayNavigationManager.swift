@@ -261,6 +261,13 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         // Obey user voice nav setting via AppStorage if necessary, for now respect mute button:
         if isMuted || UserDefaults.standard.bool(forKey: "voiceNavEnabled") == false { return }
         
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.interruptSpokenAudioAndMixWithOthers, .duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("Failed to set audio session: \(error)")
+        }
+        
         let utterance = AVSpeechUtterance(string: message)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         speechSynthesizer.speak(utterance)

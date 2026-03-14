@@ -60,7 +60,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     // Timer properties
     private var sessionStartTime: Date? = nil
     private var sessionTimer: AnyCancellable? = nil
-    
+    private var currentStepIndex: Int = 0
     private var cancellables = Set<AnyCancellable>()
     // A weak reference or delegate will handle actual logic in CarPlay layer
     public var navigationDelegate: NavigationActionDelegate?
@@ -88,7 +88,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
             await SpeedCameraService.shared.fetchCameras()
         }
         
-        // Load Local Arizona GeoJSON Data
+        // Load Local Arizona Geodatabase Data
         Task {
             await ArizonaSpeedLimitService.shared.loadDataIfNeeded()
         }
@@ -251,6 +251,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
         self.isSelectingRoute = false
         self.isNavigating = true
         self.currentRoute = route
+        self.currentStepIndex = 0
         
         // Pre-cache speed limits along the route polyline points
         Task {
@@ -392,29 +393,40 @@ public final class DriveViewModel: NSObject, ObservableObject {
 
         // 2. Step Progress Tracking
         let steps = route.steps
-        var upcomingStep: MKRoute.Step?
         
-        for step in steps {
-            let stepLocation = CLLocation(latitude: step.polyline.coordinate.latitude, longitude: step.polyline.coordinate.longitude)
-            let distanceToStep = location.distance(from: stepLocation)
-            
-            // If we are more than 50 meters from the step, it's likely upcoming
-            if distanceToStep > 50 {
-                upcomingStep = step
-                
-                // Announcement Logic: If we just got the distance to next turn and it's a new step or a distance milestone
-                if self.nextManeuverInstruction != step.instructions {
-                    announce(step.instructions)
-                }
-                
-                self.distanceToNextTurn = distanceToStep
-                break
-            }
+        while self.currentStepIndex < steps.count && steps[self.currentStepIndex].distance <= 0 {
+            self.currentStepIndex += 1
         }
         
-        if let step = upcomingStep {
-            self.nextManeuverInstruction = step.instructions
-            self.nextManeuverImageName = getImageForManeuver(step.instructions)
+        if self.currentStepIndex < steps.count {
+            let upcomingStep = steps[self.currentStepIndex]
+            let stepStart = CLLocation(latitude: upcomingStep.polyline.coordinate.latitude,
+                                       longitude: upcomingStep.polyline.coordinate.longitude)
+            let distanceToStep = location.distance(from: stepStart)
+            
+            self.distanceToNextTurn = distanceToStep
+            
+            if distanceToStep < 40 {
+                self.currentStepIndex += 1
+                if self.currentStepIndex < steps.count {
+                    let nextStep = steps[self.currentStepIndex]
+                    self.nextManeuverInstruction = nextStep.instructions
+                    self.nextManeuverImageName = getImageForManeuver(nextStep.instructions)
+                    if nextStep.distance > 0 {
+                        announce(nextStep.instructions)
+                    }
+                } else if let dest = destination?.placemark.location, location.distance(from: dest) < 50 {
+                    Task { await self.endNavigation() }
+                }
+            } else {
+                if self.nextManeuverInstruction != upcomingStep.instructions {
+                    self.nextManeuverInstruction = upcomingStep.instructions
+                    self.nextManeuverImageName = getImageForManeuver(upcomingStep.instructions)
+                    if upcomingStep.distance > 0 {
+                        announce(upcomingStep.instructions)
+                    }
+                }
+            }
         }
         
         // Simple ETA calculation
@@ -426,6 +438,13 @@ public final class DriveViewModel: NSObject, ObservableObject {
     private func announce(_ message: String) {
         let voiceEnabled = UserDefaults.standard.bool(forKey: "voiceNavEnabled")
         guard voiceEnabled else { return }
+        
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.interruptSpokenAudioAndMixWithOthers, .duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("Failed to set audio session: \(error)")
+        }
         
         let utterance = AVSpeechUtterance(string: message)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")

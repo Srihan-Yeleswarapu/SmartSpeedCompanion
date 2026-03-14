@@ -32,10 +32,21 @@ public final class SpeedEngine: ObservableObject {
         let conversionFactor = isMetric ? 3.6 : 2.23694 // m/s to km/h or mph
         
         let currentSpeed = max(0, location.speed * conversionFactor)
-        self.speed = currentSpeed
+        
+        // Apply user requested speed adjustments
+        var adjustedSpeed = currentSpeed
+        let speedMph = isMetric ? currentSpeed * 0.621371 : currentSpeed
+        
+        if speedMph > 35.0 {
+            adjustedSpeed += (isMetric ? 3.21868 : 2.0) // 2 mph
+        } else if speedMph >= 25.0 {
+            adjustedSpeed += (isMetric ? 1.60934 : 1.0) // 1 mph
+        }
+        
+        self.speed = adjustedSpeed
         
         // --- PERFORMANCE FIX: Update status IMMEDIATELY using current (cached) limit ---
-        updateStatus(speed: currentSpeed, limit: Double(self.limit))
+        updateStatus(speed: adjustedSpeed, limit: Double(self.limit))
         
         Task { @MainActor in
             // Only query OSM/estimate if accuracy is good enough

@@ -1,0 +1,74 @@
+TABLES:
+- GDB_Version
+- st_spatial_reference_systems
+- st_aux_spatial_reference_systems
+- sqlite_sequence
+- st_geometry_columns
+- st_vtspindex_interface
+- GDB_Layers
+- GDB_Metadata
+- GDB_TableRegistry
+- GDB_Locators
+- GDB_ColumnRegistry
+- GDB_TablesModified
+- GDB_RowidGenerators
+- GDB_Tables_Last_Modified
+- GDB_Items
+- st_spindex__GDB_Items_Shape
+- st_spindex__GDB_Items_Shape_node
+- st_spindex__GDB_Items_Shape_rowid
+- st_spindex__GDB_Items_Shape_parent
+- GDB_ItemRelationships
+- GDB_ItemTypes
+- GDB_ItemRelationshipTypes
+- GDB_ReplicaLog
+- SpeedLimit_2024
+- st_spindex__SpeedLimit_2024_SHAPE
+- st_spindex__SpeedLimit_2024_SHAPE_rowid
+- st_spindex__SpeedLimit_2024_SHAPE_node
+- st_spindex__SpeedLimit_2024_SHAPE_parent
+- GDB_ServiceItems
+
+SCHEMA FOR GDB_Metadata:
+(0, 'record_id', 'INTEGER', 0, None, 1)
+(1, 'object_name', 'TEXT(160)', 1, None, 0)
+(2, 'object_type', 'INT32', 1, None, 0)
+(3, 'class_name', 'TEXT(32)', 0, None, 0)
+(4, 'property', 'TEXT(32)', 0, None, 0)
+(5, 'prop_value', 'TEXT(255)', 0, None, 0)
+(6, 'description', 'TEXT(65)', 0, None, 0)
+(7, 'creation_date', 'realdate', 0, None, 0)
+
+SCHEMA FOR SpeedLimit_2024:
+(0, 'OBJECTID', 'INTEGER', 1, None, 1)
+(1, 'RouteId', 'text(32)', 0, None, 0)
+(2, 'FromMeasure', 'float64', 0, None, 0)
+(3, 'ToMeasure', 'float64', 0, None, 0)
+(4, 'DateAdopted', 'float64', 0, None, 0)
+(5, 'DateInstalledConfirmed', 'text(48)', 0, None, 0)
+(6, 'SRNumber', 'text(14)', 0, None, 0)
+(7, 'SpeedLimit', 'int16', 0, None, 0)
+(8, 'SpeedLimitDirection', 'text(2)', 0, None, 0)
+(9, 'SpeedLimitDirection_Value', 'text(10)', 0, None, 0)
+(10, 'SpeedLimitType', 'int16', 0, None, 0)
+(11, 'SpeedLimitType_Value', 'text(18)', 0, None, 0)
+(12, 'SHAPE', 'geometryblob', 0, None, 0)
+
+SCHEMA FOR st_spindex__SpeedLimit_2024_SHAPE:
+(0, 'pkid', 'INT', 0, None, 0)
+(1, 'minx', 'REAL', 0, None, 0)
+(2, 'maxx', 'REAL', 0, None, 0)
+(3, 'miny', 'REAL', 0, None, 0)
+(4, 'maxy', 'REAL', 0, None, 0)
+
+SCHEMA FOR st_spindex__SpeedLimit_2024_SHAPE_rowid:
+(0, 'rowid', 'INTEGER', 0, None, 1)
+(1, 'nodeno', '', 0, None, 0)
+
+SCHEMA FOR st_spindex__SpeedLimit_2024_SHAPE_node:
+(0, 'nodeno', 'INTEGER', 0, None, 1)
+(1, 'data', '', 0, None, 0)
+
+SCHEMA FOR st_spindex__SpeedLimit_2024_SHAPE_parent:
+(0, 'nodeno', 'INTEGER', 0, None, 1)
+(1, 'parentnode', '', 0, None, 0)
