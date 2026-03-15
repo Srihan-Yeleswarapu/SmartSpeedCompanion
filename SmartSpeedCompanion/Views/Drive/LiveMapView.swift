@@ -193,7 +193,7 @@ public struct LiveMapView: UIViewRepresentable {
             uiView.setCameraZoomRange(zoomRange, animated: true)
             
             // Apply pitch while maintaining tracking
-            var newCamera = uiView.camera
+            let newCamera = uiView.camera
             newCamera.pitch = targetPitch
             uiView.setCamera(newCamera, animated: true)
         }

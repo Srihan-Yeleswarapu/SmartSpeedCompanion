@@ -86,7 +86,7 @@ public final class SpeedEngine: ObservableObject {
             }
             self.status = .warning
         } else {
-            if self.status != .safe && self.status != .notDetermined {
+            if self.status != .safe {
                  DebugLogger.shared.log("STATUS CHANGE: SAFE")
             }
             self.status = .safe
