@@ -57,6 +57,13 @@ struct SpeedWidgetEntryView : View {
 }
 
 @main
+struct SpeedWidgetBundle: WidgetBundle {
+    var body: some Widget {
+        SpeedWidget()
+        SpeedLiveActivityView()
+    }
+}
+
 struct SpeedWidget: Widget {
     let kind: String = "SpeedWidget"
 

@@ -169,6 +169,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             }
         
         LiveActivityManager.shared.startActivity(sessionStartDate: sessionStartTime ?? Date())
+        updateLiveActivity()
     }
     
     private func updateLiveActivity() {
