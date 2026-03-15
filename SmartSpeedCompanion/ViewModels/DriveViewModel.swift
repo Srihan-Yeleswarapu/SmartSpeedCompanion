@@ -378,14 +378,15 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     private func updateNavigationProgress(at location: CLLocation) {
         guard let route = currentRoute else { return }
+        let steps = route.steps
         
-        // 1. Off-Route Detection
-        // Check distance to the closest point on the polyline logic (simplified)
-        let distanceToRoute = location.distance(from: CLLocation(latitude: route.polyline.coordinate.latitude, longitude: route.polyline.coordinate.longitude))
+        // 1. Off-Route Detection (more accurate)
+        // Check distance to the nearest point on the route polyline
+        let nearestPoint = findNearestPointOnPolyline(location.coordinate, polyline: route.polyline)
+        let distanceToRoute = location.distance(from: CLLocation(latitude: nearestPoint.latitude, longitude: nearestPoint.longitude))
         
-        // If > 150 meters away from the route start (simplified proxy for 'off route'), reroute
         if distanceToRoute > 150 {
-            print("Off route detected (\(Int(distanceToRoute))m), recalculating...")
+            DebugLogger.shared.log("OFF ROUTE: \(Int(distanceToRoute))m. Rerouting...")
             if let dest = destination {
                 Task {
                     await selectDestinationAndCalculateRoutes(to: dest)
@@ -398,43 +399,98 @@ public final class DriveViewModel: NSObject, ObservableObject {
         }
 
         // 2. Step Progress Tracking
-        let steps = route.steps
+        // Ensure index stays valid
+        if self.currentStepIndex >= steps.count { return }
         
-        while self.currentStepIndex < steps.count && steps[self.currentStepIndex].distance <= 0 {
-            self.currentStepIndex += 1
-        }
+        let currentStep = steps[self.currentStepIndex]
+        let stepPolyline = currentStep.polyline
+        let pointCount = stepPolyline.pointCount
         
-        if self.currentStepIndex < steps.count {
-            let upcomingStep = steps[self.currentStepIndex]
-            let stepStart = CLLocation(latitude: upcomingStep.polyline.coordinate.latitude,
-                                       longitude: upcomingStep.polyline.coordinate.longitude)
-            let distanceToStep = location.distance(from: stepStart)
+        if pointCount > 0 {
+            // Maneuver point is the LAST point of the current step's polyline
+            let maneuverPoint = stepPolyline.points()[pointCount - 1].coordinate
+            let maneuverLocation = CLLocation(latitude: maneuverPoint.latitude, longitude: maneuverPoint.longitude)
+            let distanceToTurn = location.distance(from: maneuverLocation)
             
-            self.distanceToNextTurn = distanceToStep
+            self.distanceToNextTurn = distanceToTurn
             
-            if distanceToStep < 40 {
-                self.currentStepIndex += 1
-                if self.currentStepIndex < steps.count {
-                    let nextStep = steps[self.currentStepIndex]
-                    self.nextManeuverInstruction = nextStep.instructions
-                    self.nextManeuverImageName = getImageForManeuver(nextStep.instructions)
-                    if nextStep.distance > 0 {
-                        announce(nextStep.instructions)
-                    }
-                } else if let dest = destination?.placemark.location, location.distance(from: dest) < 50 {
-                    Task { await self.endNavigation() }
+            // UI should show the NEXT maneuver
+            if self.currentStepIndex + 1 < steps.count {
+                let nextStep = steps[self.currentStepIndex + 1]
+                let instruction = nextStep.instructions
+                
+                if self.nextManeuverInstruction != instruction {
+                    self.nextManeuverInstruction = instruction
+                    self.nextManeuverImageName = getImageForManeuver(instruction)
+                }
+                
+                // Voice Announcements (multi-stage)
+                // 1. Initial (at 1000m)
+                // 2. Final (at 150m)
+                let turnInMeters = Int(distanceToTurn)
+                if turnInMeters == 1000 || turnInMeters == 1001 { // Loose window
+                    announce("In one kilometer, \(instruction)")
+                } else if turnInMeters == 150 || turnInMeters == 151 {
+                    announce("In 150 meters, \(instruction)")
                 }
             } else {
-                if self.nextManeuverInstruction != upcomingStep.instructions {
-                    self.nextManeuverInstruction = upcomingStep.instructions
-                    self.nextManeuverImageName = getImageForManeuver(upcomingStep.instructions)
-                    if upcomingStep.distance > 0 {
-                        announce(upcomingStep.instructions)
-                    }
+                // Approaching destination
+                self.nextManeuverInstruction = "Arriving at Destination"
+                self.nextManeuverImageName = "mappin.and.ellipse"
+            }
+            
+            // Advance step when close to turn
+            if distanceToTurn < 30 {
+                self.currentStepIndex += 1
+                if self.currentStepIndex < steps.count {
+                    let newStep = steps[self.currentStepIndex]
+                    announce(newStep.instructions) // Announce the maneuver JUST as it happens
+                } else if let dest = destination?.placemark.location, 
+                          location.distance(from: dest) < 50 {
+                    Task { await self.endNavigation() }
                 }
             }
         }
+    }
+    
+    // Helper to find nearest point on polyline to a coordinate
+    private func findNearestPointOnPolyline(_ coord: CLLocationCoordinate2D, polyline: MKPolyline) -> CLLocationCoordinate2D {
+        let points = polyline.points()
+        let count = polyline.pointCount
+        if count == 0 { return coord }
+        if count == 1 { return points[0].coordinate }
         
+        var minDistance = CLLocationDistance.infinity
+        var closest = points[0].coordinate
+        
+        for i in 0..<count - 1 {
+            let p1 = points[i].coordinate
+            let p2 = points[i+1].coordinate
+            
+            let nearestOnSegment = nearestPointOnSegment(p: coord, v: p1, w: p2)
+            let dist = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+                .distance(from: CLLocation(latitude: nearestOnSegment.latitude, longitude: nearestOnSegment.longitude))
+            
+            if dist < minDistance {
+                minDistance = dist
+                closest = nearestOnSegment
+            }
+        }
+        return closest
+    }
+    
+    private func nearestPointOnSegment(p: CLLocationCoordinate2D, v: CLLocationCoordinate2D, w: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+        let l2 = pow(v.longitude - w.longitude, 2) + pow(v.latitude - w.latitude, 2)
+        if l2 == 0 { return v }
+        
+        var t = ((p.longitude - v.longitude) * (w.longitude - v.longitude) + (p.latitude - v.latitude) * (w.latitude - v.latitude)) / l2
+        t = max(0, min(1, t))
+        
+        return CLLocationCoordinate2D(
+            latitude: v.latitude + t * (w.latitude - v.latitude),
+            longitude: v.longitude + t * (w.longitude - v.longitude)
+        )
+    }    
         // Simple ETA calculation
         if self.eta == nil {
             self.eta = Date().addingTimeInterval(route.expectedTravelTime)
@@ -442,20 +498,28 @@ public final class DriveViewModel: NSObject, ObservableObject {
     }
     
     private func announce(_ message: String) {
-        let voiceEnabled = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool ?? true
+        let voiceEnabled = UserDefaults.standard.bool(forKey: "voiceNavEnabled")
         guard voiceEnabled else { return }
         
+        DebugLogger.shared.log("NAV VOICE: \(message)")
+        
         do {
-            // .spokenAudio is better for voice navigation on phone.
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             print("[DriveViewModel] Audio Error: \(error)")
         }
         
         let utterance = AVSpeechUtterance(string: message)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        utterance.volume = 1.0 // Ensure max volume for synthesized speech
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.pitchMultiplier = 1.0
+        utterance.volume = 1.0
+        
+        // Stop any current reading to avoid overlap
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
         speechSynthesizer.speak(utterance)
     }
     
