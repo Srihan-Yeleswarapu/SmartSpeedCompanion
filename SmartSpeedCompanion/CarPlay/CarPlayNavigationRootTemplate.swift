@@ -138,7 +138,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         )
         
         isAlertPresented = true
-        mapTemplate.presentNavigationAlert(alert, animated: true)
+        mapTemplate.present(navigationAlert: alert, animated: true)
     }
     
     // MARK: - Search

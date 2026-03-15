@@ -160,7 +160,6 @@ public actor ArizonaSpeedLimitService {
         let segments = getSegmentsForGrid(lat: coordinate.latitude, lon: coordinate.longitude)
         
         var closestLimit: Int?
-        var closestRouteId: String?
         var minScore: Double = Double.infinity // Using a "score" instead of just distance
         
         // Base snapping radius

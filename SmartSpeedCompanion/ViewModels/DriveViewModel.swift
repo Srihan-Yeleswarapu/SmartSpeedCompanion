@@ -8,7 +8,7 @@ import UIKit
 
 /// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
-public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+public final class DriveViewModel: NSObject, ObservableObject, @preconcurrency AVSpeechSynthesizerDelegate {
     public let locationManager: LocationManager
     public let speedEngine: SpeedEngine
     public let alertEngine: AlertEngine
@@ -583,7 +583,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
 
     // AVSpeechSynthesizerDelegate
-    public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+    nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
             // Deactivate with .notifyOthersOnDeactivation to restore music volume
             if !synthesizer.isSpeaking {
@@ -593,7 +593,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
     
-    public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+    nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor in
             if !synthesizer.isSpeaking {
                 try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
