@@ -436,18 +436,19 @@ public final class DriveViewModel: NSObject, ObservableObject {
     }
     
     private func announce(_ message: String) {
-        let voiceEnabled = UserDefaults.standard.bool(forKey: "voiceNavEnabled")
+        let voiceEnabled = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool ?? true
         guard voiceEnabled else { return }
         
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.interruptSpokenAudioAndMixWithOthers, .duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             print("Failed to set audio session: \(error)")
         }
         
         let utterance = AVSpeechUtterance(string: message)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.volume = 1.0 // Ensure max volume for synthesized speech
         speechSynthesizer.speak(utterance)
     }
     

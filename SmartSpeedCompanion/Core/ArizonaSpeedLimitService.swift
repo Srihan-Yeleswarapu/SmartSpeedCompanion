@@ -64,7 +64,7 @@ public actor ArizonaSpeedLimitService {
     
     /// Opens the geodatabase from the app bundle.
     public func loadDataIfNeeded() {
-        // Try both possible filenames
+        // First try the literal expected names
         let possibleNames = [
             ("HPMS_2024_Data_-2111065798425599378", "geodatabase"),
             ("ArizonaSpeedLimits", "sqlite"),
@@ -79,7 +79,23 @@ public actor ArizonaSpeedLimitService {
                 }
             }
         }
+        
+        // Aggressive fallback: search entire bundle for common map data extensions
+        if let enumerator = FileManager.default.enumerator(at: Bundle.main.bundleURL, includingPropertiesForKeys: nil) {
+            for case let url as URL in enumerator {
+                if ["geodatabase", "sqlite", "db", "gpkg"].contains(url.pathExtension.lowercased()) {
+                    if loadDatabase(at: url.path) {
+                        print("[AZ Data] Successfully loaded fallback geodatabase: \(url.lastPathComponent)")
+                        return
+                    }
+                }
+            }
+        }
+        
         print("[AZ Data] No supported geodatabase file found in bundle.")
+        // Even if we fail, we'll mark as loaded to prevent constant searching
+        // NO wait - we might need to retry if it's downloaded later. 
+        // We'll leave `isLoaded = false` so it retries or we can handle it later.
     }
 
     /// Finds the legal speed limit for a given coordinate.
@@ -99,6 +115,8 @@ public actor ArizonaSpeedLimitService {
         var smallestArea: Double = Double.infinity
         
         for segment in segments {
+            guard segment.limit > 0 else { continue }
+            
             let distance = segment.distance(to: coordinate)
             
             if distance <= minDistance {
@@ -124,22 +142,24 @@ public actor ArizonaSpeedLimitService {
     // MARK: - Private Logic
     
     private func getSegmentsForGrid(lat: Double, lon: Double) -> [RoadSegment] {
-        let key = gridKey(lat: lat, lon: lon)
+        let latK = round(lat / gridPrecision) * gridPrecision
+        let lonK = round(lon / gridPrecision) * gridPrecision
+        let key = String(format: "%.2f_%.2f", latK, lonK)
         
         if let cached = spatialCache[key] {
             return cached
         }
         
-        let segments = queryDatabase(lat: lat, lon: lon)
+        // Query database using the deterministic grid center, 
+        // to ensure cache results are always consistent regardless of the exact 
+        // coordinate that triggered the cache miss.
+        let segments = queryDatabase(lat: latK, lon: lonK)
         spatialCache[key] = segments
         return segments
     }
 
-    private func gridKey(lat: Double, lon: Double) -> String {
-        let latK = round(lat / gridPrecision) * gridPrecision
-        let lonK = round(lon / gridPrecision) * gridPrecision
-        return String(format: "%.2f_%.2f", latK, lonK)
-    }
+    // Helper method gridKey removed - logic moved inline for clarity
+
 
     private func queryDatabase(lat: Double, lon: Double) -> [RoadSegment] {
         guard let db = db else { return [] }
