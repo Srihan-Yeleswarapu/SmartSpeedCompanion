@@ -39,8 +39,11 @@ public struct LiveMapView: UIViewRepresentable {
     }
     
     public func updateUIView(_ uiView: MKMapView, context: Context) {
-        // Block ALL updates when user is searching (prevents random zoom)
+        // Limit camera updates during search to prevent unwanted "jumping"
+        // while the keyboard is up.
         if viewModel.isSearching || viewModel.isSearchingLocally {
+            // We still want to update overlays (status line), but we skip camera changes.
+            context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
             return
         }
 
@@ -145,16 +148,14 @@ public struct LiveMapView: UIViewRepresentable {
         let altDiff = abs(currentAltitude - targetAltitude)
         let pitchDiff = abs(currentPitch - targetPitch)
         
-        guard altDiff > 80 || pitchDiff > 8 else { return }
-        
-        // Build a camera that ONLY changes altitude and pitch.
-        // The center coordinate comes from the current camera so we don't fight tracking.
-        let newCamera = uiView.camera.copy() as! MKMapCamera
-        newCamera.centerCoordinateDistance = targetAltitude
-        newCamera.pitch = CGFloat(targetPitch)
-        
-        UIView.animate(withDuration: 0.6, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) {
-            uiView.setCamera(newCamera, animated: false)
+        // Apply camera changes if needed
+        if altDiff > 80 || pitchDiff > 8 {
+            let newCamera = uiView.camera.copy() as! MKMapCamera
+            newCamera.centerCoordinateDistance = targetAltitude
+            newCamera.pitch = CGFloat(targetPitch)
+            
+            // Allow MapKit to handle its own animation for smoother results
+            uiView.setCamera(newCamera, animated: true)
         }
     }
     
@@ -188,22 +189,22 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         public func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
-            // Only trigger manual mode for genuine user pans (not code-driven animations)
-            if !animated {
-                startManualMode(mapView)
-            }
+            // No-op here. We only detach on actual gesture recognizers to avoid
+            // detaching when the system updates the altitude or follows the user.
         }
         
         private func startManualMode(_ mapView: MKMapView?) {
+            // First, kill any existing resume timer
+            interactionTimer?.invalidate()
+            
             if !parent.viewModel.isMapDetached {
                 parent.viewModel.isMapDetached = true
-                // Release native tracking so user can freely pan
                 mapView?.userTrackingMode = .none
                 DebugLogger.shared.log("MAP DETACHED: Manual Control")
             }
-            interactionTimer?.invalidate()
-            // Auto-resume after 8 seconds of inactivity
-            interactionTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: false) { [weak self] _ in
+            
+            // Auto-resume after 10 seconds of inactivity (longer to be safe)
+            interactionTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
                 Task { @MainActor in
                     self?.parent.viewModel.isMapDetached = false
                     DebugLogger.shared.log("MAP ATTACHED: Tracking Resumed")

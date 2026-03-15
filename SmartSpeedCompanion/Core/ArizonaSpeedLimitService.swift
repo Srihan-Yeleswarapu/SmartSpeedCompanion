@@ -144,7 +144,7 @@ public actor ArizonaSpeedLimitService {
         
         DebugLogger.shared.log("FATAL: DB NOT FOUND anywhere.")
         print("[AZ Data] No supported geodatabase file found in bundle.")
-        isLoaded = true 
+        isLoaded = true // Stop trying
     }
 
     /// Finds the legal speed limit for a given coordinate.

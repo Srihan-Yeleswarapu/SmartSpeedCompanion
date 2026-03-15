@@ -31,14 +31,11 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         
         // Ensure phone audio, CarPlay, and background operation work seamlessly
         do {
-            // Using .playback ensures audio plays even if the silent switch is on.
-            // .spokenAudio mode is ideal for speech-centric apps and background alerts.
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-            DebugLogger.shared.log("Audio Session Configured: .spokenAudio")
+            // Using .mixWithOthers is ESSENTIAL to not stop background music on launch.
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers, .mixWithOthers])
+            DebugLogger.shared.log("Audio Session Configured (Inactive): .spokenAudio/mixWithOthers")
         } catch {
-            DebugLogger.shared.log("Audio Session FAILED: \(error.localizedDescription)")
-            print("[AlertEngine] Failed to configure AVAudioSession: \(error)")
+            DebugLogger.shared.log("Audio Session CONFIG FAILED: \(error.localizedDescription)")
         }
         
         NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: nil)
@@ -93,6 +90,9 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     }
     
     private func playBeep() {
+        // Activate session right before playing
+        try? AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+        
         let sampleRate = 44100.0
         let duration: TimeInterval = 0.35
         let frameCount = AVAudioFrameCount(sampleRate * duration)
@@ -111,7 +111,12 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         }
         
         // Interrupts active audio to play immediately without stacking
-        playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
+        playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts) {
+            // After beep finishes, deactivate to "unduck" and restore music volume
+            Task { @MainActor in
+                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            }
+        }
         playerNode.play()
     }
     

@@ -8,7 +8,7 @@ import UIKit
 
 /// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
-public final class DriveViewModel: NSObject, ObservableObject {
+public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     public let locationManager: LocationManager
     public let speedEngine: SpeedEngine
     public let alertEngine: AlertEngine
@@ -87,22 +87,15 @@ public final class DriveViewModel: NSObject, ObservableObject {
         self.recentSearches = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
 
         super.init()
-
+        self.speechSynthesizer.delegate = self
+        setupAudioSession()
+        
         // NOTE: Speed Camera API fetch is DISABLED. SpeedCameraService struct is
         // kept in the codebase for future re-enablement. Map annotations will simply
         // not appear until re-enabled.
         // Task { await SpeedCameraService.shared.fetchCameras() }
         
-        // Load Local Arizona Geodatabase Data
-        Task {
-            await ArizonaSpeedLimitService.shared.loadDataIfNeeded()
-        }
-
-        // Setup Audio Session once
-        setupAudioSession()
-
         // Setup Completer
-
         completer.delegate = self
         completer.resultTypes = [.pointOfInterest, .address]
         
@@ -133,15 +126,29 @@ public final class DriveViewModel: NSObject, ObservableObject {
         locManager.requestAuthorization()
         locManager.startUpdatingLocation()
         
+        // Load Local Arizona Geodatabase Data
+        Task {
+            await ArizonaSpeedLimitService.shared.loadDataIfNeeded()
+        }
+        
+        // Throttled Live Activity update (every 5 seconds)
+        Timer.publish(every: 5.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self = self, self.isRecording || self.isNavigating else { return }
+                self.updateLiveActivity()
+            }
+            .store(in: &cancellables)
+        
         // Listen to location updates for navigation progress and live activity
         // Speed camera proximity check removed (API disabled)
         locManager.$latestLocation
             .compactMap { $0 }
+            .throttle(for: .milliseconds(500), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] location in
                 guard let self = self else { return }
                 if self.isNavigating {
                     self.updateNavigationProgress(at: location)
-                    self.updateLiveActivity()
                 }
             }
             .store(in: &cancellables)
@@ -265,6 +272,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
         }
 
         // Pre-cache speed limits along the route polyline points
+        // Essential to prevent limits from 'glitching away' during the drive.
         Task {
             let polylinePoints = route.polyline.points()
             let pointCount = route.polyline.pointCount
@@ -475,6 +483,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     }
     
     // Helper to find nearest point on polyline to a coordinate
+    // Restored to full scan to ensure we NEVER lose tracking if the user goes off-route
     private func findNearestPointOnPolyline(_ coord: CLLocationCoordinate2D, polyline: MKPolyline) -> CLLocationCoordinate2D {
         let points = polyline.points()
         let count = polyline.pointCount
@@ -515,39 +524,30 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     private func setupAudioSession() {
         do {
-            // .playback ensures it plays even when the silent switch is ON.
-            // .defaultToSpeaker ensures it doesn't just play in the earpiece.
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers, .defaultToSpeaker])
-            try AVAudioSession.sharedInstance().setActive(true)
-            DebugLogger.shared.log("Audio Session Configured: playback/speaker/spoken")
+            // We configure the CATEGORY here but do NOT call setActive(true) yet.
+            // Calling setActive(true) on launch is what interrupts background music.
+            // .mixWithOthers is CRITICAL to let Spotify/Apple Music keep playing.
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers, .mixWithOthers, .defaultToSpeaker])
+            DebugLogger.shared.log("Audio Session Configured (Inactive): playback/mixWithOthers")
         } catch {
-            DebugLogger.shared.log("Audio Session ERROR: \(error.localizedDescription)")
-            print("[DriveViewModel] Audio Session Setup Error: \(error)")
+            DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
         }
     }
 
     private func announce(_ message: String) {
-        // Default to true if not set
         let rawVoiceVal = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool
         let voiceEnabled = rawVoiceVal ?? true
         
-        DebugLogger.shared.log("AUDIO STATE: enabled=\(voiceEnabled), msg='\(message)'")
+        guard voiceEnabled, !message.isEmpty else { return }
         
-        guard voiceEnabled, !message.isEmpty else { 
-            return 
-        }
-        
-        // Ensure session is correctly categorized and active EVERY time before speaking
+        // 1. Activate session only when speaking starts
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers, .defaultToSpeaker])
-            try AVAudioSession.sharedInstance().setActive(true)
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
-            DebugLogger.shared.log("AUDIO SESSION ERROR: \(error.localizedDescription)")
+            DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
         }
         
         let utterance = AVSpeechUtterance(string: message)
-        
-        // Use a consistent default voice if English-US enhanced isn't found
         if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
         } else {
@@ -555,16 +555,33 @@ public final class DriveViewModel: NSObject, ObservableObject {
         }
         
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        utterance.pitchMultiplier = 1.0
         utterance.volume = 1.0
         
-        // Stop any current reading to avoid overlap
         if speechSynthesizer.isSpeaking {
             speechSynthesizer.stopSpeaking(at: .immediate)
         }
         
         speechSynthesizer.speak(utterance)
         DebugLogger.shared.log("NAV VOICE SENT: \(message)")
+    }
+
+    // AVSpeechSynthesizerDelegate
+    public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            // Deactivate with .notifyOthersOnDeactivation to restore music volume
+            if !synthesizer.isSpeaking {
+                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                DebugLogger.shared.log("Audio Session Deactivated (Music Restored)")
+            }
+        }
+    }
+    
+    public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            if !synthesizer.isSpeaking {
+                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            }
+        }
     }
 
     private func updateIdleTimer() {
