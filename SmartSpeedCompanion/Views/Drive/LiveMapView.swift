@@ -30,6 +30,14 @@ public struct LiveMapView: UIViewRepresentable {
             return
         }
 
+        // If the user has manual control, clear restrictions and stop tracking
+        if viewModel.isMapDetached {
+            if uiView.cameraZoomRange != nil {
+                uiView.setCameraZoomRange(nil, animated: true)
+            }
+            return
+        }
+        
         // Use manual camera management only if the user isn't interacting
         if !viewModel.isMapDetached {
             // Check if we have a valid location before moving the camera
@@ -37,8 +45,6 @@ public struct LiveMapView: UIViewRepresentable {
                   CLLocationCoordinate2DIsValid(userLoc.coordinate),
                   userLoc.coordinate.latitude != 0 else { return }
             
-            // We manage center and heading manually in updateSmartCamera to allow for 
-            // sophisticated zoom rules without the default tracking mode fighting us.
             updateSmartCamera(uiView, context: context)
         }
         
@@ -246,9 +252,19 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         public func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
-            // Check if the region change was initiated by a gesture (manual)
-            let view = mapView.subviews.first { $0.gestureRecognizers?.contains { $0.state == .began || $0.state == .changed } ?? false }
-            if view != nil {
+            // Check if the change was initiated by the user (not code-driven)
+            if let gestureRecognizers = mapView.subviews.first?.gestureRecognizers {
+                for gesture in gestureRecognizers {
+                    if gesture.state == .began || gesture.state == .changed {
+                        startManualMode()
+                        return
+                    }
+                }
+            }
+        }
+        
+        public func mapView(_ mapView: MKMapView, didChange mode: MKUserTrackingMode, animated: Bool) {
+            if mode == .none && !parent.viewModel.isMapDetached {
                 startManualMode()
             }
         }
