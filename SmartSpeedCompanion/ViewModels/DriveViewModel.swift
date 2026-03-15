@@ -527,8 +527,13 @@ public final class DriveViewModel: NSObject, ObservableObject {
         
         DebugLogger.shared.log("NAV VOICE: \(message)")
         
-        // Ensure session is active before speaking
-        try? AVAudioSession.sharedInstance().setActive(true)
+        // Ensure session is correctly categorized and active EVERY time before speaking
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            DebugLogger.shared.log("AUDIO REDO FAIL: \(error.localizedDescription)")
+        }
         
         let utterance = AVSpeechUtterance(string: message)
         

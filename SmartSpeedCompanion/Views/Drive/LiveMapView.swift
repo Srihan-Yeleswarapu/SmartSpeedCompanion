@@ -196,6 +196,7 @@ public struct LiveMapView: UIViewRepresentable {
             
             // Apply pitch and altitude gently
             let newCamera = uiView.camera
+            newCamera.centerCoordinate = userLoc.coordinate
             newCamera.altitude = targetAltitude
             newCamera.pitch = targetPitch
             uiView.setCamera(newCamera, animated: true)

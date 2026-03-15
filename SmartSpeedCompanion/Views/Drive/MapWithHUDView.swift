@@ -94,10 +94,11 @@ fileprivate struct NavigationInstructionCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             
             VStack(alignment: .leading, spacing: 4) {
-                Text(driveViewModel.nextManeuverInstruction.uppercased())
-                    .font(.system(size: 18, weight: .black))
+                Text(driveViewModel.nextManeuverInstruction)
+                    .font(.system(size: 20, weight: .bold))
                     .foregroundColor(.white)
                     .lineLimit(2)
+                    .minimumScaleFactor(0.7)
                 
                 HStack(spacing: 8) {
                     Text(formatDistance(driveViewModel.distanceToNextTurn))
