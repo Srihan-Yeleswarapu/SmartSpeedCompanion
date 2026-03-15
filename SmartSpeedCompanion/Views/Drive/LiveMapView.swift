@@ -273,7 +273,7 @@ public struct LiveMapView: UIViewRepresentable {
             parent.viewModel.isMapDetached = true
             interactionTimer?.invalidate()
             // Auto-resume navigation zoom after 10 seconds of inactivity
-            interactionTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
+            interactionTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
                 Task { @MainActor in
                     self?.parent.viewModel.isMapDetached = false
                 }
