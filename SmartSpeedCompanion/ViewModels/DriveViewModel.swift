@@ -149,6 +149,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     }
     
     public func startSession() {
+        DebugLogger.shared.log("Drive session STARTED")
         sessionRecorder.startSession()
         
         // Timer tracking
@@ -183,6 +184,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     }
     
     public func endSession() {
+        DebugLogger.shared.log("Drive session ENDING (Duration: \(Int(sessionDuration))s)")
         if let session = sessionRecorder.endSession() {
             if session.durationSeconds < 90 {
                 // Short trip: Prompt user before saving
@@ -239,15 +241,19 @@ public final class DriveViewModel: NSObject, ObservableObject {
         
         do {
             let directions = MKDirections(request: request)
+            DebugLogger.shared.log("Calculating routes to: \(destination.name ?? "Unknown")")
             let response = try await directions.calculate()
             self.availableRoutes = response.routes
+            DebugLogger.shared.log("Found \(response.routes.count) available routes")
             self.isSelectingRoute = true
         } catch {
+            DebugLogger.shared.log("Route calculation FAILED: \(error.localizedDescription)")
             print("Route error: \(error)")
         }
     }
     
     public func startNavigation(with route: MKRoute) async {
+        DebugLogger.shared.log("Navigation STARTED using Route (\(Int(route.distance))m)")
         self.isSelectingRoute = false
         self.isNavigating = true
         self.currentRoute = route

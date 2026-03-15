@@ -76,10 +76,19 @@ public final class SpeedEngine: ObservableObject {
         let threshold = displayLimit + displayBuffer
         
         if speed > threshold {
+            if self.status != .over {
+                DebugLogger.shared.log("STATUS CHANGE: OVER LIMIT (Speed: \(Int(speed)), Limit: \(Int(limit)))")
+            }
             self.status = .over
         } else if speed > (threshold - (isMetric ? 3.0 : 2.0)) {
+            if self.status != .warning {
+                DebugLogger.shared.log("STATUS CHANGE: WARNING (Approaching limit)")
+            }
             self.status = .warning
         } else {
+            if self.status != .safe && self.status != .notDetermined {
+                 DebugLogger.shared.log("STATUS CHANGE: SAFE")
+            }
             self.status = .safe
         }
     }

@@ -23,6 +23,13 @@ public struct DriveRootView: View {
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
+            
+            #if DEVELOPER_BUILD
+            DeveloperTabView()
+                .tabItem {
+                    Label("Developer", systemImage: "terminal.fill")
+                }
+            #endif
         }
         .accentColor(Color(hex: "#00D4FF"))
         .alert("Short Drive Detected", isPresented: $driveViewModel.showShortSessionPrompt) {

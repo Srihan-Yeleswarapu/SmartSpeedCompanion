@@ -144,6 +144,7 @@ public actor ArizonaSpeedLimitService {
         }
         
         if let limit = closestLimit, limit > 0 { 
+            DebugLogger.shared.log("DB MATCH: \(limit) mph at [\(String(format: "%.4f", coordinate.latitude)), \(String(format: "%.4f", coordinate.longitude))]")
             print("[AZ Data] Found limit: \(limit) at \(coordinate.latitude), \(coordinate.longitude)")
             return limit 
         }

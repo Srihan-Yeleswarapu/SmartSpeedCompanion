@@ -35,7 +35,9 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             // .spokenAudio mode is ideal for speech-centric apps and background alerts.
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
+            DebugLogger.shared.log("Audio Session Configured: .spokenAudio")
         } catch {
+            DebugLogger.shared.log("Audio Session FAILED: \(error.localizedDescription)")
             print("[AlertEngine] Failed to configure AVAudioSession: \(error)")
         }
         
@@ -69,6 +71,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 self.consecutiveSeconds += 1
                 if self.consecutiveSeconds >= 5 {
                     self.audioAlertActive = true
+                    DebugLogger.shared.log("THRESHOLD HIT: 5s Over Limit. Triggering BEEP.")
                     self.playBeep()
                 }
             }

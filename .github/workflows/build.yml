@@ -34,7 +34,7 @@ jobs:
     - name: Verify project exists
       run: ls -la *.xcodeproj
 
-    - name: Build app
+    - name: Build Production app
       run: |
         xcodebuild \
           -project SmartSpeedCompanion.xcodeproj \
@@ -47,16 +47,39 @@ jobs:
           CODE_SIGNING_ALLOWED=NO \
           clean archive
 
-    - name: Package unsigned IPA
+    - name: Build Developer app
+      run: |
+        xcodebuild \
+          -project SmartSpeedCompanion.xcodeproj \
+          -scheme SmartSpeedCompanion \
+          -configuration Release \
+          -destination "generic/platform=iOS" \
+          -archivePath ./SmartSpeedCompanion-Developer.xcarchive \
+          CODE_SIGN_IDENTITY="" \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGNING_ALLOWED=NO \
+          OTHER_SWIFT_FLAGS="-D DEVELOPER_BUILD" \
+          clean archive
+
+    - name: Package unsigned IPAs
       run: |
         mkdir -p ./Payload
+        # Production
         cp -r ./SmartSpeedCompanion.xcarchive/Products/Applications/SmartSpeedCompanion.app ./Payload/
-        zip -r SmartSpeedCompanion-unsigned.ipa Payload
-        ls -lh SmartSpeedCompanion-unsigned.ipa
+        zip -r SmartSpeedCompanion.ipa Payload
+        rm -rf ./Payload/*
+        
+        # Developer
+        cp -r ./SmartSpeedCompanion-Developer.xcarchive/Products/Applications/SmartSpeedCompanion.app ./Payload/
+        zip -r SmartSpeedCompanion-Developer.ipa Payload
+        
+        ls -lh *.ipa
 
-    - name: Upload unsigned IPA
+    - name: Upload IPAs
       uses: actions/upload-artifact@v4
       with:
-        name: SmartSpeedCompanion-unsigned-${{ github.run_number }}
-        path: SmartSpeedCompanion-unsigned.ipa
+        name: SmartSpeedCompanion-Builds-${{ github.run_number }}
+        path: |
+          SmartSpeedCompanion.ipa
+          SmartSpeedCompanion-Developer.ipa
         retention-days: 7
