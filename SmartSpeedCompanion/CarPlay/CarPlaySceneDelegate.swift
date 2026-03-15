@@ -82,7 +82,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     func templateApplicationDashboardScene(
         _ templateApplicationDashboardScene: CPTemplateApplicationDashboardScene,
         didConnect dashboardController: CPDashboardController,
-        to window: CPWindow
+        to window: UIWindow
     ) {
         self.dashboardController = dashboardController
         let vm = AppDelegate.sharedDriveViewModel

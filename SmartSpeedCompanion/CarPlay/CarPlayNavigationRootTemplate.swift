@@ -131,13 +131,14 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         let alert = CPNavigationAlert(
             titleVariants: ["⚠ SLOW DOWN", "Speeding +\(diff)"],
             subtitleVariants: ["Limit is \(limit) MPH. Watch your speed."],
+            imageSet: nil,
             primaryAction: action,
-            secondaryAction: nil
+            secondaryAction: nil,
+            duration: 5.0
         )
-        alert.duration = 5.0 
         
         isAlertPresented = true
-        mapTemplate.show(alert)
+        mapTemplate.presentNavigationAlert(alert, animated: true)
     }
     
     // MARK: - Search
@@ -181,8 +182,6 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
     @MainActor
     private func presentSafetyReport() {
         // Information Template for professional session summaries
-        let avgSpeed = Int(viewModel.speed) // Placeholder or logic for real avg
-        let distance = String(format: "%.1f", viewModel.sessionDuration / 60.0) // Placeholder
         
         let items = [
             CPInformationItem(title: "Current Speed", detail: "\(Int(viewModel.speed)) MPH"),

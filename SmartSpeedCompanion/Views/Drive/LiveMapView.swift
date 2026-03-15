@@ -73,28 +73,10 @@ public struct LiveMapView: UIViewRepresentable {
         scale.translatesAutoresizingMaskIntoConstraints = false
         map.addSubview(scale)
         
-        // MKZoomControl
-        if #available(iOS 14.0, *) {
-            let zoom = MKZoomControl(mapView: map)
-            zoom.translatesAutoresizingMaskIntoConstraints = false
-            map.addSubview(zoom)
-            
-            // MKPitchControl
-            let pitch = MKPitchControl(mapView: map)
-            pitch.translatesAutoresizingMaskIntoConstraints = false
-            map.addSubview(pitch)
-            
-            NSLayoutConstraint.activate([
-                scale.topAnchor.constraint(equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 10),
-                scale.leadingAnchor.constraint(equalTo: map.leadingAnchor, constant: 16),
-                
-                zoom.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
-                zoom.centerYAnchor.constraint(equalTo: map.centerYAnchor),
-                
-                pitch.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
-                pitch.topAnchor.constraint(equalTo: zoom.bottomAnchor, constant: 16)
-            ])
-        }
+        NSLayoutConstraint.activate([
+            scale.topAnchor.constraint(equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 10),
+            scale.leadingAnchor.constraint(equalTo: map.leadingAnchor, constant: 16)
+        ])
     }
     
     public func updateUIView(_ uiView: MKMapView, context: Context) {

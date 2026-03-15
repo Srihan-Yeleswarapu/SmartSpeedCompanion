@@ -162,7 +162,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     public func startSession() {
         DebugLogger.shared.log("Drive session STARTED")
-        sessionRecorder.startSession(destinationPlaceID: destination?.identifier?.rawValue)
+        var destID: String? = nil
+        if #available(iOS 18.0, *) {
+            destID = destination?.identifier?.rawValue
+        }
+        sessionRecorder.startSession(destinationPlaceID: destID)
         
         // Timer tracking
         sessionStartTime = Date()
