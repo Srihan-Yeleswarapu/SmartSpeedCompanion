@@ -523,21 +523,26 @@ public final class DriveViewModel: NSObject, ObservableObject {
 
     private func announce(_ message: String) {
         let voiceEnabled = UserDefaults.standard.bool(forKey: "voiceNavEnabled")
-        guard voiceEnabled else { return }
+        guard voiceEnabled else { 
+            DebugLogger.shared.log("NAV VOICE SKIPPED: voiceNavEnabled is false")
+            return 
+        }
         
-        DebugLogger.shared.log("NAV VOICE: \(message)")
+        DebugLogger.shared.log("NAV VOICE ATTEMPT: \(message)")
         
         // Ensure session is correctly categorized and active EVERY time before speaking
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+            // Mix with others allows it to work even if other apps are playing audio, duck others lowers their volume
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers, .defaultToSpeaker])
+            try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             DebugLogger.shared.log("AUDIO REDO FAIL: \(error.localizedDescription)")
+            print("[DriveViewModel] Audio Session Error: \(error)")
         }
         
         let utterance = AVSpeechUtterance(string: message)
         
-        // Pick a premium voice if possible
+        // Use a consistent default voice if English-US enhanced isn't found
         if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
         } else {
@@ -552,7 +557,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
         if speechSynthesizer.isSpeaking {
             speechSynthesizer.stopSpeaking(at: .immediate)
         }
+        
         speechSynthesizer.speak(utterance)
+        DebugLogger.shared.log("NAV VOICE SENT: \(message)")
     }
 
     private func updateIdleTimer() {

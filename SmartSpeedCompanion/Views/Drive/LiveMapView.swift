@@ -46,7 +46,7 @@ public struct LiveMapView: UIViewRepresentable {
                   userLoc.coordinate.latitude != 0,
                   userLoc.horizontalAccuracy > 0 && userLoc.horizontalAccuracy < 2000 else { return }
             
-            updateSmartCamera(uiView, context: context)
+            updateSmartCamera(uiView, userLoc: userLoc, context: context)
         }
         
         // Update overlays (History, Route, Cameras)
@@ -82,7 +82,7 @@ public struct LiveMapView: UIViewRepresentable {
         updateHistoryOverlays(uiView)
     }
     
-    private func updateSmartCamera(_ uiView: MKMapView, context: Context) {
+    private func updateSmartCamera(_ uiView: MKMapView, userLoc: CLLocation, context: Context) {
         let speed = viewModel.speed
         let distanceToTurn = viewModel.distanceToNextTurn
         let isNavigating = viewModel.isNavigating
@@ -180,9 +180,9 @@ public struct LiveMapView: UIViewRepresentable {
         let currentAltitude = uiView.camera.centerCoordinateDistance
         let altDiff = abs(currentAltitude - targetAltitude)
         
-        // Ensure tracking mode is active for perfect centering (60fps native tracking)
-        if uiView.userTrackingMode != .followWithHeading {
-            uiView.setUserTrackingMode(.followWithHeading, animated: true)
+        // Remove native tracking mode to avoid conflict with manual camera updates
+        if uiView.userTrackingMode != .none {
+            uiView.userTrackingMode = .none
         }
         
         // Update altitude natively without breaking tracking mode via CameraZoomRange
@@ -192,13 +192,12 @@ public struct LiveMapView: UIViewRepresentable {
                 minCenterCoordinateDistance: targetAltitude * 0.9,
                 maxCenterCoordinateDistance: targetAltitude * 1.1
             )
-            uiView.setCameraZoomRange(zoomRange, animated: true)
-            
             // Apply pitch and altitude gently
-            let newCamera = uiView.camera
+            let newCamera = MKMapCamera()
             newCamera.centerCoordinate = userLoc.coordinate
             newCamera.altitude = targetAltitude
             newCamera.pitch = targetPitch
+            newCamera.heading = userLoc.course >= 0 ? userLoc.course : (viewModel.currentHeading ?? 0)
             uiView.setCamera(newCamera, animated: true)
         }
     }
@@ -256,14 +255,10 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         public func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
-            // Check if the change was initiated by the user (not code-driven)
-            if let gestureRecognizers = mapView.subviews.first?.gestureRecognizers {
-                for gesture in gestureRecognizers {
-                    if gesture.state == .began || gesture.state == .changed {
-                        startManualMode()
-                        return
-                    }
-                }
+            // Only trigger manual mode if NOT code-driven (animated usually means code-driven here)
+            if !animated {
+                // If it's not animated it's almost certainly a user snap or gesture
+                startManualMode()
             }
         }
         
