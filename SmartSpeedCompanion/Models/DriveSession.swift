@@ -9,6 +9,7 @@ public final class DriveSession {
     public var endTime: Date?
     public var startLocationName: String?
     public var endLocationName: String?
+    public var destinationPlaceID: String?
     
     @Relationship(deleteRule: .cascade)
     public var readings: [SpeedReading]

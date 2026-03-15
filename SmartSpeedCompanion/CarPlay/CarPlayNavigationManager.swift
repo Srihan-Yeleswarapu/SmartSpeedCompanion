@@ -45,6 +45,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         request.naturalLanguageQuery = query
         let coordinate = viewModel.locationManager.latestLocation?.coordinate ?? CLLocationCoordinate2D()
         request.region = MKCoordinateRegion(center: coordinate, latitudinalMeters: 50000, longitudinalMeters: 50000)
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: [.gasStation, .parking, .restaurant, .cafe])
         
         let search = MKLocalSearch(request: request)
         search.start { response, error in
@@ -109,6 +110,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         request.destination = destination
         request.transportType = .automobile
         request.requestsAlternateRoutes = true
+        request.departureDate = .now // Real-time traffic awareness
         
         let avoidHighways = UserDefaults.standard.bool(forKey: "avoidHighways")
         if avoidHighways {

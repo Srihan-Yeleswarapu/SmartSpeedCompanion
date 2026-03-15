@@ -10,14 +10,39 @@ public struct LiveMapView: UIViewRepresentable {
         let map = MKMapView()
         map.delegate = context.coordinator
         map.overrideUserInterfaceStyle = .dark
-        map.mapType = .mutedStandard
+        
+        // MODERN: Use MKStandardMapConfiguration instead of deprecated mapType
+        // .realistic gives 3D buildings and terrain elevation
+        // .muted keeps the dark, professional look without distracting colors
+        if #available(iOS 16.0, *) {
+            let config = MKStandardMapConfiguration(elevationStyle: .realistic, emphasisStyle: .muted)
+            config.showsTraffic = true  // Show real-time traffic conditions
+            map.preferredConfiguration = config
+        } else {
+            map.mapType = .mutedStandard
+        }
+        
         map.showsUserLocation = true
-        map.showsCompass = true
-        map.showsScale = true
+        map.showsCompass = false // We'll add custom components or use native elsewhere
+        map.showsScale = false // We'll use MKScaleView
+        
+        // Native controls setup
+        setupNativeControls(for: map)
+        
         map.isPitchEnabled = true
         map.isRotateEnabled = true
         map.isZoomEnabled = true
         map.isScrollEnabled = true
+        
+        // MODERN: Native pitch button (3D/2D toggle) — no custom UI needed
+        if #available(iOS 16.0, *) {
+            map.pitchButtonVisibility = .visible
+        }
+        
+        // MODERN: Native user tracking button — auto-shows re-center when lost
+        if #available(iOS 17.0, *) {
+            map.showsUserTrackingButton = true
+        }
         
         // Use native tracking with heading for best centering reliability
         map.userTrackingMode = .followWithHeading
@@ -31,11 +56,45 @@ public struct LiveMapView: UIViewRepresentable {
         pinch.delegate = context.coordinator
         map.addGestureRecognizer(pinch)
         
-        // Minimal POI filter for performance
-        let filter = MKPointOfInterestFilter(excluding: [.university, .school])
+        // Minimal POI filter for clean driving view
+        let filter = MKPointOfInterestFilter(including: [
+            .gasStation, .parking, .hospital, .police, .restaurant, .cafe
+        ])
         map.pointOfInterestFilter = filter
         
         return map
+    }
+
+    private func setupNativeControls(for map: MKMapView) {
+        // MKScaleView
+        let scale = MKScaleView(mapView: map)
+        scale.scaleVisibility = .adaptive
+        scale.legendAlignment = .leading
+        scale.translatesAutoresizingMaskIntoConstraints = false
+        map.addSubview(scale)
+        
+        // MKZoomControl
+        if #available(iOS 14.0, *) {
+            let zoom = MKZoomControl(mapView: map)
+            zoom.translatesAutoresizingMaskIntoConstraints = false
+            map.addSubview(zoom)
+            
+            // MKPitchControl
+            let pitch = MKPitchControl(mapView: map)
+            pitch.translatesAutoresizingMaskIntoConstraints = false
+            map.addSubview(pitch)
+            
+            NSLayoutConstraint.activate([
+                scale.topAnchor.constraint(equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 10),
+                scale.leadingAnchor.constraint(equalTo: map.leadingAnchor, constant: 16),
+                
+                zoom.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
+                zoom.centerYAnchor.constraint(equalTo: map.centerYAnchor),
+                
+                pitch.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
+                pitch.topAnchor.constraint(equalTo: zoom.bottomAnchor, constant: 16)
+            ])
+        }
     }
     
     public func updateUIView(_ uiView: MKMapView, context: Context) {
@@ -245,8 +304,15 @@ public struct LiveMapView: UIViewRepresentable {
             
             // Route polyline + destination
             if viewModel.isNavigating, let route = viewModel.currentRoute {
+                // Glow layer (drawn first, sits BELOW the route line)
+                let glowLine = GlowPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
+                glowLine.glowColor = UIColor(DesignSystem.cyan)
+                mapView.addOverlay(glowLine, level: .aboveRoads)
+                
+                // Main route polyline
                 let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
                 polyline.statusColor = UIColor(DesignSystem.cyan)
+                polyline.isRouteOverlay = true
                 mapView.addOverlay(polyline, level: .aboveRoads)
                 
                 if let dest = viewModel.destination {
@@ -305,11 +371,28 @@ public struct LiveMapView: UIViewRepresentable {
             if let polyline = overlay as? NavPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
                 renderer.strokeColor = polyline.statusColor
-                renderer.lineWidth = 8.0
+                renderer.lineWidth = polyline.isRouteOverlay ? 7.0 : 5.0
+                renderer.lineCap = .round
+                renderer.lineJoin = .round
+                
+                // Add a subtle glow effect for the route line
+                if polyline.isRouteOverlay {
+                    renderer.strokeColor = polyline.statusColor.withAlphaComponent(0.85)
+                }
+                
+                return renderer
+            }
+            
+            // Shadow/glow polyline rendered underneath the main route
+            if let polyline = overlay as? GlowPolyline {
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                renderer.strokeColor = polyline.glowColor.withAlphaComponent(0.3)
+                renderer.lineWidth = 14.0
                 renderer.lineCap = .round
                 renderer.lineJoin = .round
                 return renderer
             }
+            
             return MKOverlayRenderer(overlay: overlay)
         }
         
@@ -338,4 +421,9 @@ public struct LiveMapView: UIViewRepresentable {
 
 class NavPolyline: MKPolyline {
     var statusColor: UIColor = .systemBlue
+    var isRouteOverlay: Bool = false
+}
+
+class GlowPolyline: MKPolyline {
+    var glowColor: UIColor = .systemCyan
 }

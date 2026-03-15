@@ -65,6 +65,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // Timer properties
     private var sessionStartTime: Date? = nil
     private var sessionTimer: AnyCancellable? = nil
+    private var rerouteTimer: Timer?
     private var currentStepIndex: Int = 0
     private var cancellables = Set<AnyCancellable>()
     // A weak reference or delegate will handle actual logic in CarPlay layer
@@ -161,7 +162,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     public func startSession() {
         DebugLogger.shared.log("Drive session STARTED")
-        sessionRecorder.startSession()
+        sessionRecorder.startSession(destinationPlaceID: destination?.identifier?.rawValue)
         
         // Timer tracking
         sessionStartTime = Date()
@@ -246,6 +247,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         request.destination = destination
         request.transportType = .automobile
         request.requestsAlternateRoutes = true
+        request.departureDate = .now // ESSENTIAL for traffic-aware routing
         
         if UserDefaults.standard.bool(forKey: "avoidHighways") {
             request.highwayPreference = .avoid
@@ -271,9 +273,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.currentRoute = route
         self.currentStepIndex = 0
         
+        // Start Traffic Monitoring / Rerouting Timer
+        startRerouteTimer()
+        
         // Auto-start session if not already recording
         if !isRecording {
-            startSession()
+            startSession() // This now picks up the destination ID from the property
             DebugLogger.shared.log("Session AUTO-STARTED with navigation")
         }
 
@@ -344,6 +349,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     public func endNavigation() async {
         self.isNavigating = false
         self.currentRoute = nil
+        rerouteTimer?.invalidate()
+        rerouteTimer = nil
         await navigationDelegate?.endNavigationTrigger()
         
         if !isRecording {
@@ -608,6 +615,43 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         if lower.contains("exit") { return "arrow.up.right.square" }
         if lower.contains("merge") { return "arrow.merge" }
         return "arrow.up"
+    }
+
+    // MARK: - Dynamic Rerouting (Traffic Awareness)
+    private func startRerouteTimer() {
+        rerouteTimer?.invalidate()
+        // Check for a faster route every 5 minutes
+        rerouteTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.checkForFasterRoute()
+            }
+        }
+    }
+
+    private func checkForFasterRoute() async {
+        guard isNavigating, let dest = destination, let current = currentRoute else { return }
+        
+        let request = MKDirections.Request()
+        request.source = MKMapItem.forCurrentLocation()
+        request.destination = dest
+        request.transportType = .automobile
+        request.departureDate = .now
+        
+        do {
+            let directions = MKDirections(request: request)
+            let response = try await directions.calculate()
+            if let fastest = response.routes.first {
+                // If the new route is at least 120 seconds (2 mins) faster than the expected remaining time
+                // of the current route, then reroute.
+                let remainingTime = current.expectedTravelTime - (Date().timeIntervalSince(sessionStartTime ?? Date()))
+                if fastest.expectedTravelTime < remainingTime - 120 {
+                    DebugLogger.shared.log("TRAFFIC ALERT: Faster route found (\(Int(remainingTime - fastest.expectedTravelTime))s saved). Rerouting...")
+                    await startNavigation(with: fastest, isReroute: true)
+                }
+            }
+        } catch {
+            // Silently fail traffic checks
+        }
     }
 }
 

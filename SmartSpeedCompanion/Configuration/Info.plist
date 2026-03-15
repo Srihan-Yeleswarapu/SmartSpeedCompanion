@@ -17,6 +17,10 @@
     <array>
         <string>CPMapTemplate</string>
         <string>CPAlertTemplate</string>
+        <string>CPSearchTemplate</string>
+        <string>CPNavigationAlert</string>
+        <string>CPListTemplate</string>
+        <string>CPInformationTemplate</string>
     </array>
     <key>NSMotionUsageDescription</key>
     <string>We use motion data for advanced crash detection during drive sessions.</string>
@@ -33,6 +37,15 @@
                 <dict>
                     <key>UISceneClassName</key>
                     <string>CPTemplateApplicationScene</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+                </dict>
+            </array>
+            <key>CPTemplateApplicationDashboardSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneClassName</key>
+                    <string>CPTemplateApplicationDashboardScene</string>
                     <key>UISceneDelegateClassName</key>
                     <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
                 </dict>

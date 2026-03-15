@@ -22,10 +22,11 @@ public final class SessionRecorder: ObservableObject {
         self.modelContext = context
     }
     
-    public func startSession() {
+    public func startSession(destinationPlaceID: String? = nil) {
         guard !isRecording else { return }
         
         let newSession = DriveSession(startTime: .now)
+        newSession.destinationPlaceID = destinationPlaceID
         currentSession = newSession
         isRecording = true
         
