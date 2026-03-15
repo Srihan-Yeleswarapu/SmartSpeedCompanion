@@ -50,7 +50,7 @@ public final class SpeedEngine: ObservableObject {
         
         Task { @MainActor in
             // Only query OSM/estimate if accuracy is good enough
-            if location.horizontalAccuracy > 0 && location.horizontalAccuracy < 50 {
+            if location.horizontalAccuracy > 0 && location.horizontalAccuracy < 100 {
                 let currentLimit = await speedLimitService.updateSpeedLimit(at: location.coordinate, currentSpeedMph: isMetric ? currentSpeed * 0.621371 : currentSpeed)
                 
                 // Convert fetched limit if needed (OSM/GeoJSON return MPH usually for this app's logic)

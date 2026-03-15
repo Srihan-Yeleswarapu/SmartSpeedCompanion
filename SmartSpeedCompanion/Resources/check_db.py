@@ -1,22 +1,37 @@
 import sqlite3
-import sys
+import os
 
 db_path = r"c:\Users\madhu\SmartSpeedCompanion iOS CarPlay\SmartSpeedCompanion\Resources\HPMS_2024_Data_-2111065798425599378.geodatabase"
 
+if not os.path.exists(db_path):
+    print(f"Database not found at {db_path}")
+    exit(1)
+
+conn = sqlite3.connect(db_path)
+cursor = conn.cursor()
+
+print("--- TABLES ---")
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+tables = cursor.fetchall()
+for table in tables:
+    print(table[0])
+
+print("\n--- SCHEMA SpeedLimit_2024 ---")
 try:
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%spindex%';")
-    tables = [t[0] for t in cursor.fetchall()]
-    print("INDEX TABLES:", tables)
-        
-    for t in tables:
-        print(f"\nCOLUMNS FOR {t}:")
-        cursor.execute(f"PRAGMA table_info('{t}');")
-        for col in cursor.fetchall():
-            print(f"  {col[1]} ({col[2]})")
-            
-    conn.close()
+    cursor.execute("PRAGMA table_info(SpeedLimit_2024);")
+    columns = cursor.fetchall()
+    for col in columns:
+        print(f"{col[1]} ({col[2]})")
 except Exception as e:
-    print(f"ERROR: {e}")
+    print(f"Error reading SpeedLimit_2024: {e}")
+
+print("\n--- SCHEMA st_spindex__SpeedLimit_2024_SHAPE ---")
+try:
+    cursor.execute("PRAGMA table_info(st_spindex__SpeedLimit_2024_SHAPE);")
+    columns = cursor.fetchall()
+    for col in columns:
+        print(f"{col[1]} ({col[2]})")
+except Exception as e:
+    print(f"Error reading index table: {e}")
+
+conn.close()

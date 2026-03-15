@@ -54,20 +54,24 @@ public actor ArizonaSpeedLimitService {
     public func loadDatabase(at path: String) -> Bool {
         guard !isLoaded else { return true }
         
-        // Open with Multi-thread mode for safety with Actors
         let result = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
         if result == SQLITE_OK {
             isLoaded = true
+            DebugLogger.shared.log("DB OPENED: \(URL(fileURLWithPath: path).lastPathComponent)")
             print("[AZ Data] Geodatabase OPENED at \(path)")
             return true
         } else {
-            print("[AZ Data] FAILED to open geodatabase: \(result)")
+            let errmsg = db != nil ? String(cString: sqlite3_errmsg(db)!) : "Unknown error"
+            DebugLogger.shared.log("DB OPEN FAILED: \(errmsg)")
+            print("[AZ Data] FAILED to open geodatabase: \(result) - \(errmsg)")
             return false
         }
     }
     
     /// Opens the geodatabase from the app bundle.
     public func loadDataIfNeeded() {
+        guard !isLoaded else { return }
+        
         // First try the literal expected names
         let possibleNames = [
             ("HPMS_2024_Data_-2111065798425599378", "geodatabase"),
@@ -78,28 +82,26 @@ public actor ArizonaSpeedLimitService {
         for (name, ext) in possibleNames {
             if let url = Bundle.main.url(forResource: name, withExtension: ext) {
                 if loadDatabase(at: url.path) {
-                    print("[AZ Data] Successfully loaded geodatabase: \(name).\(ext)")
                     return
                 }
             }
         }
         
-        // Aggressive fallback: search entire bundle for common map data extensions
+        // Search entire bundle
         if let enumerator = FileManager.default.enumerator(at: Bundle.main.bundleURL, includingPropertiesForKeys: nil) {
             for case let url as URL in enumerator {
                 if ["geodatabase", "sqlite", "db", "gpkg"].contains(url.pathExtension.lowercased()) {
                     if loadDatabase(at: url.path) {
-                        print("[AZ Data] Successfully loaded fallback geodatabase: \(url.lastPathComponent)")
                         return
                     }
                 }
             }
         }
         
+        DebugLogger.shared.log("DB NOT FOUND in bundle.")
         print("[AZ Data] No supported geodatabase file found in bundle.")
-        // Even if we fail, we'll mark as loaded to prevent constant searching
-        // NO wait - we might need to retry if it's downloaded later. 
-        // We'll leave `isLoaded = false` so it retries or we can handle it later.
+        // Mark as loaded to prevent constant searching every frame
+        isLoaded = true 
     }
 
     /// Finds the legal speed limit for a given coordinate.
@@ -107,19 +109,18 @@ public actor ArizonaSpeedLimitService {
         if !isLoaded {
             loadDataIfNeeded()
         }
-        guard isLoaded else {
-            throw URLError(.noPermissionsToReadFile)
+        if db == nil {
+            throw URLError(.resourceUnavailable)
         }
 
-        // Search in a window around the coordinate
         let segments = getSegmentsForGrid(lat: coordinate.latitude, lon: coordinate.longitude)
         
         if segments.isEmpty {
-            print("[AZ Data] No segments found for \(coordinate.latitude), \(coordinate.longitude)")
+            DebugLogger.shared.log("NO SEGMENTS at [\(String(format: "%.3f", coordinate.latitude)), \(String(format: "%.3f", coordinate.longitude))]")
         }
 
         var closestLimit: Int?
-        var minDistance: CLLocationDistance = 150.0 // Increased threshold for safer matching
+        var minDistance: CLLocationDistance = 200.0 // Increased to 200m for better coverage in wide junctions
         var smallestArea: Double = Double.infinity
         
         for segment in segments {
@@ -128,13 +129,11 @@ public actor ArizonaSpeedLimitService {
             let distance = segment.distance(to: coordinate)
             
             if distance <= minDistance {
-                // If we are inside the box (distance 0), or significantly closer than before
                 if distance < minDistance - 0.1 {
                     minDistance = distance
                     closestLimit = segment.limit
                     smallestArea = segment.area
                 } else if distance <= 0.1 { 
-                    // Already inside a box, pick the smallest box (most specific segment)
                     if segment.area < smallestArea {
                         closestLimit = segment.limit
                         smallestArea = segment.area
@@ -144,10 +143,10 @@ public actor ArizonaSpeedLimitService {
         }
         
         if let limit = closestLimit, limit > 0 { 
-            DebugLogger.shared.log("DB MATCH: \(limit) mph at [\(String(format: "%.4f", coordinate.latitude)), \(String(format: "%.4f", coordinate.longitude))]")
-            print("[AZ Data] Found limit: \(limit) at \(coordinate.latitude), \(coordinate.longitude)")
+            DebugLogger.shared.log("MATCH: \(limit) mph (\(Int(minDistance))m)")
             return limit 
         }
+        
         throw URLError(.resourceUnavailable)
     }
 
@@ -177,7 +176,6 @@ public actor ArizonaSpeedLimitService {
         guard let db = db else { return [] }
         var segments: [RoadSegment] = []
         
-        // Search window: gridPrecision (0.01 is ~1.1km)
         let sql = """
             SELECT a.SpeedLimit, b.minx, b.maxx, b.miny, b.maxy
             FROM SpeedLimit_2024 a
@@ -203,11 +201,14 @@ public actor ArizonaSpeedLimitService {
                 
                 segments.append(RoadSegment(minx: minx, maxx: maxx, miny: miny, maxy: maxy, limit: limit))
             }
+            sqlite3_finalize(stmt)
         } else {
             let errmsg = String(cString: sqlite3_errmsg(db)!)
+            DebugLogger.shared.log("DB QUERY ERR: \(errmsg)")
             print("[AZ Data] Query preparation failed: \(errmsg)")
+            sqlite3_finalize(stmt)
         }
-        sqlite3_finalize(stmt)
+        
         return segments
     }
 
