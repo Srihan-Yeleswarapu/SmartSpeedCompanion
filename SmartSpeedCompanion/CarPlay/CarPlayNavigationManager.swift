@@ -2,11 +2,11 @@
 // Manages full turn-by-turn navigation within CarPlay.
 // Handles search, route calculation, guidance, and rerouting.
 
-import Foundation
+import AVFoundation
+import Combine
 import CarPlay
 import MapKit
-import Combine
-import AVFoundation
+import Foundation
 
 @MainActor
 public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
@@ -33,6 +33,10 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     
     public func setMuted(_ muted: Bool) {
         self.isMuted = muted
+    }
+    
+    public func getMuted() -> Bool {
+        return self.isMuted
     }
     
     public func searchDestination(query: String, completion: @escaping ([MKMapItem]) -> Void) {
@@ -258,18 +262,24 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     }
     
     private func announce(_ message: String) {
-        // Obey user voice nav setting via AppStorage if necessary, for now respect mute button:
-        if isMuted || UserDefaults.standard.bool(forKey: "voiceNavEnabled") == false { return }
+        // Voice setting lookup
+        let voiceNavEnabled = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool ?? true
+        
+        if isMuted || !voiceNavEnabled {
+            return
+        }
         
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.interruptSpokenAudioAndMixWithOthers, .duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
+            // .voicePrompt is specifically for navigation guidance in CarPlay
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .voicePrompt, options: [.interruptSpokenAudioAndMixWithOthers, .duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
-            print("Failed to set audio session: \(error)")
+            print("Failed to set audio session within CarPlay manager: \(error)")
         }
         
         let utterance = AVSpeechUtterance(string: message)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.volume = 1.0
         speechSynthesizer.speak(utterance)
     }
 }

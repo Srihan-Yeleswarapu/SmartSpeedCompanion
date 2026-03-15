@@ -57,9 +57,15 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         endButton.image = UIImage(systemName: "stop.fill")!
 
         let muteButton = CPMapButton { [weak self] _ in
-            Task { @MainActor in self?.navigationManager.setMuted(true) }
+            Task { @MainActor in 
+                guard let self = self else { return }
+                let newMuted = !self.navigationManager.getMuted()
+                self.navigationManager.setMuted(newMuted)
+                // Update icon to show current state
+                muteButton.image = UIImage(systemName: newMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")!
+            }
         }
-        muteButton.image = UIImage(systemName: "speaker.slash.fill")!
+        muteButton.image = UIImage(systemName: "speaker.wave.2.fill")!
 
         mapTemplate.mapButtons = [searchButton, startButton, endButton, muteButton]
     }
