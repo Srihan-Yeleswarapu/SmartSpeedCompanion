@@ -8,7 +8,7 @@ import UIKit
 
 /// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
-public final class DriveViewModel: NSObject, ObservableObject, @preconcurrency AVSpeechSynthesizerDelegate {
+public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     public let locationManager: LocationManager
     public let speedEngine: SpeedEngine
     public let alertEngine: AlertEngine

@@ -163,7 +163,7 @@ public actor ArizonaSpeedLimitService {
         var minScore: Double = Double.infinity // Using a "score" instead of just distance
         
         // Base snapping radius
-        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 150.0 : 60.0 
+        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 100.0 : 60.0 
         
         for segment in segments {
             guard segment.limit > 0 else { continue }
@@ -206,7 +206,6 @@ public actor ArizonaSpeedLimitService {
             if score < minScore {
                 minScore = score
                 closestLimit = segment.limit
-                closestRouteId = segment.routeId
             }
         }
         
