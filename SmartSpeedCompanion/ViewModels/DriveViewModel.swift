@@ -440,6 +440,8 @@ public final class DriveViewModel: NSObject, ObservableObject {
         guard voiceEnabled else { return }
         
         do {
+            // For phone-only mode, we ensure it overrides the silent switch and uses the speaker.
+            // .voicePrompt mode ensures ducking on both Car and Phone.
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {

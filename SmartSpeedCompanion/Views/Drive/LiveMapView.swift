@@ -179,12 +179,17 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         // Update altitude natively without breaking tracking mode via CameraZoomRange
-        if altDiff > 60 {
+        if altDiff > 60 || abs(uiView.camera.pitch - targetPitch) > 2 {
             let zoomRange = MKMapView.CameraZoomRange(
                 minCenterCoordinateDistance: targetAltitude,
                 maxCenterCoordinateDistance: targetAltitude
             )
             uiView.setCameraZoomRange(zoomRange, animated: true)
+            
+            // Apply pitch while maintaining tracking
+            var newCamera = uiView.camera
+            newCamera.pitch = targetPitch
+            uiView.setCamera(newCamera, animated: true)
         }
     }
         
