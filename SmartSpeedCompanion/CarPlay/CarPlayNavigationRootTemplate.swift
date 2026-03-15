@@ -129,8 +129,8 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         
         // Use CPNavigationAlert so the map is never blocked
         let alert = CPNavigationAlert(
-            titles: ["⚠ SLOW DOWN", "Speeding +\(diff)"],
-            subtitles: ["Limit is \(limit) MPH. Watch your speed."],
+            titleVariants: ["⚠ SLOW DOWN", "Speeding +\(diff)"],
+            subtitleVariants: ["Limit is \(limit) MPH. Watch your speed."],
             imageSet: nil,
             primaryAction: action,
             secondaryAction: nil,
