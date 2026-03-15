@@ -4,6 +4,7 @@ import SwiftData
 import MapKit
 import ActivityKit
 import AVFoundation
+import UIKit
 
 /// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
@@ -18,14 +19,18 @@ public final class DriveViewModel: NSObject, ObservableObject {
     @Published public var currentHeading: Double? = nil
     @Published public var limit: Int = 25
     @Published public var status: SpeedStatus = .safe
-    @Published public var isRecording: Bool = false
+    @Published public var isRecording: Bool = false {
+        didSet { updateIdleTimer() }
+    }
     @Published public var sessionDuration: TimeInterval = 0
     @Published public var alertActive: Bool = false
     @Published public var speedLimitSource: String = "Estimating..."
     @Published public var nearbyCameras: [SpeedCamera] = []
     @Published public var activeCameraAlert: SpeedCamera? = nil
     // Navigation state
-    @Published public var isNavigating: Bool = false
+    @Published public var isNavigating: Bool = false {
+        didSet { updateIdleTimer() }
+    }
     @Published public var currentRoute: MKRoute? = nil
     @Published public var destination: MKMapItem? = nil
     @Published public var searchResults: [MKMapItem] = []
@@ -280,6 +285,14 @@ public final class DriveViewModel: NSObject, ObservableObject {
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
         }
         
+        // Initial instruction announcement
+        if !route.steps.isEmpty {
+            let firstInstruction = route.steps[0].instructions
+            self.nextManeuverInstruction = firstInstruction
+            self.nextManeuverImageName = getImageForManeuver(firstInstruction)
+            announce("Starting navigation. \(firstInstruction)")
+        }
+
         if #available(iOS 16.1, *) {
             LiveActivityManager.shared.startActivity(sessionStartDate: Date())
             updateLiveActivity()
@@ -520,6 +533,12 @@ public final class DriveViewModel: NSObject, ObservableObject {
             speechSynthesizer.stopSpeaking(at: .immediate)
         }
         speechSynthesizer.speak(utterance)
+    }
+
+    private func updateIdleTimer() {
+        // Prevent screen dimming if we are driving OR navigating
+        UIApplication.shared.isIdleTimerDisabled = isRecording || isNavigating
+        DebugLogger.shared.log("Idle Timer Disabled: \(UIApplication.shared.isIdleTimerDisabled)")
     }
     
     private func getImageForManeuver(_ instruction: String) -> String {
