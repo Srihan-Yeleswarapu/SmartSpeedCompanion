@@ -10,12 +10,23 @@ public struct LiveMapView: UIViewRepresentable {
         let map = MKMapView()
         map.delegate = context.coordinator
         map.overrideUserInterfaceStyle = .dark
-        map.mapType = .mutedStandard // Sleeker base for overlays
+        map.mapType = .mutedStandard
         map.showsUserLocation = true
         map.showsCompass = true
         map.showsScale = true
         map.isPitchEnabled = true
         map.isRotateEnabled = true
+        map.isZoomEnabled = true
+        map.isScrollEnabled = true
+        
+        // Add robust gesture detection for manual mode
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleManualInteraction(_:)))
+        pan.delegate = context.coordinator
+        map.addGestureRecognizer(pan)
+        
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleManualInteraction(_:)))
+        pinch.delegate = context.coordinator
+        map.addGestureRecognizer(pinch)
         
         // Premium Apple Maps defaults
         let filter = MKPointOfInterestFilter(excluding: [.university, .school])
@@ -246,7 +257,7 @@ public struct LiveMapView: UIViewRepresentable {
         Coordinator(self)
     }
     
-    public class Coordinator: NSObject, MKMapViewDelegate {
+    public class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: LiveMapView
         private var interactionTimer: Timer?
         
@@ -254,27 +265,34 @@ public struct LiveMapView: UIViewRepresentable {
             self.parent = parent
         }
         
-        public func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
-            // Only trigger manual mode if NOT code-driven (animated usually means code-driven here)
-            if !animated {
-                // If it's not animated it's almost certainly a user snap or gesture
+        @objc func handleManualInteraction(_ gesture: UIGestureRecognizer) {
+            if gesture.state == .began || gesture.state == .changed {
                 startManualMode()
             }
         }
         
-        public func mapView(_ mapView: MKMapView, didChange mode: MKUserTrackingMode, animated: Bool) {
-            if mode == .none && !parent.viewModel.isMapDetached {
+        public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            return true
+        }
+        
+        public func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
+            // Backup detection: only trigger if NOT code-driven
+            if !animated {
                 startManualMode()
             }
         }
         
         private func startManualMode() {
-            parent.viewModel.isMapDetached = true
+            if !parent.viewModel.isMapDetached {
+                parent.viewModel.isMapDetached = true
+                DebugLogger.shared.log("MAP DETACHED: Manual Control")
+            }
             interactionTimer?.invalidate()
-            // Auto-resume navigation zoom after 10 seconds of inactivity
-            interactionTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+            // Auto-resume navigation zoom after 7 seconds of inactivity (increased from 5)
+            interactionTimer = Timer.scheduledTimer(withTimeInterval: 7, repeats: false) { [weak self] _ in
                 Task { @MainActor in
                     self?.parent.viewModel.isMapDetached = false
+                    DebugLogger.shared.log("MAP ATTACHED: Tracking Resumed")
                 }
             }
         }

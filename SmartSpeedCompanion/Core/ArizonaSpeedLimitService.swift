@@ -162,11 +162,21 @@ public actor ArizonaSpeedLimitService {
         }
 
         var closestLimit: Int?
-        var minDistance: CLLocationDistance = 80.0 // Reduced from 200m to avoid parallel road crosstalk
+        var minDistance: CLLocationDistance = 60.0 // Reduced from 80m to be even more strict.
         var smallestArea: Double = Double.infinity
         
         for segment in segments {
             guard segment.limit > 0 else { continue }
+            
+            // BOX SANITY CHECK: 
+            // If the bounding box is huge (e.g. > 130m diagonal), it's likely a generic 
+            // county/city-wide segment. We only want to snap '0m' if the road geometry 
+            // is reasonably precise for the local street.
+            let dx = segment.maxx - segment.minx
+            let dy = segment.maxy - segment.miny
+            let diagonalDegrees = sqrt(dx*dx + dy*dy)
+            
+            if diagonalDegrees > 0.0012 { continue }
             
             let distance = segment.distance(to: coordinate)
             

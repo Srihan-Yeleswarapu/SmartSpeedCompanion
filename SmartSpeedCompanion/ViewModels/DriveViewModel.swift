@@ -514,18 +514,30 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     private func setupAudioSession() {
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+            // .playback ensures it plays even when the silent switch is ON.
+            // .defaultToSpeaker ensures it doesn't just play in the earpiece.
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers, .defaultToSpeaker])
+            try AVAudioSession.sharedInstance().setActive(true)
+            DebugLogger.shared.log("Audio Session Configured: playback/speaker/spoken")
         } catch {
+            DebugLogger.shared.log("Audio Session ERROR: \(error.localizedDescription)")
             print("[DriveViewModel] Audio Session Setup Error: \(error)")
         }
     }
 
     private func announce(_ message: String) {
-        let voiceEnabled = UserDefaults.standard.bool(forKey: "voiceNavEnabled")
-        guard voiceEnabled else { 
-            DebugLogger.shared.log("NAV VOICE SKIPPED: voiceNavEnabled is false")
+        // Default to true if not set
+        let voiceEnabled = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool ?? true
+        guard voiceEnabled, !message.isEmpty else { 
+            DebugLogger.shared.log("NAV VOICE SKIPPED: \(message)")
             return 
+        }
+        
+        DebugLogger.shared.log("NAV VOICE QUEUED: \(message)")
+        
+        let utterance = AVSpeechUtterance(string: message)
+        if let voice = AVSpeechSynthesisVoice(language: "en-US") {
+            utterance.voice = voice
         }
         
         DebugLogger.shared.log("NAV VOICE ATTEMPT: \(message)")
