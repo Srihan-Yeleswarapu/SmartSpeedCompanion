@@ -55,11 +55,15 @@ public actor ArizonaSpeedLimitService {
         guard !isLoaded else { return true }
         
         // Open with Multi-thread mode for safety with Actors
-        if sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK {
+        let result = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
+        if result == SQLITE_OK {
             isLoaded = true
+            print("[AZ Data] Geodatabase OPENED at \(path)")
             return true
+        } else {
+            print("[AZ Data] FAILED to open geodatabase: \(result)")
+            return false
         }
-        return false
     }
     
     /// Opens the geodatabase from the app bundle.
@@ -110,8 +114,12 @@ public actor ArizonaSpeedLimitService {
         // Search in a window around the coordinate
         let segments = getSegmentsForGrid(lat: coordinate.latitude, lon: coordinate.longitude)
         
+        if segments.isEmpty {
+            print("[AZ Data] No segments found for \(coordinate.latitude), \(coordinate.longitude)")
+        }
+
         var closestLimit: Int?
-        var minDistance: CLLocationDistance = 100.0 // 100 meters threshold for AABB
+        var minDistance: CLLocationDistance = 150.0 // Increased threshold for safer matching
         var smallestArea: Double = Double.infinity
         
         for segment in segments {
@@ -135,7 +143,10 @@ public actor ArizonaSpeedLimitService {
             }
         }
         
-        if let limit = closestLimit, limit > 0 { return limit }
+        if let limit = closestLimit, limit > 0 { 
+            print("[AZ Data] Found limit: \(limit) at \(coordinate.latitude), \(coordinate.longitude)")
+            return limit 
+        }
         throw URLError(.resourceUnavailable)
     }
 

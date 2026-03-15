@@ -32,11 +32,11 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // Ensure phone audio, CarPlay, and background operation work seamlessly
         do {
             // Using .playback ensures audio plays even if the silent switch is on.
-            // .voicePrompt mode is ideal for navigation/alerts as it handles ducking automatically.
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .voicePrompt, options: [.mixWithOthers, .duckOthers])
+            // .spokenAudio mode is ideal for speech-centric apps and background alerts.
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            print("Failed to configure AVAudioSession in AlertEngine: \(error)")
+            print("[AlertEngine] Failed to configure AVAudioSession: \(error)")
         }
         
         NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: nil)

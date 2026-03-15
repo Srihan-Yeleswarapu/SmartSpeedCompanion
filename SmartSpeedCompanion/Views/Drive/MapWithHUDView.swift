@@ -422,15 +422,16 @@ fileprivate struct LimitSignView: View {
                     let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
                     let displayLimit = isMetric ? Int(Double(limit) * 1.60934) : limit
                     Text(limit == 0 ? "--" : "\(displayLimit)")
-                        .font(.system(size: isLandscape ? 16 : 20, weight: .bold))
+                        .font(.system(size: isLandscape ? 17 : 21, weight: .black))
                         .foregroundColor(.black)
-                        .padding(.top, isLandscape ? 2 : 4)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     
                     Text(UserDefaults.standard.string(forKey: "measurementSystem") == "Metric" ? "KMH" : "MPH")
                         .font(.system(size: isLandscape ? 7 : 9, weight: .black))
                         .foregroundColor(Color(hex: "#FF3D71"))
-                        .padding(.bottom, isLandscape ? 4 : 6)
                 }
+                .offset(y: isLandscape ? -2 : -1)
             }
             
             Text(source == "OpenStreetMap" ? "OSM" : "EST")
