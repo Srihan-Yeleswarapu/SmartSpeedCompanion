@@ -19,7 +19,10 @@ public struct LiveMapView: UIViewRepresentable {
         map.isZoomEnabled = true
         map.isScrollEnabled = true
         
-        // Add robust gesture detection for manual mode
+        // Use native tracking with heading for best centering reliability
+        map.userTrackingMode = .followWithHeading
+        
+        // Add gesture detection for manual mode
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleManualInteraction(_:)))
         pan.delegate = context.coordinator
         map.addGestureRecognizer(pan)
@@ -28,7 +31,7 @@ public struct LiveMapView: UIViewRepresentable {
         pinch.delegate = context.coordinator
         map.addGestureRecognizer(pinch)
         
-        // Premium Apple Maps defaults
+        // Minimal POI filter for performance
         let filter = MKPointOfInterestFilter(excluding: [.university, .school])
         map.pointOfInterestFilter = filter
         
@@ -36,64 +39,35 @@ public struct LiveMapView: UIViewRepresentable {
     }
     
     public func updateUIView(_ uiView: MKMapView, context: Context) {
-        // Block updates if searching to prevent "random zoom"
+        // Block ALL updates when user is searching (prevents random zoom)
         if viewModel.isSearching || viewModel.isSearchingLocally {
             return
         }
 
-        // If the user has manual control, clear restrictions and stop tracking
+        // If user has manually detached, just release any zoom restriction and stop
         if viewModel.isMapDetached {
-            if uiView.cameraZoomRange != nil {
-                uiView.setCameraZoomRange(nil, animated: true)
+            if uiView.userTrackingMode != .none {
+                uiView.userTrackingMode = .none
             }
             return
         }
         
-        // Use manual camera management only if the user isn't interacting
-        if !viewModel.isMapDetached {
-            // Check if we have a valid location before moving the camera
-            guard let userLoc = uiView.userLocation.location, 
-                  CLLocationCoordinate2DIsValid(userLoc.coordinate),
-                  userLoc.coordinate.latitude != 0,
-                  userLoc.horizontalAccuracy > 0 && userLoc.horizontalAccuracy < 2000 else { return }
-            
-            updateSmartCamera(uiView, userLoc: userLoc, context: context)
+        // Re-engage native tracking if it was released
+        if uiView.userTrackingMode == .none {
+            uiView.setUserTrackingMode(.followWithHeading, animated: true)
         }
         
-        // Update overlays (History, Route, Cameras)
-        updateOverlays(uiView)
+        // Adjust camera altitude (pitch + zoom) without breaking tracking mode
+        updateSmartAltitude(uiView, context: context)
+        
+        // Update overlays only when necessary (not every single frame)
+        context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
     }
     
-    private func updateOverlays(_ uiView: MKMapView) {
-        // Clear all previous non-user overlays and annotations
-        uiView.removeOverlays(uiView.overlays)
-        uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
-        
-        // Display Routes & Destination
-        if viewModel.isNavigating, let route = viewModel.currentRoute {
-            let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
-            polyline.statusColor = UIColor(DesignSystem.cyan)
-            uiView.addOverlay(polyline, level: .aboveRoads)
-            
-            if let dest = viewModel.destination {
-                let annotation = MKPointAnnotation()
-                annotation.coordinate = dest.placemark.coordinate
-                annotation.title = dest.name
-                uiView.addAnnotation(annotation)
-            }
-        }
-        
-        // Display Speed Cameras
-        for camera in viewModel.nearbyCameras {
-            let annotation = SpeedCameraAnnotation(camera: camera)
-            uiView.addAnnotation(annotation)
-        }
-        
-        // Display Retroactive History Line
-        updateHistoryOverlays(uiView)
-    }
-    
-    private func updateSmartCamera(_ uiView: MKMapView, userLoc: CLLocation, context: Context) {
+    // MARK: - Smart Altitude Adjustment
+    // We ONLY change altitude and pitch, not the center coordinate.
+    // Native followWithHeading handles re-centering perfectly.
+    private func updateSmartAltitude(_ uiView: MKMapView, context: Context) {
         let speed = viewModel.speed
         let distanceToTurn = viewModel.distanceToNextTurn
         let isNavigating = viewModel.isNavigating
@@ -101,155 +75,86 @@ public struct LiveMapView: UIViewRepresentable {
         var targetAltitude: Double = 1000
         var targetPitch: Double = 0
         
-        // --- Core Design Principle: Show exactly the amount of map needed for the next decision ---
-        
         if isNavigating {
-            targetPitch = 60 // 3D Perspective for navigation (Rule 7)
+            targetPitch = 45
             
-            // 1. Zoom In/Out based on Speed (Rule 1 & 4)
-            // Speed-based zoom scaling (smooth dynamic scaling)
             switch speed {
             case 0..<3:
-                targetAltitude = 200        // parked / red light
+                targetAltitude = 250
             case 3..<15:
-                targetAltitude = 350        // parking lots / neighborhoods
+                targetAltitude = 400
             case 15..<30:
-                targetAltitude = 600        // city streets
+                targetAltitude = 700
             case 30..<50:
-                targetAltitude = 1000       // suburban roads
+                targetAltitude = 1100
             case 50..<70:
-                targetAltitude = 1800       // highways
+                targetAltitude = 1900
             default:
-                targetAltitude = 2600       // very high speed highways
+                targetAltitude = 2800
             }
             
-            // 2. Proximity to Turn (Rule 2)
-            // Turn proximity zoom (progressive zoom)
+            // Turn proximity override
             if distanceToTurn < 60 {
-                targetAltitude = 120
+                targetAltitude = 150
             } else if distanceToTurn < 120 {
-                targetAltitude = min(targetAltitude, 200)
+                targetAltitude = min(targetAltitude, 250)
             } else if distanceToTurn < 300 {
-                targetAltitude = min(targetAltitude, 350)
+                targetAltitude = min(targetAltitude, 400)
             } else if distanceToTurn < 600 {
-                targetAltitude = min(targetAltitude, 500)
+                targetAltitude = min(targetAltitude, 600)
             }
             
-            // 3. Destination Approach (Rule 17 & 18)
+            // Destination approach
             if let dest = viewModel.destination {
-                let distToDest = uiView.userLocation.location?.distance(from: dest.placemark.location ?? CLLocation()) ?? 10000
+                let destLoc = dest.placemark.location ?? CLLocation()
+                let distToDest = uiView.userLocation.location?.distance(from: destLoc) ?? 10000
                 if distToDest < 150 {
-                    targetAltitude = 90
-                    targetPitch = 35
+                    targetAltitude = 100
+                    targetPitch = 30
                 } else if distToDest < 300 {
-                    targetAltitude = 150
-                    targetPitch = 40
-                } else if distToDest < 600 {
-                    targetAltitude = min(targetAltitude, 250)
+                    targetAltitude = 180
+                    targetPitch = 35
                 }
             }
             
-            // 4. Highway Exit/Complex Interchanges (Rule 5 & 6)
+            // Highway / complex interchange — show a bit more
             let instruction = viewModel.nextManeuverInstruction.lowercased()
-
-            if instruction.contains("exit") ||
-               instruction.contains("merge") ||
-               instruction.contains("ramp") ||
-               instruction.contains("fork") {
-                
-                targetAltitude = min(targetAltitude, 450)
+            if instruction.contains("exit") || instruction.contains("merge") ||
+               instruction.contains("ramp") || instruction.contains("fork") {
+                targetAltitude = min(targetAltitude, 500)
             }
-
-            // Long straight road zoom out
+            
+            // Long straight road at high speed — zoom out
             if distanceToTurn > 2000 && speed > 50 {
-                targetAltitude = max(targetAltitude, 2800)
+                targetAltitude = max(targetAltitude, 3000)
             }
-
-            // Gentle curve zoom
-            if instruction.contains("turn") && distanceToTurn > 800 && speed < 50 {
-                targetAltitude = min(targetAltitude, 1200)
-            }
-
+            
         } else if viewModel.isRecording {
             // Driving without navigation
-            targetPitch = 45
-            // Pure speed-based zoom (Rule 1)
-            targetAltitude = speed > 60 ? 3000 : (speed > 30 ? 1500 : 800)
+            targetPitch = 35
+            targetAltitude = speed > 60 ? 3000 : (speed > 30 ? 1600 : 900)
         } else {
-            // Idle/Browsing
+            // Idle/Browsing overview
             targetPitch = 0
             targetAltitude = 2000
         }
         
-        // 5. Hazards / Speed Cameras (Rule 15 & 16)
-        if viewModel.activeCameraAlert != nil {
-            targetAltitude = min(targetAltitude, 280)
-            targetPitch = 50
-        }
-        
-        // Apply camera with smooth animation if significant change detected
+        // Only animate if there is a meaningful difference (prevents micro-jitter)
         let currentAltitude = uiView.camera.centerCoordinateDistance
+        let currentPitch = Double(uiView.camera.pitch)
         let altDiff = abs(currentAltitude - targetAltitude)
+        let pitchDiff = abs(currentPitch - targetPitch)
         
-        // Remove native tracking mode to avoid conflict with manual camera updates
-        if uiView.userTrackingMode != .none {
-            uiView.userTrackingMode = .none
-        }
+        guard altDiff > 80 || pitchDiff > 8 else { return }
         
-        // Update altitude natively without breaking tracking mode via CameraZoomRange
-        if altDiff > 50 || abs(uiView.camera.pitch - targetPitch) > 5 {
-            // Apply a small buffer to zoom range to avoid "jitter" and "random jumps"
-            let zoomRange = MKMapView.CameraZoomRange(
-                minCenterCoordinateDistance: targetAltitude * 0.9,
-                maxCenterCoordinateDistance: targetAltitude * 1.1
-            )
-            // Apply pitch and altitude gently
-            let newCamera = MKMapCamera()
-            newCamera.centerCoordinate = userLoc.coordinate
-            newCamera.altitude = targetAltitude
-            newCamera.pitch = targetPitch
-            newCamera.heading = userLoc.course >= 0 ? userLoc.course : (viewModel.currentHeading ?? 0)
-            uiView.setCamera(newCamera, animated: true)
-        }
-    }
+        // Build a camera that ONLY changes altitude and pitch.
+        // The center coordinate comes from the current camera so we don't fight tracking.
+        let newCamera = uiView.camera.copy() as! MKMapCamera
+        newCamera.centerCoordinateDistance = targetAltitude
+        newCamera.pitch = CGFloat(targetPitch)
         
-
-    
-    private func updateHistoryOverlays(_ uiView: MKMapView) {
-        if let session = viewModel.sessionRecorder.currentSession, !session.readings.isEmpty {
-            var safeCoords: [CLLocationCoordinate2D] = []
-            var overCoords: [CLLocationCoordinate2D] = []
-            
-            for reading in session.readings {
-                let coord = CLLocationCoordinate2D(latitude: reading.latitude, longitude: reading.longitude)
-                if reading.overLimit {
-                    if !safeCoords.isEmpty {
-                        let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                        polyline.statusColor = UIColor(DesignSystem.cyan)
-                        uiView.addOverlay(polyline, level: .aboveRoads)
-                        safeCoords.removeAll()
-                    }
-                    overCoords.append(coord)
-                } else {
-                    if !overCoords.isEmpty {
-                        let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
-                        polyline.statusColor = UIColor(DesignSystem.alertRed)
-                        uiView.addOverlay(polyline, level: .aboveRoads)
-                        overCoords.removeAll()
-                    }
-                    safeCoords.append(coord)
-                }
-            }
-            if !safeCoords.isEmpty {
-                let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                polyline.statusColor = UIColor(DesignSystem.cyan)
-                uiView.addOverlay(polyline, level: .aboveRoads)
-            }
-            if !overCoords.isEmpty {
-                let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
-                polyline.statusColor = UIColor(DesignSystem.alertRed)
-                uiView.addOverlay(polyline, level: .aboveRoads)
-            }
+        UIView.animate(withDuration: 0.6, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) {
+            uiView.setCamera(newCamera, animated: false)
         }
     }
     
@@ -261,13 +166,20 @@ public struct LiveMapView: UIViewRepresentable {
         var parent: LiveMapView
         private var interactionTimer: Timer?
         
+        // Overlay state tracking to avoid redundant remove/add cycles
+        private var lastRoutePolylineCount: Int = 0
+        private var lastHistoryCounts: (safeCount: Int, overCount: Int) = (0, 0)
+        private var lastIsNavigating: Bool = false
+        private var lastRouteDistance: Double = 0
+        private var lastSessionReadingCount: Int = 0
+        
         init(_ parent: LiveMapView) {
             self.parent = parent
         }
         
         @objc func handleManualInteraction(_ gesture: UIGestureRecognizer) {
             if gesture.state == .began || gesture.state == .changed {
-                startManualMode()
+                startManualMode(gesture.view as? MKMapView)
             }
         }
         
@@ -276,20 +188,22 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         public func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
-            // Backup detection: only trigger if NOT code-driven
+            // Only trigger manual mode for genuine user pans (not code-driven animations)
             if !animated {
-                startManualMode()
+                startManualMode(mapView)
             }
         }
         
-        private func startManualMode() {
+        private func startManualMode(_ mapView: MKMapView?) {
             if !parent.viewModel.isMapDetached {
                 parent.viewModel.isMapDetached = true
+                // Release native tracking so user can freely pan
+                mapView?.userTrackingMode = .none
                 DebugLogger.shared.log("MAP DETACHED: Manual Control")
             }
             interactionTimer?.invalidate()
-            // Auto-resume navigation zoom after 7 seconds of inactivity (increased from 5)
-            interactionTimer = Timer.scheduledTimer(withTimeInterval: 7, repeats: false) { [weak self] _ in
+            // Auto-resume after 8 seconds of inactivity
+            interactionTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: false) { [weak self] _ in
                 Task { @MainActor in
                     self?.parent.viewModel.isMapDetached = false
                     DebugLogger.shared.log("MAP ATTACHED: Tracking Resumed")
@@ -297,11 +211,100 @@ public struct LiveMapView: UIViewRepresentable {
             }
         }
         
+        // MARK: - Smart Overlay Management
+        // Only rebuild overlays when the underlying data actually changes.
+        // This was the primary cause of 0.5 fps — removing and re-adding overlays every frame.
+        func updateOverlaysIfNeeded(_ mapView: MKMapView, viewModel: DriveViewModel) {
+            let vm = viewModel
+            let currentRouteDistance = vm.currentRoute?.distance ?? 0
+            let currentReadingCount = vm.sessionRecorder.currentSession?.readings.count ?? 0
+            let isNavigating = vm.isNavigating
+            
+            let routeChanged = isNavigating != lastIsNavigating || currentRouteDistance != lastRouteDistance
+            let historyChanged = currentReadingCount != lastHistoryCounts.safeCount + lastHistoryCounts.overCount
+            
+            guard routeChanged || historyChanged else { return }
+            
+            // Perform the overlay rebuild only when data changed
+            rebuildOverlays(mapView, viewModel: vm)
+            
+            // Update tracking state
+            lastIsNavigating = isNavigating
+            lastRouteDistance = currentRouteDistance
+            let readings = vm.sessionRecorder.currentSession?.readings ?? []
+            let safeCount = readings.filter { !$0.overLimit }.count
+            let overCount = readings.filter { $0.overLimit }.count
+            lastHistoryCounts = (safeCount, overCount)
+        }
+        
+        private func rebuildOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
+            // Remove all overlays and non-user annotations
+            mapView.removeOverlays(mapView.overlays)
+            mapView.removeAnnotations(mapView.annotations.filter { !($0 is MKUserLocation) })
+            
+            // Route polyline + destination
+            if viewModel.isNavigating, let route = viewModel.currentRoute {
+                let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
+                polyline.statusColor = UIColor(DesignSystem.cyan)
+                mapView.addOverlay(polyline, level: .aboveRoads)
+                
+                if let dest = viewModel.destination {
+                    let annotation = MKPointAnnotation()
+                    annotation.coordinate = dest.placemark.coordinate
+                    annotation.title = dest.name
+                    mapView.addAnnotation(annotation)
+                }
+            }
+            
+            // History line (color-coded by speed status)
+            buildHistoryOverlays(mapView, viewModel: viewModel)
+        }
+        
+        private func buildHistoryOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
+            guard let session = viewModel.sessionRecorder.currentSession, !session.readings.isEmpty else { return }
+            
+            var safeCoords: [CLLocationCoordinate2D] = []
+            var overCoords: [CLLocationCoordinate2D] = []
+            
+            for reading in session.readings {
+                let coord = CLLocationCoordinate2D(latitude: reading.latitude, longitude: reading.longitude)
+                if reading.overLimit {
+                    if !safeCoords.isEmpty {
+                        let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
+                        polyline.statusColor = UIColor(DesignSystem.cyan)
+                        mapView.addOverlay(polyline, level: .aboveRoads)
+                        safeCoords.removeAll()
+                    }
+                    overCoords.append(coord)
+                } else {
+                    if !overCoords.isEmpty {
+                        let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
+                        polyline.statusColor = UIColor(DesignSystem.alertRed)
+                        mapView.addOverlay(polyline, level: .aboveRoads)
+                        overCoords.removeAll()
+                    }
+                    safeCoords.append(coord)
+                }
+            }
+            if !safeCoords.isEmpty {
+                let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
+                polyline.statusColor = UIColor(DesignSystem.cyan)
+                mapView.addOverlay(polyline, level: .aboveRoads)
+            }
+            if !overCoords.isEmpty {
+                let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
+                polyline.statusColor = UIColor(DesignSystem.alertRed)
+                mapView.addOverlay(polyline, level: .aboveRoads)
+            }
+        }
+        
+        // MARK: - MKMapViewDelegate
+        
         public func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? NavPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
                 renderer.strokeColor = polyline.statusColor
-                renderer.lineWidth = 10.0
+                renderer.lineWidth = 8.0
                 renderer.lineCap = .round
                 renderer.lineJoin = .round
                 return renderer
@@ -310,40 +313,25 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            if let cameraAnnotation = annotation as? SpeedCameraAnnotation {
-                let identifier = "SpeedCamera"
-                var view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier)
-                if view == nil {
-                    view = MKAnnotationView(annotation: cameraAnnotation, reuseIdentifier: identifier)
-                    view?.canShowCallout = true
-                    
-                    let imageView = UIImageView(image: UIImage(systemName: "camera.badge.ellipsis"))
-                    imageView.tintColor = .white
-                    imageView.backgroundColor = UIColor(DesignSystem.alertRed)
-                    imageView.layer.cornerRadius = 16
-                    imageView.frame = CGRect(x: 0, y: 0, width: 32, height: 32)
-                    imageView.contentMode = .center
-                    view?.addSubview(imageView)
-                    view?.frame = imageView.frame
-                } else {
-                    view?.annotation = cameraAnnotation
-                }
-                return view
+            if annotation is MKUserLocation { return nil }
+            
+            let identifier = "Destination"
+            var view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
+            if view == nil {
+                view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+                view?.canShowCallout = true
+                view?.markerTintColor = UIColor(DesignSystem.cyan)
+                view?.glyphImage = UIImage(systemName: "mappin")
+            } else {
+                view?.annotation = annotation
             }
-            return nil
+            return view
         }
-    }
-}
-
-class SpeedCameraAnnotation: NSObject, MKAnnotation {
-    let coordinate: CLLocationCoordinate2D
-    let title: String?
-    let subtitle: String?
-    
-    init(camera: SpeedCamera) {
-        self.coordinate = CLLocationCoordinate2D(latitude: camera.latitude, longitude: camera.longitude)
-        self.title = "Speed Camera"
-        self.subtitle = camera.location ?? camera.roadway
+        
+        public func mapView(_ mapView: MKMapView, didChange mode: MKUserTrackingMode, animated: Bool) {
+            // If the system changed tracking mode (e.g. user rotated device), log it
+            DebugLogger.shared.log("Tracking mode changed to: \(mode.rawValue)")
+        }
     }
 }
 

@@ -40,26 +40,27 @@ public struct MapWithHUDView: View {
                             .padding(.horizontal, 16)
                     }
                     
-                    if let camera = driveViewModel.activeCameraAlert, !driveViewModel.isSearchingLocally {
-                        SpeedCameraAlertBanner(camera: camera)
-                            .padding(.horizontal, 16)
-                            .padding(.top, 8)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
+                    // NOTE: SpeedCameraAlertBanner removed — camera API is disabled.
                     
                     Spacer()
                     
+                    // Re-center button — always visible when map is detached
                     if driveViewModel.isMapDetached {
                         HStack {
                             Button(action: {
                                 driveViewModel.isMapDetached = false
                             }) {
-                                Image(systemName: "location.fill")
-                                    .font(.system(size: 18, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .frame(width: 48, height: 48)
-                                    .glassStyle(cornerRadius: 24)
-                                    .shadow(color: DesignSystem.cyan.opacity(0.3), radius: 10)
+                                HStack(spacing: 6) {
+                                    Image(systemName: "location.fill")
+                                        .font(.system(size: 16, weight: .bold))
+                                    Text("Re-center")
+                                        .font(.system(size: 13, weight: .bold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .glassStyle(cornerRadius: 20)
+                                .shadow(color: DesignSystem.cyan.opacity(0.3), radius: 10)
                             }
                             .padding(.leading, 16)
                             .padding(.bottom, 8)
@@ -76,6 +77,7 @@ public struct MapWithHUDView: View {
                 }
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: driveViewModel.isNavigating)
+            .animation(.easeInOut(duration: 0.25), value: driveViewModel.isMapDetached)
         }
     }
 }
@@ -84,47 +86,54 @@ fileprivate struct NavigationInstructionCard: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     
     var body: some View {
-        HStack(spacing: 20) {
-            // Maneuver Icon
+        HStack(spacing: 14) {
+            // Maneuver Icon — fixed size, never overlaps text
             Image(systemName: driveViewModel.nextManeuverImageName)
-                .font(.system(size: 32, weight: .bold))
+                .font(.system(size: 28, weight: .bold))
                 .foregroundColor(DesignSystem.cyan)
-                .frame(width: 60, height: 60)
-                .background(DesignSystem.cyan.opacity(0.1))
+                .frame(width: 54, height: 54)
+                .background(DesignSystem.cyan.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                .frame(width: 54, height: 54) // fixed size — never shrinks into text
             
-            VStack(alignment: .leading, spacing: 4) {
-                Text(driveViewModel.nextManeuverInstruction)
-                    .font(.system(size: 20, weight: .bold))
+            // Instruction text — gets all remaining space
+            VStack(alignment: .leading, spacing: 3) {
+                Text(driveViewModel.nextManeuverInstruction.isEmpty ? "Follow the route" : driveViewModel.nextManeuverInstruction)
+                    .font(.system(size: 17, weight: .bold))
                     .foregroundColor(.white)
                     .lineLimit(2)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.75)
+                    .fixedSize(horizontal: false, vertical: true)
                 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Text(formatDistance(driveViewModel.distanceToNextTurn))
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundColor(DesignSystem.cyan)
                     
                     if let eta = driveViewModel.eta {
-                        Text("•")
+                        Text("·")
                             .foregroundColor(.white.opacity(0.4))
                         Text("ETA \(eta, format: .dateTime.hour().minute())")
-                            .font(.system(size: 14))
+                            .font(.system(size: 13))
                             .foregroundColor(.white.opacity(0.6))
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             
+            // Dismiss button
             Button(action: {
                 Task { await driveViewModel.endNavigation() }
             }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white.opacity(0.6))
-                    .padding(12)
+                    .padding(10)
                     .background(Circle().fill(Color.white.opacity(0.1)))
             }
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .glassStyle()
     }
     
@@ -138,9 +147,8 @@ fileprivate struct NavigationInstructionCard: View {
                 return String(format: "%.1f km", distance / 1000.0)
             }
         } else {
-            // Imperial
             let feet = distance * 3.28084
-            if feet < 1000 {
+            if feet < 500 {
                 return "\(Int(feet)) ft"
             } else if feet < 5280 {
                 let yards = feet / 3

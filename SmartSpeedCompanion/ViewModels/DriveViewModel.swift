@@ -88,10 +88,10 @@ public final class DriveViewModel: NSObject, ObservableObject {
 
         super.init()
 
-        // Fetch cameras
-        Task {
-            await SpeedCameraService.shared.fetchCameras()
-        }
+        // NOTE: Speed Camera API fetch is DISABLED. SpeedCameraService struct is
+        // kept in the codebase for future re-enablement. Map annotations will simply
+        // not appear until re-enabled.
+        // Task { await SpeedCameraService.shared.fetchCameras() }
         
         // Load Local Arizona Geodatabase Data
         Task {
@@ -133,24 +133,15 @@ public final class DriveViewModel: NSObject, ObservableObject {
         locManager.requestAuthorization()
         locManager.startUpdatingLocation()
         
-        // Listen to location updates for nearby cameras
+        // Listen to location updates for navigation progress and live activity
+        // Speed camera proximity check removed (API disabled)
         locManager.$latestLocation
             .compactMap { $0 }
             .sink { [weak self] location in
-                if let self = self {
-                    let cameras = SpeedCameraService.shared.getNearbyCameras(to: location)
-                    self.nearbyCameras = cameras
-                    
-                    // Alert if a camera is within 1000 meters
-                    self.activeCameraAlert = cameras.first { camera in
-                        let camLoc = CLLocation(latitude: camera.latitude, longitude: camera.longitude)
-                        return location.distance(from: camLoc) <= 1000
-                    }
-                    
-                    if self.isNavigating {
-                        self.updateNavigationProgress(at: location)
-                        self.updateLiveActivity()
-                    }
+                guard let self = self else { return }
+                if self.isNavigating {
+                    self.updateNavigationProgress(at: location)
+                    self.updateLiveActivity()
                 }
             }
             .store(in: &cancellables)
@@ -260,25 +251,28 @@ public final class DriveViewModel: NSObject, ObservableObject {
         }
     }
     
-    public func startNavigation(with route: MKRoute) async {
-        DebugLogger.shared.log("Navigation STARTED using Route (\(Int(route.distance))m)")
+    public func startNavigation(with route: MKRoute, isReroute: Bool = false) async {
+        DebugLogger.shared.log("Navigation \(isReroute ? "REROUTED" : "STARTED") using Route (\(Int(route.distance))m)")
         self.isSelectingRoute = false
         self.isNavigating = true
         self.currentRoute = route
         self.currentStepIndex = 0
         
+        // Auto-start session if not already recording
+        if !isRecording {
+            startSession()
+            DebugLogger.shared.log("Session AUTO-STARTED with navigation")
+        }
+
         // Pre-cache speed limits along the route polyline points
         Task {
             let polylinePoints = route.polyline.points()
             let pointCount = route.polyline.pointCount
             var coordinates: [CLLocationCoordinate2D] = []
             
-            // Sample points along the route (every ~20th point for performance, 
-            // the service handles 3x3 grid around each)
             for i in stride(from: 0, to: pointCount, by: 20) {
                 coordinates.append(polylinePoints[i].coordinate)
             }
-            // Always include last
             if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
             
             await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
@@ -288,16 +282,25 @@ public final class DriveViewModel: NSObject, ObservableObject {
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
         }
         
-        // Initial instruction announcement
+        // Announce first instruction
         if !route.steps.isEmpty {
-            let firstInstruction = route.steps[0].instructions
-            self.nextManeuverInstruction = firstInstruction
-            self.nextManeuverImageName = getImageForManeuver(firstInstruction)
-            announce("Starting navigation. \(firstInstruction)")
+            // Find first step with actual content
+            let firstStep = route.steps.first(where: { !$0.instructions.isEmpty })
+            if let step = firstStep {
+                self.nextManeuverInstruction = step.instructions
+                self.nextManeuverImageName = getImageForManeuver(step.instructions)
+                if isReroute {
+                    announce("Rerouting. \(step.instructions)")
+                } else {
+                    announce("Navigation started. \(step.instructions)")
+                }
+            }
         }
 
         if #available(iOS 16.1, *) {
-            LiveActivityManager.shared.startActivity(sessionStartDate: Date())
+            if !isRecording {
+                LiveActivityManager.shared.startActivity(sessionStartDate: Date())
+            }
             updateLiveActivity()
         }
     }
@@ -305,6 +308,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
     public func startNavigation(to destination: MKMapItem) async {
         self.destination = destination
         self.isNavigating = true
+        
+        if !isRecording {
+            startSession()
+        }
+        
         await navigationDelegate?.startNavigationTrigger(to: destination, route: nil)
     }
     
@@ -407,7 +415,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 Task {
                     await selectDestinationAndCalculateRoutes(to: dest)
                     if let newRoute = availableRoutes.first {
-                        await startNavigation(with: newRoute)
+                        await startNavigation(with: newRoute, isReroute: true)
                     }
                 }
             }
@@ -430,29 +438,22 @@ public final class DriveViewModel: NSObject, ObservableObject {
             
             self.distanceToNextTurn = distanceToTurn
             
-            // UI should show the NEXT maneuver
-            if self.currentStepIndex + 1 < steps.count {
-                let nextStep = steps[self.currentStepIndex + 1]
-                let instruction = nextStep.instructions
-                
-                if self.nextManeuverInstruction != instruction {
-                    self.nextManeuverInstruction = instruction
-                    self.nextManeuverImageName = getImageForManeuver(instruction)
-                }
-                
-                // Voice Announcements (multi-stage)
-                // 1. Initial (at 1000m)
-                // 2. Final (at 150m)
-                let turnInMeters = Int(distanceToTurn)
-                if turnInMeters == 1000 || turnInMeters == 1001 { // Loose window
-                    announce("In one kilometer, \(instruction)")
-                } else if turnInMeters == 150 || turnInMeters == 151 {
-                    announce("In 150 meters, \(instruction)")
-                }
-            } else {
-                // Approaching destination
-                self.nextManeuverInstruction = "Arriving at Destination"
-                self.nextManeuverImageName = "mappin.and.ellipse"
+            // UI should show the instructions for the NEXT maneuver we are approaching.
+            // If we are on step N, we are approaching the maneuver point at the END of step N.
+            // The instructions for step N describe what to do at that point.
+            
+            let instruction = currentStep.instructions
+            if self.nextManeuverInstruction != instruction && !instruction.isEmpty {
+                self.nextManeuverInstruction = instruction
+                self.nextManeuverImageName = getImageForManeuver(instruction)
+            }
+            
+            // Voice Announcements (multi-stage)
+            let turnInMeters = Int(distanceToTurn)
+            if turnInMeters == 1000 || turnInMeters == 1001 { 
+                announce("In one kilometer, \(instruction)")
+            } else if turnInMeters == 150 || turnInMeters == 151 {
+                announce("In 150 meters, \(instruction)")
             }
             
             if distanceToTurn < 15 { // Reduced from 30m to prevent premature turn skipping

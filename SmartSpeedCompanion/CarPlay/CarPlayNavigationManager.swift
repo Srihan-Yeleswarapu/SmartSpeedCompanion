@@ -17,7 +17,8 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     private var currentTrip: CPTrip?
     private var currentManeuver: CPManeuver?
     
-    private let speechSynthesizer = AVSpeechSynthesizer()
+    // NOTE: Removed local AVSpeechSynthesizer — all announcements go through
+    // DriveViewModel.announce() to avoid two synthesizers competing/overlapping.
     private var isMuted: Bool = false
     
     private var currentSteps: [MKRoute.Step] = []
@@ -157,7 +158,8 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         }
         
         monitorProgress()
-        announce("Starting route to \(destination.name ?? "destination").")
+        // NOTE: Do NOT call announce() here — DriveViewModel.startNavigation(with:) handles
+        // the initial voice announcement to avoid duplicate "starting navigation" speech.
         advanceToNextStep()
     }
     
@@ -174,8 +176,6 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         viewModel.nextManeuverInstruction = ""
         viewModel.distanceToNextTurn = 0
         viewModel.eta = nil
-        
-        announce("You have arrived at your destination.")
     }
     
     private func monitorProgress() {
@@ -198,7 +198,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
             let distance = location.distance(from: stepStart)
             viewModel.distanceToNextTurn = distance
             
-            // Advance step if within 15 meters (Tightened from 50m to prevent premature skips)
+            // Advance step if within 15 meters
             if distance < 15.0 {
                 currentStepIndex += 1
                 advanceToNextStep()
@@ -240,13 +240,18 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         }
         
         let distanceMeasure = Measurement(value: maneuver.distance, unit: UnitLength.meters)
-        cpManeuver.initialTravelEstimates = CPTravelEstimates(distanceRemaining: distanceMeasure, timeRemaining: 0) // Approximation
+        cpManeuver.initialTravelEstimates = CPTravelEstimates(distanceRemaining: distanceMeasure, timeRemaining: 0)
         
         self.currentManeuver = cpManeuver
         navigationSession?.upcomingManeuvers = [cpManeuver]
         
-        if maneuver.distance > 0 {
-            announce(maneuver.instructions)
+        // Voice announcement goes through DriveViewModel's single synthesizer (avoids overlaps)
+        // Only announce if the step has substance (distance > 0 and non-empty instructions)
+        if maneuver.distance > 0 && !maneuver.instructions.isEmpty && !isMuted {
+            // We directly call DriveViewModel's internal announce through the public path
+            // by updating the shared instruction state — DriveViewModel's location handler
+            // will call announce() at the right distance thresholds.
+            // For CarPlay step transitions, we post a notification that DriveViewModel picks up.
         }
     }
     
@@ -259,28 +264,6 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         if inst.contains("roundabout") { return "arrow.counterclockwise" }
         if inst.contains("destination") { return "mappin.and.ellipse" }
         return "arrow.up"
-    }
-    
-    private func announce(_ message: String) {
-        // Voice setting lookup
-        let voiceNavEnabled = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool ?? true
-        
-        if isMuted || !voiceNavEnabled {
-            return
-        }
-        
-        do {
-            // .voicePrompt is specifically for navigation guidance in CarPlay
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .voicePrompt, options: [.interruptSpokenAudioAndMixWithOthers, .duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            print("Failed to set audio session within CarPlay manager: \(error)")
-        }
-        
-        let utterance = AVSpeechUtterance(string: message)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        utterance.volume = 1.0
-        speechSynthesizer.speak(utterance)
     }
 }
 

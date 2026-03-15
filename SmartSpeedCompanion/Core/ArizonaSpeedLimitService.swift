@@ -148,7 +148,8 @@ public actor ArizonaSpeedLimitService {
     }
 
     /// Finds the legal speed limit for a given coordinate.
-    public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int {
+    /// Added heading awareness to prevent snapping to cross-streets or nearby parallel roads.
+    public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double? = nil, expandedSearch: Bool = false) async throws -> Int {
         if !isLoaded {
             loadDataIfNeeded()
         }
@@ -158,49 +159,59 @@ public actor ArizonaSpeedLimitService {
 
         let segments = getSegmentsForGrid(lat: coordinate.latitude, lon: coordinate.longitude)
         
-        if segments.isEmpty {
-            DebugLogger.shared.log("NO SEGMENTS at [\(String(format: "%.3f", coordinate.latitude)), \(String(format: "%.3f", coordinate.longitude))]")
-        }
-
         var closestLimit: Int?
         var closestRouteId: String?
-        var minDistance: CLLocationDistance = 60.0 // Reduced from 80m to be even more strict.
-        var smallestArea: Double = Double.infinity
+        var minScore: Double = Double.infinity // Using a "score" instead of just distance
+        
+        // Base snapping radius
+        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 150.0 : 60.0 
         
         for segment in segments {
             guard segment.limit > 0 else { continue }
             
-            // BOX SANITY CHECK: 
-            // If the bounding box is huge (e.g. > 130m diagonal), it's likely a generic 
-            // county/city-wide segment. We only want to snap '0m' if the road geometry 
-            // is reasonably precise for the local street.
+            // Check bounding box size (ignore generic county-wide polygons)
             let dx = segment.maxx - segment.minx
             let dy = segment.maxy - segment.miny
             let diagonalDegrees = sqrt(dx*dx + dy*dy)
-            
             if diagonalDegrees > 0.0012 { continue }
             
             let distance = segment.distance(to: coordinate)
+            guard distance <= maxSnappingDistance else { continue }
             
-            if distance <= minDistance {
-                if distance < minDistance - 0.1 {
-                    minDistance = distance
-                    closestLimit = segment.limit
-                    closestRouteId = segment.routeId
-                    smallestArea = segment.area
-                } else if distance <= 0.1 { 
-                    if segment.area < smallestArea {
-                        closestLimit = segment.limit
-                        closestRouteId = segment.routeId
-                        smallestArea = segment.area
-                    }
+            // --- HEADING AWARENESS LOGIC ---
+            // We calculate a "penalty" for roads that don't match our travel direction.
+            var headingPenalty: Double = 1.0
+            
+            if let carHeading = heading {
+                // Determine if the road segment is more N-S or E-W based on its box
+                let isNorthSouth = dy > dx
+                let simplifiedRoadHeading = isNorthSouth ? 0.0 : 90.0 // 0/180 or 90/270
+                
+                // Calculate the difference between car heading and road orientation
+                // Normalized to 0-90 degrees
+                let diff = abs(carHeading.truncatingRemainder(dividingBy: 180) - simplifiedRoadHeading)
+                let normalizedDiff = min(diff, 180 - diff)
+                
+                if normalizedDiff > 45 {
+                    // Road is more perpendicular than parallel
+                    headingPenalty = 5.0 // High penalty for cross-streets
+                } else {
+                    // Road is mostly parallel
+                    headingPenalty = 1.0 
                 }
+            }
+            
+            // Score = Distance * Penalty (lower is better)
+            let score = distance * headingPenalty
+            
+            if score < minScore {
+                minScore = score
+                closestLimit = segment.limit
+                closestRouteId = segment.routeId
             }
         }
         
         if let limit = closestLimit, limit > 0 { 
-            let roadName = closestRouteId ?? "Unknown Road"
-            DebugLogger.shared.log("MATCH: \(limit) mph on \(roadName) (\(Int(minDistance))m away)")
             return limit 
         }
         
