@@ -95,7 +95,29 @@ public actor ArizonaSpeedLimitService {
         DebugLogger.shared.log("Scanning bundle: \(bundleURL.lastPathComponent)")
         
         if let contents = try? FileManager.default.contentsOfDirectory(at: bundleURL, includingPropertiesForKeys: nil) {
+            let fileList = contents.map { $0.lastPathComponent }.joined(separator: ", ")
+            DebugLogger.shared.log("Bundle Files: \(fileList)")
+            
             for url in contents {
+                // If it's a directory, list its contents too
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                    if let subContents = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
+                        let subList = subContents.map { $0.lastPathComponent }.joined(separator: ", ")
+                        DebugLogger.shared.log("Inside \(url.lastPathComponent): \(subList)")
+                        
+                        for subUrl in subContents {
+                            let ext = subUrl.pathExtension.lowercased()
+                            if ["sqlite", "db", "geodatabase", "gpkg"].contains(ext) {
+                                DebugLogger.shared.log("Found \(ext) in subfolder: \(subUrl.lastPathComponent)")
+                                if loadDatabase(at: subUrl.path) {
+                                    return
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 let ext = url.pathExtension.lowercased()
                 if ["sqlite", "db", "geodatabase", "gpkg"].contains(ext) {
                     DebugLogger.shared.log("Found \(ext) file: \(url.lastPathComponent)")
@@ -106,7 +128,7 @@ public actor ArizonaSpeedLimitService {
             }
         }
         
-        DebugLogger.shared.log("DB NOT FOUND in bundle root - trying recursive search...")
+        DebugLogger.shared.log("DB NOT FOUND in initial scan - trying recursive search...")
         
         // Final recursive attempt
         if let enumerator = FileManager.default.enumerator(at: bundleURL, includingPropertiesForKeys: nil) {
