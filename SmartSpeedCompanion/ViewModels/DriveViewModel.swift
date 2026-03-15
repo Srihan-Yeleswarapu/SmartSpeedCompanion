@@ -439,7 +439,6 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 self.nextManeuverImageName = "mappin.and.ellipse"
             }
             
-            // Advance step when close to turn
             if distanceToTurn < 30 {
                 self.currentStepIndex += 1
                 if self.currentStepIndex < steps.count {
@@ -450,6 +449,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
                     Task { await self.endNavigation() }
                 }
             }
+        }
+        
+        // Simple ETA calculation
+        if self.eta == nil {
+            self.eta = Date().addingTimeInterval(route.expectedTravelTime)
         }
     }
     
@@ -490,11 +494,6 @@ public final class DriveViewModel: NSObject, ObservableObject {
             latitude: v.latitude + t * (w.latitude - v.latitude),
             longitude: v.longitude + t * (w.longitude - v.longitude)
         )
-    }    
-        // Simple ETA calculation
-        if self.eta == nil {
-            self.eta = Date().addingTimeInterval(route.expectedTravelTime)
-        }
     }
     
     private func announce(_ message: String) {
