@@ -72,25 +72,33 @@ public actor ArizonaSpeedLimitService {
     public func loadDataIfNeeded() {
         guard !isLoaded else { return }
         
-        // First try the literal expected names
+        // First try the prioritized name
         let possibleNames = [
-            ("HPMS_2024_Data_-2111065798425599378", "geodatabase"),
             ("ArizonaSpeedLimits", "sqlite"),
-            ("ArizonaSpeedLimits", "db")
+            ("ArizonaSpeedLimits", "db"),
+            ("HPMS_2024_Data_-2111065798425599378", "geodatabase")
         ]
+        
+        DebugLogger.shared.log("Searching for DB...")
         
         for (name, ext) in possibleNames {
             if let url = Bundle.main.url(forResource: name, withExtension: ext) {
+                DebugLogger.shared.log("Found DB candidate: \(name).\(ext)")
                 if loadDatabase(at: url.path) {
                     return
                 }
             }
         }
         
-        // Search entire bundle
-        if let enumerator = FileManager.default.enumerator(at: Bundle.main.bundleURL, includingPropertiesForKeys: nil) {
-            for case let url as URL in enumerator {
-                if ["geodatabase", "sqlite", "db", "gpkg"].contains(url.pathExtension.lowercased()) {
+        // Search entire bundle one level deep
+        let bundleURL = Bundle.main.bundleURL
+        DebugLogger.shared.log("Scanning bundle: \(bundleURL.lastPathComponent)")
+        
+        if let contents = try? FileManager.default.contentsOfDirectory(at: bundleURL, includingPropertiesForKeys: nil) {
+            for url in contents {
+                let ext = url.pathExtension.lowercased()
+                if ["sqlite", "db", "geodatabase", "gpkg"].contains(ext) {
+                    DebugLogger.shared.log("Found \(ext) file: \(url.lastPathComponent)")
                     if loadDatabase(at: url.path) {
                         return
                     }
@@ -98,9 +106,21 @@ public actor ArizonaSpeedLimitService {
             }
         }
         
-        DebugLogger.shared.log("DB NOT FOUND in bundle.")
+        DebugLogger.shared.log("DB NOT FOUND in bundle root - trying recursive search...")
+        
+        // Final recursive attempt
+        if let enumerator = FileManager.default.enumerator(at: bundleURL, includingPropertiesForKeys: nil) {
+            for case let url as URL in enumerator {
+                if ["sqlite", "db", "geodatabase", "gpkg"].contains(url.pathExtension.lowercased()) {
+                    if loadDatabase(at: url.path) {
+                        return
+                    }
+                }
+            }
+        }
+        
+        DebugLogger.shared.log("FATAL: DB NOT FOUND anywhere.")
         print("[AZ Data] No supported geodatabase file found in bundle.")
-        // Mark as loaded to prevent constant searching every frame
         isLoaded = true 
     }
 
