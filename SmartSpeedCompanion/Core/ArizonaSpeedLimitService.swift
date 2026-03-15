@@ -13,7 +13,7 @@ public actor ArizonaSpeedLimitService {
     // Grid precision: 0.01 degree is roughly 1.1km.
     private let gridPrecision = 0.01
     private var spatialCache: [String: [RoadSegment]] = [:]
-    private var lastSegmentId: Int?
+    private var lastSegmentId: String?
     
     private init() {}
     
@@ -161,7 +161,7 @@ public actor ArizonaSpeedLimitService {
         let segments = getSegmentsForGrid(lat: coordinate.latitude, lon: coordinate.longitude)
         
         var closestLimit: Int?
-        var closestRouteId: Int?
+        var closestRouteId: String?
         var minScore: Double = Double.infinity 
         
         // Base snapping radius — increased for better coverage in urban canyons
