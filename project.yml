@@ -47,7 +47,7 @@ targets:
 
     resources:
       - path: SmartSpeedCompanion/Resources/Assets.xcassets
-      - path: SmartSpeedCompanion/Resources/
+      #- path: SmartSpeedCompanion/Resources/
 
     entitlements:
       path: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
