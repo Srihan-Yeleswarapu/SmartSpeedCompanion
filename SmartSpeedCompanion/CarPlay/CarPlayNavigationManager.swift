@@ -255,6 +255,25 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         }
     }
     
+    public func showManeuversList(interfaceController: CPInterfaceController?) {
+        guard !currentSteps.isEmpty else { return }
+        
+        let listItems = currentSteps.enumerated().map { index, step in
+            let item = CPListItem(text: step.instructions, detailText: "\(Int(step.distance * 3.28084)) ft")
+            if let icon = UIImage(systemName: symbolName(for: step)) {
+                item.setImage(icon)
+            }
+            // Highlight current step
+            if index == currentStepIndex {
+                item.accessoryType = .disclosureIndicator
+            }
+            return item
+        }
+        
+        let listTemplate = CPListTemplate(title: "Route Overview", sections: [CPListSection(items: listItems)])
+        interfaceController?.pushTemplate(listTemplate, animated: true, completion: nil)
+    }
+    
     private func symbolName(for step: MKRoute.Step) -> String {
         // Basic mapping of instructions to SF Symbols
         let inst = step.instructions.lowercased()

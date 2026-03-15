@@ -144,11 +144,16 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Speed camera proximity check removed (API disabled)
         locManager.$latestLocation
             .compactMap { $0 }
-            .throttle(for: .milliseconds(500), scheduler: RunLoop.main, latest: true)
+            .throttle(for: .seconds(2), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] location in
                 guard let self = self else { return }
                 if self.isNavigating {
                     self.updateNavigationProgress(at: location)
+                }
+                
+                // Keep the Dynamic Island / Live Activity updated with live speed
+                if self.isRecording || self.isNavigating {
+                    self.updateLiveActivity()
                 }
             }
             .store(in: &cancellables)

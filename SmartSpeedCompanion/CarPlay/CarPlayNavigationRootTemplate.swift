@@ -67,7 +67,12 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         }
         muteButton.image = UIImage(systemName: "speaker.wave.2.fill")!
 
-        mapTemplate.mapButtons = [searchButton, startButton, endButton, muteButton]
+        let reportButton = CPMapButton { [weak self] _ in
+            Task { @MainActor in self?.presentSafetyReport() }
+        }
+        reportButton.image = UIImage(systemName: "chart.bar.fill")!
+
+        mapTemplate.mapButtons = [searchButton, reportButton, startButton, endButton, muteButton]
     }
 
     @MainActor
@@ -108,25 +113,31 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
     @MainActor
     private func handleAlerts(speed: Double, limit: Int, status: SpeedStatus) {
         if status == .over && !isAlertPresented {
-            presentAlert(speed: speed, limit: limit)
+            presentNavigationAlert(speed: speed, limit: limit)
         } else if status != .over && isAlertPresented {
-            interfaceController?.dismissTemplate(animated: true, completion: nil)
             isAlertPresented = false
         }
     }
 
     @MainActor
-    private func presentAlert(speed: Double, limit: Int) {
-        _ = Int(speed) - limit
-        let action = CPAlertAction(title: "Got It", style: .cancel) { [weak self] _ in
+    private func presentNavigationAlert(speed: Double, limit: Int) {
+        let diff = Int(speed) - limit
+        
+        let action = CPAlertAction(title: "OK", style: .default) { [weak self] _ in
             Task { @MainActor in self?.isAlertPresented = false }
         }
-        let alert = CPAlertTemplate(
-            titleVariants: ["⚠ SPEED ALERT", "SPEED ALERT"],
-            actions: [action]
+        
+        // Use CPNavigationAlert so the map is never blocked
+        let alert = CPNavigationAlert(
+            titleVariants: ["⚠ SLOW DOWN", "Speeding +\(diff)"],
+            subtitleVariants: ["Limit is \(limit) MPH. Watch your speed."],
+            primaryAction: action,
+            secondaryAction: nil
         )
+        alert.duration = 5.0 
+        
         isAlertPresented = true
-        interfaceController?.presentTemplate(alert, animated: true, completion: nil)
+        mapTemplate.show(alert)
     }
     
     // MARK: - Search
@@ -160,5 +171,34 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         // If the item.handler is set, it will be called automatically by CarPlay.
         // We implement this to satisfy protocol requirements.
         completionHandler()
+    }
+
+    @MainActor
+    public func showTurnByTurnList() {
+        navigationManager.showManeuversList(interfaceController: interfaceController)
+    }
+
+    @MainActor
+    private func presentSafetyReport() {
+        // Information Template for professional session summaries
+        let avgSpeed = Int(viewModel.speed) // Placeholder or logic for real avg
+        let distance = String(format: "%.1f", viewModel.sessionDuration / 60.0) // Placeholder
+        
+        let items = [
+            CPInformationItem(title: "Current Speed", detail: "\(Int(viewModel.speed)) MPH"),
+            CPInformationItem(title: "Drive Time", detail: "\(Int(viewModel.sessionDuration / 60)) min"),
+            CPInformationItem(title: "Status", detail: viewModel.status.rawValue.uppercased())
+        ]
+        
+        let report = CPInformationTemplate(
+            title: "Safety Report",
+            layout: .twoColumn,
+            items: items,
+            actions: [CPTextButton(title: "Dismiss", textStyle: .cancel, handler: { [weak self] _ in
+                self?.interfaceController?.popTemplate(animated: true, completion: nil)
+            })]
+        )
+        
+        interfaceController?.pushTemplate(report, animated: true, completion: nil)
     }
 }

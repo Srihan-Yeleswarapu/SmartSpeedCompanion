@@ -9,11 +9,16 @@ public class LiveActivityManager {
     private var currentActivity: Activity<SpeedActivityAttributes>?
     
     private init() {
-        // Try to resume existing activity on crash/relaunch
-        currentActivity = Activity<SpeedActivityAttributes>.activities.first
+        // Only resume if the activity is actually active.
+        currentActivity = Activity<SpeedActivityAttributes>.activities.first(where: { $0.activityState == .active })
     }
     
     public func startActivity(sessionStartDate: Date) {
+        // If we have an existing activity that isn't active, clear it.
+        if let existing = currentActivity, existing.activityState != .active {
+            currentActivity = nil
+        }
+        
         guard currentActivity == nil, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         
         let attributes = SpeedActivityAttributes(sessionStartDate: sessionStartDate)

@@ -6,9 +6,11 @@ import CarPlay
 import UIKit
 import Combine
 
-class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
+class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPTemplateApplicationDashboardSceneDelegate {
     var interfaceController: CPInterfaceController?
+    var dashboardController: CPDashboardController?
     var navigationRoot: CarPlayNavigationRootTemplate?
+    private var dashboardManager: CarPlayDashboardController?
     private var cancellables = Set<AnyCancellable>()
     
     func templateApplicationScene(
@@ -29,6 +31,17 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
         interfaceController.setRootTemplate(speedMapTemplate, animated: true, completion: nil)
     }
     
+    // DASHBOARD Support
+    func templateApplicationDashboardScene(
+        _ templateApplicationDashboardScene: CPTemplateApplicationDashboardScene,
+        didConnect dashboardController: CPDashboardController,
+        to window: CPWindow
+    ) {
+        self.dashboardController = dashboardController
+        let vm = AppDelegate.sharedDriveViewModel
+        self.dashboardManager = CarPlayDashboardController(dashboardController: dashboardController, viewModel: vm)
+    }
+    
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
         didDisconnectInterfaceController interfaceController: CPInterfaceController
@@ -46,5 +59,10 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
         
         self.interfaceController = nil
         self.navigationRoot = nil
+    }
+
+    // Responding to User Actions (Guidance Taps)
+    func templateApplicationScene(_ templateApplicationScene: CPTemplateApplicationScene, didSelect maneuver: CPManeuver) {
+        navigationRoot?.showTurnByTurnList()
     }
 }
