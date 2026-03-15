@@ -7,7 +7,7 @@ import SwiftUI // For @AppStorage
 @MainActor
 public final class SpeedEngine: ObservableObject {
     @Published public var speed: Double = 0.0
-    @Published public var limit: Int = 25
+    @Published public var limit: Int = 0
     @Published public var status: SpeedStatus = .safe
     
     @AppStorage("userBuffer") public var userBuffer: Int = 5 // 0 to 15 mph

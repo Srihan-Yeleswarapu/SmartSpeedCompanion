@@ -17,14 +17,14 @@ public final class DriveViewModel: NSObject, ObservableObject {
     // Core driving state
     @Published public var speed: Double = 0.0
     @Published public var currentHeading: Double? = nil
-    @Published public var limit: Int = 25
+    @Published public var limit: Int = 0
     @Published public var status: SpeedStatus = .safe
     @Published public var isRecording: Bool = false {
         didSet { updateIdleTimer() }
     }
     @Published public var sessionDuration: TimeInterval = 0
     @Published public var alertActive: Bool = false
-    @Published public var speedLimitSource: String = "Estimating..."
+    @Published public var speedLimitSource: String = "No Data"
     @Published public var nearbyCameras: [SpeedCamera] = []
     @Published public var activeCameraAlert: SpeedCamera? = nil
     // Navigation state

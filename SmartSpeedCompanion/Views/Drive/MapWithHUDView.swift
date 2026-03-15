@@ -435,9 +435,9 @@ fileprivate struct LimitSignView: View {
                 .offset(y: isLandscape ? -2 : -1)
             }
             
-            Text(source == "OpenStreetMap" ? "OSM" : "EST")
+            Text(source == "DB" ? "DB" : (source == "OpenStreetMap" ? "OSM" : "??"))
                 .font(.system(size: isLandscape ? 8 : 10, weight: .bold))
-                .foregroundColor(source == "OpenStreetMap" ? Color(hex: "#00D4FF") : Color(hex: "#8888AA"))
+                .foregroundColor(source == "DB" ? DesignSystem.cyan : (source == "OpenStreetMap" ? Color(hex: "#00D4FF") : Color(hex: "#8888AA")))
         }
     }
 }

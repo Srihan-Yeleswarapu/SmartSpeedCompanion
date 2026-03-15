@@ -162,7 +162,7 @@ public actor ArizonaSpeedLimitService {
         }
 
         var closestLimit: Int?
-        var minDistance: CLLocationDistance = 200.0 // Increased to 200m for better coverage in wide junctions
+        var minDistance: CLLocationDistance = 80.0 // Reduced from 200m to avoid parallel road crosstalk
         var smallestArea: Double = Double.infinity
         
         for segment in segments {

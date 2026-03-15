@@ -16,7 +16,7 @@ public protocol SpeedLimitProviding {
 public class SmartSpeedLimitService: ObservableObject {
     public static let shared = SmartSpeedLimitService()
     
-    @Published public var currentLimit: Int = 25
+    @Published public var currentLimit: Int = 0
     @Published public var dataSource: String = "No Data"
     
     private init() {}
@@ -25,11 +25,15 @@ public class SmartSpeedLimitService: ObservableObject {
         do {
             let localLimit = try await ArizonaSpeedLimitService.shared.fetchSpeedLimit(at: coordinate)
             self.currentLimit = localLimit
-            self.dataSource = "Local Map"
+            self.dataSource = "DB"
             return localLimit
         } catch {
-            self.currentLimit = 0
-            self.dataSource = "Unknown"
+            // Only set to 0 if it was genuinely not found, to avoid flashing --
+            if self.currentLimit != 0 {
+                self.currentLimit = 0
+                self.dataSource = "No Data"
+                DebugLogger.shared.log("LIMIT MISS at [\(coordinate.latitude), \(coordinate.longitude)]")
+            }
             return 0
         }
     }
