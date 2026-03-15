@@ -198,8 +198,8 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
             let distance = location.distance(from: stepStart)
             viewModel.distanceToNextTurn = distance
             
-            // Advance step if within 50 meters
-            if distance < 50.0 {
+            // Advance step if within 15 meters (Tightened from 50m to prevent premature skips)
+            if distance < 15.0 {
                 currentStepIndex += 1
                 advanceToNextStep()
             }

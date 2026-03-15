@@ -115,25 +115,13 @@ fileprivate struct NavigationInstructionCard: View {
                 }
             }
             
-            Spacer()
-            
-            Button(action: {
-                driveViewModel.isSearchingLocally = true
-            }) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.white.opacity(0.6))
-                    .padding(10)
-                    .background(Circle().fill(Color.white.opacity(0.1)))
-            }
-
             Button(action: {
                 Task { await driveViewModel.endNavigation() }
             }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.white.opacity(0.6))
-                    .padding(10)
+                    .padding(12)
                     .background(Circle().fill(Color.white.opacity(0.1)))
             }
         }

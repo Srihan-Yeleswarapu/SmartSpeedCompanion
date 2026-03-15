@@ -455,7 +455,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 self.nextManeuverImageName = "mappin.and.ellipse"
             }
             
-            if distanceToTurn < 30 {
+            if distanceToTurn < 15 { // Reduced from 30m to prevent premature turn skipping
                 self.currentStepIndex += 1
                 if self.currentStepIndex < steps.count {
                     let newStep = steps[self.currentStepIndex]
