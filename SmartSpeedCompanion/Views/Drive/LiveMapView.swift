@@ -36,7 +36,7 @@ public struct LiveMapView: UIViewRepresentable {
         
         // MODERN: Native pitch button (3D/2D toggle) — no custom UI needed
         if #available(iOS 16.0, *) {
-            map.pitchButtonVisibility = .visible
+            map.pitchButtonVisibility = .hidden
         }
         
         // MODERN: Native user tracking button — auto-shows re-center when lost
@@ -123,29 +123,25 @@ public struct LiveMapView: UIViewRepresentable {
             targetPitch = 45
             
             switch speed {
-            case 0..<3:
-                targetAltitude = 250
-            case 3..<15:
-                targetAltitude = 400
-            case 15..<30:
-                targetAltitude = 700
-            case 30..<50:
-                targetAltitude = 1100
-            case 50..<70:
-                targetAltitude = 1900
+            case 0..<5:
+                targetAltitude = 280
+            case 5..<20:
+                targetAltitude = 450
+            case 20..<40:
+                targetAltitude = 800
+            case 40..<60:
+                targetAltitude = 1200
             default:
-                targetAltitude = 2800
+                targetAltitude = 1800
             }
             
-            // Turn proximity override
-            if distanceToTurn < 60 {
-                targetAltitude = 150
-            } else if distanceToTurn < 120 {
-                targetAltitude = min(targetAltitude, 250)
-            } else if distanceToTurn < 300 {
-                targetAltitude = min(targetAltitude, 400)
-            } else if distanceToTurn < 600 {
-                targetAltitude = min(targetAltitude, 600)
+            // Turn proximity override — smoother transitions
+            if distanceToTurn < 100 {
+                targetAltitude = min(targetAltitude, 280)
+            } else if distanceToTurn < 250 {
+                targetAltitude = min(targetAltitude, 450)
+            } else if distanceToTurn < 500 {
+                targetAltitude = min(targetAltitude, 750)
             }
             
             // Destination approach
@@ -183,19 +179,19 @@ public struct LiveMapView: UIViewRepresentable {
             targetAltitude = 2000
         }
         
-        // Only animate if there is a meaningful difference (prevents micro-jitter)
+        // Only animate if there is a meaningful difference (prevents micro-jitter and battery drain)
         let currentAltitude = uiView.camera.centerCoordinateDistance
         let currentPitch = Double(uiView.camera.pitch)
         let altDiff = abs(currentAltitude - targetAltitude)
         let pitchDiff = abs(currentPitch - targetPitch)
         
-        // Apply camera changes if needed
-        if altDiff > 80 || pitchDiff > 8 {
+        // Increase thresholds to prevent constant camera updates which heat up the device
+        if altDiff > 120 || pitchDiff > 10 {
             let newCamera = uiView.camera.copy() as! MKMapCamera
             newCamera.centerCoordinateDistance = targetAltitude
             newCamera.pitch = CGFloat(targetPitch)
             
-            // Allow MapKit to handle its own animation for smoother results
+            // Maintain tracking if possible, though setCamera usually breaks it
             uiView.setCamera(newCamera, animated: true)
         }
     }
@@ -262,10 +258,11 @@ public struct LiveMapView: UIViewRepresentable {
             let currentReadingCount = vm.sessionRecorder.currentSession?.readings.count ?? 0
             let isNavigating = vm.isNavigating
             
-            let routeChanged = isNavigating != lastIsNavigating || currentRouteDistance != lastRouteDistance
-            let historyChanged = currentReadingCount != lastHistoryCounts.safeCount + lastHistoryCounts.overCount
+            let routeChanged = isNavigating != lastIsNavigating || abs(currentRouteDistance - lastRouteDistance) > 1.0
+            // Throttling: only rebuild history every 5 points to save battery
+            let historyChanged = currentReadingCount >= lastHistoryCounts.safeCount + lastHistoryCounts.overCount + 5
             
-            guard routeChanged || historyChanged else { return }
+            guard routeChanged || historyChanged || (isNavigating && lastRouteDistance == 0) else { return }
             
             // Perform the overlay rebuild only when data changed
             rebuildOverlays(mapView, viewModel: vm)

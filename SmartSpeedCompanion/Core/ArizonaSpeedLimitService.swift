@@ -13,6 +13,7 @@ public actor ArizonaSpeedLimitService {
     // Grid precision: 0.01 degree is roughly 1.1km.
     private let gridPrecision = 0.01
     private var spatialCache: [String: [RoadSegment]] = [:]
+    private var lastSegmentId: Int?
     
     private init() {}
     
@@ -160,10 +161,11 @@ public actor ArizonaSpeedLimitService {
         let segments = getSegmentsForGrid(lat: coordinate.latitude, lon: coordinate.longitude)
         
         var closestLimit: Int?
-        var minScore: Double = Double.infinity // Using a "score" instead of just distance
+        var closestRouteId: Int?
+        var minScore: Double = Double.infinity 
         
-        // Base snapping radius
-        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 100.0 : 60.0 
+        // Base snapping radius — increased for better coverage in urban canyons
+        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 150.0 : 85.0 
         
         for segment in segments {
             guard segment.limit > 0 else { continue }
@@ -178,38 +180,38 @@ public actor ArizonaSpeedLimitService {
             guard distance <= maxSnappingDistance else { continue }
             
             // --- HEADING AWARENESS LOGIC ---
-            // We calculate a "penalty" for roads that don't match our travel direction.
             var headingPenalty: Double = 1.0
             
             if let carHeading = heading {
-                // Determine if the road segment is more N-S or E-W based on its box
                 let isNorthSouth = dy > dx
-                let simplifiedRoadHeading = isNorthSouth ? 0.0 : 90.0 // 0/180 or 90/270
+                let simplifiedRoadHeading = isNorthSouth ? 0.0 : 90.0
                 
-                // Calculate the difference between car heading and road orientation
-                // Normalized to 0-90 degrees
                 let diff = abs(carHeading.truncatingRemainder(dividingBy: 180) - simplifiedRoadHeading)
                 let normalizedDiff = min(diff, 180 - diff)
                 
-                if normalizedDiff > 45 {
-                    // Road is more perpendicular than parallel
-                    headingPenalty = 5.0 // High penalty for cross-streets
-                } else {
-                    // Road is mostly parallel
-                    headingPenalty = 1.0 
+                if normalizedDiff > 40 {
+                    headingPenalty = 6.0 // Stronger penalty for cross-streets
+                } else if normalizedDiff > 20 {
+                    headingPenalty = 2.0 // Mild penalty for diagonal misalignment
                 }
             }
             
-            // Score = Distance * Penalty (lower is better)
-            let score = distance * headingPenalty
+            // Score = Distance * Penalty
+            // We also give a slight "incumbency bonus" to the current road to prevent flickering
+            var score = distance * headingPenalty
+            if let lastId = self.lastSegmentId, segment.routeId == lastId {
+                score *= 0.8 // 20% bias towards staying on the same road
+            }
             
             if score < minScore {
                 minScore = score
                 closestLimit = segment.limit
+                closestRouteId = segment.routeId
             }
         }
         
         if let limit = closestLimit, limit > 0 { 
+            self.lastSegmentId = closestRouteId
             return limit 
         }
         
