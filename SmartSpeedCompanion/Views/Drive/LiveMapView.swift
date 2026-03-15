@@ -43,7 +43,8 @@ public struct LiveMapView: UIViewRepresentable {
             // Check if we have a valid location before moving the camera
             guard let userLoc = uiView.userLocation.location, 
                   CLLocationCoordinate2DIsValid(userLoc.coordinate),
-                  userLoc.coordinate.latitude != 0 else { return }
+                  userLoc.coordinate.latitude != 0,
+                  userLoc.horizontalAccuracy > 0 && userLoc.horizontalAccuracy < 2000 else { return }
             
             updateSmartCamera(uiView, context: context)
         }
@@ -185,15 +186,17 @@ public struct LiveMapView: UIViewRepresentable {
         }
         
         // Update altitude natively without breaking tracking mode via CameraZoomRange
-        if altDiff > 60 || abs(uiView.camera.pitch - targetPitch) > 2 {
+        if altDiff > 50 || abs(uiView.camera.pitch - targetPitch) > 5 {
+            // Apply a small buffer to zoom range to avoid "jitter" and "random jumps"
             let zoomRange = MKMapView.CameraZoomRange(
-                minCenterCoordinateDistance: targetAltitude,
-                maxCenterCoordinateDistance: targetAltitude
+                minCenterCoordinateDistance: targetAltitude * 0.9,
+                maxCenterCoordinateDistance: targetAltitude * 1.1
             )
             uiView.setCameraZoomRange(zoomRange, animated: true)
             
-            // Apply pitch while maintaining tracking
+            // Apply pitch and altitude gently
             let newCamera = uiView.camera
+            newCamera.altitude = targetAltitude
             newCamera.pitch = targetPitch
             uiView.setCamera(newCamera, animated: true)
         }

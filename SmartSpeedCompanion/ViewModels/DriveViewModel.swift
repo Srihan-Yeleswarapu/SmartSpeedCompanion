@@ -98,6 +98,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
             await ArizonaSpeedLimitService.shared.loadDataIfNeeded()
         }
 
+        // Setup Audio Session once
+        setupAudioSession()
+
         // Setup Completer
 
         completer.delegate = self
@@ -509,21 +512,33 @@ public final class DriveViewModel: NSObject, ObservableObject {
         )
     }
     
+    private func setupAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            print("[DriveViewModel] Audio Session Setup Error: \(error)")
+        }
+    }
+
     private func announce(_ message: String) {
         let voiceEnabled = UserDefaults.standard.bool(forKey: "voiceNavEnabled")
         guard voiceEnabled else { return }
         
         DebugLogger.shared.log("NAV VOICE: \(message)")
         
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            print("[DriveViewModel] Audio Error: \(error)")
-        }
+        // Ensure session is active before speaking
+        try? AVAudioSession.sharedInstance().setActive(true)
         
         let utterance = AVSpeechUtterance(string: message)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        
+        // Pick a premium voice if possible
+        if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
+            utterance.voice = premiumVoice
+        } else {
+            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        }
+        
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.pitchMultiplier = 1.0
         utterance.volume = 1.0
