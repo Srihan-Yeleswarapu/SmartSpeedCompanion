@@ -30,6 +30,7 @@ public actor ArizonaSpeedLimitService {
         let miny: Double
         let maxy: Double
         let limit: Int
+        let routeId: String?
         
         var area: Double {
             return (maxx - minx) * (maxy - miny)
@@ -162,6 +163,7 @@ public actor ArizonaSpeedLimitService {
         }
 
         var closestLimit: Int?
+        var closestRouteId: String?
         var minDistance: CLLocationDistance = 60.0 // Reduced from 80m to be even more strict.
         var smallestArea: Double = Double.infinity
         
@@ -184,10 +186,12 @@ public actor ArizonaSpeedLimitService {
                 if distance < minDistance - 0.1 {
                     minDistance = distance
                     closestLimit = segment.limit
+                    closestRouteId = segment.routeId
                     smallestArea = segment.area
                 } else if distance <= 0.1 { 
                     if segment.area < smallestArea {
                         closestLimit = segment.limit
+                        closestRouteId = segment.routeId
                         smallestArea = segment.area
                     }
                 }
@@ -195,7 +199,8 @@ public actor ArizonaSpeedLimitService {
         }
         
         if let limit = closestLimit, limit > 0 { 
-            DebugLogger.shared.log("MATCH: \(limit) mph (\(Int(minDistance))m)")
+            let roadName = closestRouteId ?? "Unknown Road"
+            DebugLogger.shared.log("MATCH: \(limit) mph on \(roadName) (\(Int(minDistance))m away)")
             return limit 
         }
         
@@ -213,10 +218,8 @@ public actor ArizonaSpeedLimitService {
             return cached
         }
         
-        // Query database using the deterministic grid center, 
-        // to ensure cache results are always consistent regardless of the exact 
-        // coordinate that triggered the cache miss.
         let segments = queryDatabase(lat: latK, lon: lonK)
+        DebugLogger.shared.log("CACHE: Loaded \(segments.count) road segments for grid \(key)")
         spatialCache[key] = segments
         return segments
     }
@@ -229,7 +232,7 @@ public actor ArizonaSpeedLimitService {
         var segments: [RoadSegment] = []
         
         let sql = """
-            SELECT a.SpeedLimit, b.minx, b.maxx, b.miny, b.maxy
+            SELECT a.SpeedLimit, b.minx, b.maxx, b.miny, b.maxy, a.RouteId
             FROM SpeedLimit_2024 a
             JOIN st_spindex__SpeedLimit_2024_SHAPE b ON a.OBJECTID = b.pkid
             WHERE ? <= b.maxx AND ? >= b.minx
@@ -250,8 +253,9 @@ public actor ArizonaSpeedLimitService {
                 let maxx = sqlite3_column_double(stmt, 2)
                 let miny = sqlite3_column_double(stmt, 3)
                 let maxy = sqlite3_column_double(stmt, 4)
+                let routeId = sqlite3_column_text(stmt, 5).map { String(cString: $0) }
                 
-                segments.append(RoadSegment(minx: minx, maxx: maxx, miny: miny, maxy: maxy, limit: limit))
+                segments.append(RoadSegment(minx: minx, maxx: maxx, miny: miny, maxy: maxy, limit: limit, routeId: routeId))
             }
             sqlite3_finalize(stmt)
         } else {

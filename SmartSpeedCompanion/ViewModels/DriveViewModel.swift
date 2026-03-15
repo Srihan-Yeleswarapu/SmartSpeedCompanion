@@ -527,29 +527,21 @@ public final class DriveViewModel: NSObject, ObservableObject {
 
     private func announce(_ message: String) {
         // Default to true if not set
-        let voiceEnabled = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool ?? true
+        let rawVoiceVal = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool
+        let voiceEnabled = rawVoiceVal ?? true
+        
+        DebugLogger.shared.log("AUDIO STATE: enabled=\(voiceEnabled), msg='\(message)'")
+        
         guard voiceEnabled, !message.isEmpty else { 
-            DebugLogger.shared.log("NAV VOICE SKIPPED: \(message)")
             return 
         }
         
-        DebugLogger.shared.log("NAV VOICE QUEUED: \(message)")
-        
-        let utterance = AVSpeechUtterance(string: message)
-        if let voice = AVSpeechSynthesisVoice(language: "en-US") {
-            utterance.voice = voice
-        }
-        
-        DebugLogger.shared.log("NAV VOICE ATTEMPT: \(message)")
-        
         // Ensure session is correctly categorized and active EVERY time before speaking
         do {
-            // Mix with others allows it to work even if other apps are playing audio, duck others lowers their volume
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers, .defaultToSpeaker])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            DebugLogger.shared.log("AUDIO REDO FAIL: \(error.localizedDescription)")
-            print("[DriveViewModel] Audio Session Error: \(error)")
+            DebugLogger.shared.log("AUDIO SESSION ERROR: \(error.localizedDescription)")
         }
         
         let utterance = AVSpeechUtterance(string: message)
