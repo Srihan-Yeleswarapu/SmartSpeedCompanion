@@ -10,6 +10,9 @@ public struct SettingsView: View {
     @AppStorage("measurementSystem") var measurementSystem: String = "Imperial"
     
     @EnvironmentObject var driveViewModel: DriveViewModel
+    @EnvironmentObject var appState: AppState
+    
+    @State private var showingTutorial = false
     
     let units = ["mph", "km/h"]
     let systems = ["Imperial", "Metric"]
@@ -97,12 +100,33 @@ public struct SettingsView: View {
                     }
                 }
                 .listRowBackground(DesignSystem.alertRed.opacity(0.15))
+                
+                Section(header: Text("ACCOUNT").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                    Button(action: {
+                        showingTutorial = true
+                    }) {
+                        Text("Replay Tutorial")
+                            .foregroundColor(.white)
+                    }
+                    
+                    Button(action: {
+                        appState.authManager.signOut()
+                    }) {
+                        Text("Sign Out")
+                            .foregroundColor(DesignSystem.alertRed)
+                    }
+                }
+                .listRowBackground(DesignSystem.bgPanel)
             }
             .scrollContentBackground(.hidden)
             .background(DesignSystem.bgDeep.ignoresSafeArea())
             .navigationTitle("SETTINGS")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
+            .fullScreenCover(isPresented: $showingTutorial) {
+                TutorialView(isReplaying: true)
+                    .environmentObject(appState)
+            }
         }
     }
 }

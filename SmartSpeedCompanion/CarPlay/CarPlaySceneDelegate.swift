@@ -127,4 +127,3 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         navigationRoot?.showTurnByTurnList()
     }
 }
-
