@@ -131,7 +131,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         let alert = CPNavigationAlert(
             titleVariants: ["⚠ SLOW DOWN", "Speeding +\(diff)"],
             subtitleVariants: ["Limit is \(limit) MPH. Watch your speed."],
-            imageSet: nil,
+            image: nil,
             primaryAction: action,
             secondaryAction: nil,
             duration: 5.0

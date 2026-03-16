@@ -136,16 +136,16 @@ public struct LiveMapView: UIViewRepresentable {
             targetPitch = 45
             
             switch speed {
-            case 2.. <5:
+            case 2..<5:
                 targetAltitude = 350
                 zoomReason = "nav-slow"
-            case 5.. <20:
+            case 5..<20:
                 targetAltitude = 500
                 zoomReason = "city"
-            case 20.. <40:
+            case 20..<40:
                 targetAltitude = 900
                 zoomReason = "suburban"
-            case 40.. <60:
+            case 40..<60:
                 targetAltitude = 1400
                 zoomReason = "highway"
             default:
