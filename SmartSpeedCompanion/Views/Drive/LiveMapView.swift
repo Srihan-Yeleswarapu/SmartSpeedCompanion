@@ -125,48 +125,47 @@ public struct LiveMapView: UIViewRepresentable {
         // This prevents the most common jitter: GPS noise causing speed to bounce
         // between 0 and a small value, triggering continuous zoom transitions.
         if speed < 2.0 {
-            DebugLogger.shared.log("ZOOM SKIPPED [STATIONARY]: speed=\(String(format: "%.1f", speed)) mph, current=\(Int(currentAltitude))m")
             return
         }
         
         var targetAltitude: Double = 1000
         var targetPitch: Double = 0
-        var zoomReason = "unknown"
+        var zoomReason = "unk"
         
         if isNavigating {
             targetPitch = 45
             
             switch speed {
-            case 2..<5:
+            case 2.. <5:
                 targetAltitude = 350
-                zoomReason = "nav-slow (<5mph)"
-            case 5..<20:
+                zoomReason = "nav-slow"
+            case 5.. <20:
                 targetAltitude = 500
-                zoomReason = "nav-city (5-20mph)"
-            case 20..<40:
+                zoomReason = "city"
+            case 20.. <40:
                 targetAltitude = 900
-                zoomReason = "nav-suburban (20-40mph)"
-            case 40..<60:
+                zoomReason = "suburban"
+            case 40.. <60:
                 targetAltitude = 1400
-                zoomReason = "nav-highway (40-60mph)"
+                zoomReason = "highway"
             default:
                 targetAltitude = 2000
-                zoomReason = "nav-fast (>60mph)"
+                zoomReason = "fast"
             }
             
-            // Turn proximity override — zoom in near turns
+            // Turn proximity override
             if distanceToTurn < 100 {
                 targetAltitude = min(targetAltitude, 350)
-                zoomReason += " +turnClose(<100m)"
+                zoomReason += "+turn100"
             } else if distanceToTurn < 250 {
                 targetAltitude = min(targetAltitude, 500)
-                zoomReason += " +turnNear(<250m)"
+                zoomReason += "+turn250"
             } else if distanceToTurn < 500 {
                 targetAltitude = min(targetAltitude, 800)
-                zoomReason += " +turnApproach(<500m)"
+                zoomReason += "+turn500"
             }
             
-            // Destination approach — only if userLoc is valid
+            // Destination approach
             if let dest = viewModel.destination {
                 let destLoc = dest.placemark.location ?? CLLocation()
                 let userLoc = uiView.userLocation.location ?? viewModel.locationManager.latestLocation
@@ -175,40 +174,39 @@ public struct LiveMapView: UIViewRepresentable {
                     if distToDest < 150 {
                         targetAltitude = 200
                         targetPitch = 30
-                        zoomReason = "dest-arrival(<150m)"
+                        zoomReason = "arrival"
                     } else if distToDest < 400 {
                         targetAltitude = min(targetAltitude, 350)
                         targetPitch = 35
-                        zoomReason += " +destApproach(<400m)"
+                        zoomReason += "+dest400"
                     }
                 }
             }
             
-            // Highway / complex interchange — reveal surrounding area
+            // Interchange override
             let instruction = viewModel.nextManeuverInstruction.lowercased()
             if instruction.contains("exit") || instruction.contains("merge") ||
                instruction.contains("ramp") || instruction.contains("fork") {
                 targetAltitude = max(targetAltitude, 600)
-                zoomReason += " +interchange"
+                zoomReason += "+ramp"
             }
             
-            // Long straight road at high speed — zoom out for situational awareness
+            // Long straight
             if distanceToTurn > 2000 && speed > 50 {
                 targetAltitude = max(targetAltitude, 3000)
-                zoomReason += " +longStraight"
+                zoomReason += "+straight"
             }
             
         } else if isRecording {
             targetPitch = 35
             if speed > 60 {
-                targetAltitude = 3000; zoomReason = "rec-fast(>60mph)"
+                targetAltitude = 3000; zoomReason = "rec-fast"
             } else if speed > 30 {
-                targetAltitude = 1600; zoomReason = "rec-mid(30-60mph)"
+                targetAltitude = 1600; zoomReason = "rec-mid"
             } else {
-                targetAltitude = 900; zoomReason = "rec-slow(<30mph)"
+                targetAltitude = 900; zoomReason = "rec-slow"
             }
         } else {
-            // Idle/Browsing overview — no pitch, moderate height
             targetPitch = 0
             targetAltitude = 2000
             zoomReason = "idle"
@@ -216,14 +214,12 @@ public struct LiveMapView: UIViewRepresentable {
         
         // ─── DEAD-BAND (STRICT) ──────────────────────────────────────────────────
         // Increase thresholds to prevent constant camera movement.
-        // 500m altitude / 15° pitch is noticeable but not jittery.
+        // 800m altitude / 15° pitch is very stable.
         let altDiff = abs(currentAltitude - targetAltitude)
         let pitchDiff = abs(currentPitch - targetPitch)
         
-        if altDiff > 500 || pitchDiff > 15 {
-            // Log only on SIGNIFICANT jumps, not every micro-calc
-            // DebugLogger.shared.log("ZOOM: \(Int(currentAltitude))->\(Int(targetAltitude))m")
-            DebugLogger.shared.log("ZOOM CHANGE [\(zoomReason)]: \(Int(currentAltitude))->\(Int(targetAltitude))m | speed=\(String(format:"%.1f",speed)) dist=\(Int(distanceToTurn))m nav=\(isNavigating) rec=\(isRecording)")
+        if altDiff > 800 || pitchDiff > 15 {
+            DebugLogger.shared.log("CAM [\(zoomReason)]: \(Int(currentAltitude))m -> \(Int(targetAltitude))m | spd=\(Int(speed)) dist=\(Int(distanceToTurn))m")
             
             let newCamera = uiView.camera.copy() as! MKMapCamera
             newCamera.centerCoordinateDistance = targetAltitude
