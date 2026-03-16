@@ -313,7 +313,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
 
         if #available(iOS 16.1, *) {
-            LiveActivityManager.shared.startActivity(with: route)
+            LiveActivityManager.shared.startActivity(sessionStartDate: sessionStartTime ?? Date())
         }
     }
 
@@ -523,7 +523,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let remainingDistance = route.steps[currentStepIndex...].reduce(0) { $0 + $1.distance }
         let progressPercent = 1.0 - (remainingDistance / route.distance)
         let totalExpectedTime = route.expectedTravelTime
-        let elapsed = Date().timeIntervalSince(sessionStartTime ?? Date())
         
         // Simple smoothing for ETA
         let newETA = Date().addingTimeInterval(max(30, totalExpectedTime * (1.0 - progressPercent)))

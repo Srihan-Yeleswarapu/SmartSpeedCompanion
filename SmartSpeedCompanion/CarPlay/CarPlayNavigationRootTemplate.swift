@@ -133,12 +133,11 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
             subtitleVariants: ["Limit is \(limit) MPH. Watch your speed."],
             imageSet: nil,
             primaryAction: action,
-            secondaryAction: nil,
-            duration: 5.0
+            secondaryAction: nil
         )
         
         isAlertPresented = true
-        mapTemplate.present(navigationAlert: alert, animated: true)
+        mapTemplate.present(navigationAlert: alert, animated: true, for: 5.0)
     }
     
     // MARK: - Search
