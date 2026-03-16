@@ -21,7 +21,13 @@ public class AuthenticationManager: ObservableObject {
         if let uidData = KeychainHelper.standard.read(service: serviceName, account: uidAccount),
            let uid = String(data: uidData, encoding: .utf8), !uid.isEmpty {
             self.isAuthenticated = true
-            // Real check in background
+        }
+        
+        // Ensure Firebase is actually configured before calling Auth.auth()
+        // This prevents launch crashes if static initialization order is unpredictable.
+        guard let _ = try? FirebaseApp.app() else {
+            print("AuthenticationManager: Firebase not yet configured. Skipping auth check.")
+            return
         }
         
         // Listen to actual Firebase Auth state

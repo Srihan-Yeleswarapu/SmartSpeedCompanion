@@ -45,6 +45,8 @@ targets:
       # Explicitly declare DB as a resource to be copied into the app bundle
       - path: SmartSpeedCompanion/Resources/ArizonaSpeedLimits.sqlite
         buildPhase: resources
+      - path: SmartSpeedCompanion/Configuration/GoogleService-Info.plist
+        buildPhase: resources
 
     # NOTE: LiveActivities and Widgets folders are excluded from main
     # app sources for now — they compile as separate extension targets
@@ -52,7 +54,6 @@ targets:
 
     resources:
       - path: SmartSpeedCompanion/Resources/Assets.xcassets
-      - path: SmartSpeedCompanion/Configuration/GoogleService-Info.plist
 
     entitlements:
       path: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
@@ -70,9 +71,6 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
           UISceneConfigurations:
-            UIWindowSceneSessionRoleApplication:
-              - UISceneConfigurationName: Default Configuration
-                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
             CPTemplateApplicationSceneSessionRoleApplication:
               - UISceneConfigurationName: CarPlay Configuration
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate

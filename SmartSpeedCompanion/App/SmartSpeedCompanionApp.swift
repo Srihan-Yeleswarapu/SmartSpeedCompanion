@@ -9,26 +9,45 @@ struct SpeedSenseApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     // Create shared container so background and app intents work smoothly
-    let container: ModelContainer
+    let container: ModelContainer?
     
     init() {
-        // MUST be called before any static properties (like sharedAppState) are accessed
+        // 1. MUST be called first to initialize Firebase
         FirebaseApp.configure()
         
+        // 2. Initialize SwiftData
         do {
-            container = try ModelContainer(for: DriveSession.self, SpeedReading.self)
+            let container = try ModelContainer(for: DriveSession.self, SpeedReading.self)
+            self.container = container
+            // Safely set the model context
             AppDelegate.sharedDriveViewModel.sessionRecorder.setModelContext(container.mainContext)
         } catch {
-            fatalError("Failed to initialize SwiftData model container.")
+            print("CRITICAL: SwiftData Initialization Failed: \(error)")
+            self.container = nil
         }
     }
     
     var body: some Scene {
         WindowGroup {
-            AppRootView()
-                .environmentObject(AppDelegate.sharedAppState)
-                .environmentObject(AppDelegate.sharedDriveViewModel)
-                .modelContainer(container) // Share same exact container with SwiftData queries
+            if let container = container {
+                AppRootView()
+                    .environmentObject(AppDelegate.sharedAppState)
+                    .environmentObject(AppDelegate.sharedDriveViewModel)
+                    .modelContainer(container)
+                    .preferredColorScheme(.dark)
+            } else {
+                VStack(spacing: 20) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.largeTitle)
+                        .foregroundColor(.red)
+                    Text("Initialization Error")
+                        .font(.headline)
+                    Text("The app database could not be loaded. Please try again later.")
+                        .font(.subheadline)
+                        .padding()
+                }
+                .preferredColorScheme(.dark)
+            }
         }
     }
 }

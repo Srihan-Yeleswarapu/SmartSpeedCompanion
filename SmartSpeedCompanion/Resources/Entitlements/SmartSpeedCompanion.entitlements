@@ -6,17 +6,9 @@
     <true/>
     <key>com.apple.developer.carplay-audio</key>
     <true/>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-    <key>com.apple.developer.icloud-container-identifiers</key>
+    <key>keychain-access-groups</key>
     <array>
-        <string>iCloud.com.speedsense.app</string>
+        <string>$(AppIdentifierPrefix)com.speedsense.app</string>
     </array>
-    <key>com.apple.developer.ubiquity-kvstore-identifier</key>
-    <string>$(TeamIdentifierPrefix)com.speedsense.app</string>
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.developer.appleseed.membership</key>
-    <true/>
 </dict>
 </plist>
