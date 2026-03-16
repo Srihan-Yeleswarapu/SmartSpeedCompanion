@@ -245,6 +245,7 @@ public actor ArizonaSpeedLimitService {
 
     private func queryDatabase(lat: Double, lon: Double) -> [RoadSegment] {
         guard let db = db else { return [] }
+        let searchBuffer = gridPrecision
         var segments: [RoadSegment] = []
         
         let sql = """
@@ -257,7 +258,6 @@ public actor ArizonaSpeedLimitService {
         
         var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-            let searchBuffer = gridPrecision
             sqlite3_bind_double(stmt, 1, lon - searchBuffer)
             sqlite3_bind_double(stmt, 2, lon + searchBuffer)
             sqlite3_bind_double(stmt, 3, lat - searchBuffer)
