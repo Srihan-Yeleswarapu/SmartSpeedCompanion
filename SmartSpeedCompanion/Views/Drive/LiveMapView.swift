@@ -115,83 +115,117 @@ public struct LiveMapView: UIViewRepresentable {
         let speed = viewModel.speed
         let distanceToTurn = viewModel.distanceToNextTurn
         let isNavigating = viewModel.isNavigating
+        let isRecording = viewModel.isRecording
+        
+        let currentAltitude = uiView.camera.centerCoordinateDistance
+        let currentPitch = Double(uiView.camera.pitch)
+        
+        // ─── STATIONARY GUARD ──────────────────────────────────────────────────
+        // If the device is not moving, never change the zoom level.
+        // This prevents the most common jitter: GPS noise causing speed to bounce
+        // between 0 and a small value, triggering continuous zoom transitions.
+        if speed < 2.0 {
+            DebugLogger.shared.log("ZOOM SKIPPED [STATIONARY]: speed=\(String(format: "%.1f", speed)) mph, current=\(Int(currentAltitude))m")
+            return
+        }
         
         var targetAltitude: Double = 1000
         var targetPitch: Double = 0
+        var zoomReason = "unknown"
         
         if isNavigating {
             targetPitch = 45
             
             switch speed {
-            case 0..<5:
-                targetAltitude = 280
+            case 2..<5:
+                targetAltitude = 350
+                zoomReason = "nav-slow (<5mph)"
             case 5..<20:
-                targetAltitude = 450
+                targetAltitude = 500
+                zoomReason = "nav-city (5-20mph)"
             case 20..<40:
-                targetAltitude = 800
+                targetAltitude = 900
+                zoomReason = "nav-suburban (20-40mph)"
             case 40..<60:
-                targetAltitude = 1200
+                targetAltitude = 1400
+                zoomReason = "nav-highway (40-60mph)"
             default:
-                targetAltitude = 1800
+                targetAltitude = 2000
+                zoomReason = "nav-fast (>60mph)"
             }
             
-            // Turn proximity override — smoother transitions
+            // Turn proximity override — zoom in near turns
             if distanceToTurn < 100 {
-                targetAltitude = min(targetAltitude, 280)
+                targetAltitude = min(targetAltitude, 350)
+                zoomReason += " +turnClose(<100m)"
             } else if distanceToTurn < 250 {
-                targetAltitude = min(targetAltitude, 450)
+                targetAltitude = min(targetAltitude, 500)
+                zoomReason += " +turnNear(<250m)"
             } else if distanceToTurn < 500 {
-                targetAltitude = min(targetAltitude, 750)
+                targetAltitude = min(targetAltitude, 800)
+                zoomReason += " +turnApproach(<500m)"
             }
             
-            // Destination approach
+            // Destination approach — only if userLoc is valid
             if let dest = viewModel.destination {
                 let destLoc = dest.placemark.location ?? CLLocation()
-                let distToDest = uiView.userLocation.location?.distance(from: destLoc) ?? 10000
-                if distToDest < 150 {
-                    targetAltitude = 100
-                    targetPitch = 30
-                } else if distToDest < 300 {
-                    targetAltitude = 180
-                    targetPitch = 35
+                let userLoc = uiView.userLocation.location ?? viewModel.locationManager.latestLocation
+                if let userLoc = userLoc {
+                    let distToDest = userLoc.distance(from: destLoc)
+                    if distToDest < 150 {
+                        targetAltitude = 200
+                        targetPitch = 30
+                        zoomReason = "dest-arrival(<150m)"
+                    } else if distToDest < 400 {
+                        targetAltitude = min(targetAltitude, 350)
+                        targetPitch = 35
+                        zoomReason += " +destApproach(<400m)"
+                    }
                 }
             }
             
-            // Highway / complex interchange — show a bit more
+            // Highway / complex interchange — reveal surrounding area
             let instruction = viewModel.nextManeuverInstruction.lowercased()
             if instruction.contains("exit") || instruction.contains("merge") ||
                instruction.contains("ramp") || instruction.contains("fork") {
-                targetAltitude = min(targetAltitude, 500)
+                targetAltitude = max(targetAltitude, 600)
+                zoomReason += " +interchange"
             }
             
-            // Long straight road at high speed — zoom out
+            // Long straight road at high speed — zoom out for situational awareness
             if distanceToTurn > 2000 && speed > 50 {
                 targetAltitude = max(targetAltitude, 3000)
+                zoomReason += " +longStraight"
             }
             
-        } else if viewModel.isRecording {
-            // Driving without navigation
+        } else if isRecording {
             targetPitch = 35
-            targetAltitude = speed > 60 ? 3000 : (speed > 30 ? 1600 : 900)
+            if speed > 60 {
+                targetAltitude = 3000; zoomReason = "rec-fast(>60mph)"
+            } else if speed > 30 {
+                targetAltitude = 1600; zoomReason = "rec-mid(30-60mph)"
+            } else {
+                targetAltitude = 900; zoomReason = "rec-slow(<30mph)"
+            }
         } else {
-            // Idle/Browsing overview
+            // Idle/Browsing overview — no pitch, moderate height
             targetPitch = 0
             targetAltitude = 2000
+            zoomReason = "idle"
         }
         
-        // Only animate if there is a meaningful difference (prevents micro-jitter and battery drain)
-        let currentAltitude = uiView.camera.centerCoordinateDistance
-        let currentPitch = Double(uiView.camera.pitch)
+        // ─── DEAD-BAND ─────────────────────────────────────────────────────────
+        // Only animate if the change is large enough to be noticeable.
+        // 200m altitude / 10° pitch threshold prevents micro-jitter from speed noise.
         let altDiff = abs(currentAltitude - targetAltitude)
         let pitchDiff = abs(currentPitch - targetPitch)
         
-        // Increase thresholds to prevent constant camera updates which heat up the device
-        if altDiff > 120 || pitchDiff > 10 {
+        if altDiff > 200 || pitchDiff > 10 {
+            DebugLogger.shared.log("ZOOM CHANGE [\(zoomReason)]: \(Int(currentAltitude))->\(Int(targetAltitude))m | speed=\(String(format:"%.1f",speed)) dist=\(Int(distanceToTurn))m nav=\(isNavigating) rec=\(isRecording)")
+            
             let newCamera = uiView.camera.copy() as! MKMapCamera
             newCamera.centerCoordinateDistance = targetAltitude
             newCamera.pitch = CGFloat(targetPitch)
-            
-            // Maintain tracking if possible, though setCamera usually breaks it
             uiView.setCamera(newCamera, animated: true)
         }
     }
