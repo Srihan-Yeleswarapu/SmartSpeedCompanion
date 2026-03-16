@@ -65,9 +65,29 @@ public struct DeveloperTabView: View {
                 
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button(action: {
-                        DebugLogger.shared.log("Manual test log triggered")
+                        Task { @MainActor in
+                            let vm = AppDelegate.sharedDriveViewModel
+                            guard let loc = vm.locationManager.latestLocation else {
+                                DebugLogger.shared.log("Manual Fetch: No current location")
+                                return
+                            }
+                            
+                            DebugLogger.shared.log("Manual Fetch: Triggered at \(loc.coordinate.latitude), \(loc.coordinate.longitude)")
+                            
+                            let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
+                            let conversionFactor = isMetric ? 3.6 : 2.23694
+                            let currentSpeed = max(0, loc.speed * conversionFactor)
+                            let currentSpeedMph = isMetric ? currentSpeed * 0.621371 : currentSpeed
+                            let carHeading = loc.course >= 0 ? loc.course : nil
+                            
+                            _ = await SmartSpeedLimitService.shared.updateSpeedLimit(
+                                at: loc.coordinate,
+                                heading: carHeading,
+                                currentSpeedMph: currentSpeedMph
+                            )
+                        }
                     }) {
-                        Image(systemName: "plus.circle")
+                        Image(systemName: "play.circle.fill")
                     }
                 }
             }

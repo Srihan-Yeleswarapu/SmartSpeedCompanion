@@ -50,6 +50,8 @@ public final class SpeedEngine: ObservableObject {
                 
                 self.limit = currentLimit
                 updateStatus(speed: currentSpeed, limit: Double(currentLimit))
+            } else {
+                DebugLogger.shared.log("SpeedEngine: GPS too inaccurate (\(Int(location.horizontalAccuracy))m)")
             }
         }
     }

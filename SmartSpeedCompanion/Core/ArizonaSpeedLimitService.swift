@@ -174,7 +174,10 @@ public actor ArizonaSpeedLimitService {
             let dx = segment.maxx - segment.minx
             let dy = segment.maxy - segment.miny
             let diagonalDegrees = sqrt(dx*dx + dy*dy)
-            if diagonalDegrees > 0.0012 { continue }
+            
+            // CRITICAL FIX: Relaxed from 0.0012 to 0.1 (~11km). 
+            // 0.0012 was filtering out all highways and major roads because they are longer than 130m.
+            if diagonalDegrees > 0.1 { continue }
             
             let distance = segment.distance(to: coordinate)
             guard distance <= maxSnappingDistance else { continue }
@@ -212,9 +215,11 @@ public actor ArizonaSpeedLimitService {
         
         if let limit = closestLimit, limit > 0 { 
             self.lastSegmentId = closestRouteId
+            DebugLogger.shared.log("AZ Data: Found limit \(limit) on \(closestRouteId ?? "unknown road")")
             return limit 
         }
         
+        DebugLogger.shared.log("AZ Data: No segment found within \(Int(maxSnappingDistance))m of [\(coordinate.latitude), \(coordinate.longitude)]")
         throw URLError(.resourceUnavailable)
     }
 
@@ -274,6 +279,10 @@ public actor ArizonaSpeedLimitService {
             DebugLogger.shared.log("DB QUERY ERR: \(errmsg)")
             print("[AZ Data] Query preparation failed: \(errmsg)")
             sqlite3_finalize(stmt)
+        }
+        
+        if segments.isEmpty {
+            DebugLogger.shared.log("DB: Zero matches in grid cell. Check if you are in Arizona.")
         }
         
         return segments
