@@ -359,13 +359,18 @@ fileprivate struct SpeedHUDPill: View {
                         .font(.system(size: isLandscape ? 44 : 56, weight: .black, design: .rounded))
                         .foregroundColor(DesignSystem.colorForStatus(driveViewModel.status))
                         .contentTransition(.numericText())
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .minimumScaleFactor(0.9)
                     
                     Text(UserDefaults.standard.string(forKey: "measurementSystem") == "Metric" ? "KMH" : "MPH")
                         .font(.system(size: isLandscape ? 12 : 14, weight: .black))
                         .foregroundColor(.white.opacity(0.4))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
-            .frame(minWidth: isLandscape ? 80 : 100, alignment: .leading) // Prevent squishing against limit sign or buttons
+            .frame(minWidth: isLandscape ? 100 : 130, alignment: .leading) // Prevent squishing against limit sign or buttons
             
             Spacer(minLength: 0)
             
