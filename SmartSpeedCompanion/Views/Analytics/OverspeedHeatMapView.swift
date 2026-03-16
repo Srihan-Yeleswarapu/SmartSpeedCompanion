@@ -15,25 +15,27 @@ public struct OverspeedHeatMapView: UIViewRepresentable {
     }
     
     public func updateUIView(_ uiView: MKMapView, context: Context) {
-        // Simple map diffing strategy (clear and replace).
-        // Since analytics is typically static per-session view, simple replacement is acceptable here.
         uiView.removeOverlays(uiView.overlays)
         
         var rect = MKMapRect.null
         
-        for reading in session.readings {
+        // Limit to at most 1,000 points to prevent MapKit overlay performance death
+        let readings = session.readings
+        let count = readings.count
+        let strideValue = max(1, count / 1000)
+        
+        for i in stride(from: 0, to: count, by: strideValue) {
+            let reading = readings[i]
             let coord = CLLocationCoordinate2D(latitude: reading.latitude, longitude: reading.longitude)
             let point = MKMapPoint(coord)
             let pointRect = MKMapRect(x: point.x, y: point.y, width: 0.1, height: 0.1)
             rect = rect.union(pointRect)
             
-            // MapKit Circles
             let circle = HeatCircle(center: coord, radius: 12, isOver: reading.overLimit)
             uiView.addOverlay(circle)
         }
         
         if !rect.isNull {
-            // First load zoom fix
             let padding = UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40)
             uiView.setVisibleMapRect(rect, edgePadding: padding, animated: false)
         }

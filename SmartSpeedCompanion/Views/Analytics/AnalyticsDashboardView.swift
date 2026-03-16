@@ -69,11 +69,16 @@ public struct AnalyticsDashboardView: View {
         }
         .preferredColorScheme(.dark)
         .onAppear {
-            // Auto-purge sessions older than 30 days (non-starred)
-            viewModel.purgeOldSessions(sessions: sessions, context: modelContext)
-            // Auto-select most recent session if none selected
-            if viewModel.selectedSession == nil, let first = sessions.first {
-                viewModel.selectSession(first)
+            Task { @MainActor in
+                // Small delay to ensure view is fully in hierarchy before context operations
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                
+                // Auto-purge sessions older than 30 days (non-starred)
+                viewModel.purgeOldSessions(sessions: sessions, context: modelContext)
+                // Auto-select most recent session if none selected
+                if viewModel.selectedSession == nil, let first = sessions.first {
+                    viewModel.selectSession(first)
+                }
             }
         }
         // Bottom sheet session picker
