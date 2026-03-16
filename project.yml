@@ -7,6 +7,26 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
 
+packages:
+  FirebaseCore:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: 12.0.0
+  FirebaseAuth:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: 12.0.0
+  FirebaseFirestore:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: 12.0.0
+  FirebaseFirestoreSwift:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: 12.0.0
+  FirebaseAnalytics:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: 12.0.0
+  FirebaseAnalyticsSwift:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: 12.0.0
+
 settings:
   base:
     SWIFT_VERSION: "5.9"
@@ -47,7 +67,7 @@ targets:
 
     resources:
       - path: SmartSpeedCompanion/Resources/Assets.xcassets
-      #- path: SmartSpeedCompanion/Resources/
+      - path: SmartSpeedCompanion/Configuration/GoogleService-Info.plist
 
     entitlements:
       path: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
@@ -97,7 +117,13 @@ targets:
 
     # SpeedWidget and SpeedLiveActivity removed from dependencies
     # until iOS 26 / Xcode 16 runner is available on GitHub Actions
-    dependencies: []
+    dependencies:
+      - package: FirebaseCore
+      - package: FirebaseAuth
+      - package: FirebaseFirestore
+      - package: FirebaseFirestoreSwift
+      - package: FirebaseAnalytics
+      - package: FirebaseAnalyticsSwift
 
 schemes:
   SmartSpeedCompanion:

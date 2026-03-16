@@ -1,6 +1,8 @@
 import Foundation
 import AuthenticationServices
-import CryptoKit
+import FirebaseAuth
+import FirebaseFirestore
+import UIKit // For device info if needed
 
 public class AuthenticationManager: ObservableObject {
     @Published public var isAuthenticated: Bool = false
@@ -8,23 +10,35 @@ public class AuthenticationManager: ObservableObject {
     @Published public var initialAuthChecked: Bool = false
     
     private let serviceName = "com.speedsense.auth"
+    private let uidAccount = "userUID"
     
     public init() {
         checkAuthStatus()
     }
     
     public func checkAuthStatus() {
-        if let data = KeychainHelper.standard.read(service: serviceName, account: "userEmail"),
-           let email = String(data: data, encoding: .utf8) {
+        // Fast local check via Keychain for perceived performance
+        if let uidData = KeychainHelper.standard.read(service: serviceName, account: uidAccount),
+           let uid = String(data: uidData, encoding: .utf8), !uid.isEmpty {
+            self.isAuthenticated = true
+            // Real check in background
+        }
+        
+        // Listen to actual Firebase Auth state
+        Auth.auth().addStateDidChangeListener { [weak self] auth, user in
+            guard let self = self else { return }
+            
             DispatchQueue.main.async {
-                self.isAuthenticated = true
-                self.currentUserEmail = email
-                self.initialAuthChecked = true
-            }
-        } else {
-            DispatchQueue.main.async {
-                self.isAuthenticated = false
-                self.currentUserEmail = nil
+                if let user = user {
+                    self.isAuthenticated = true
+                    self.currentUserEmail = user.email
+                    self.saveUIDToKeychain(uid: user.uid)
+                } else {
+                    self.isAuthenticated = false
+                    self.currentUserEmail = nil
+                    KeychainHelper.standard.delete(service: self.serviceName, account: self.uidAccount)
+                }
+                
                 self.initialAuthChecked = true
             }
         }
@@ -41,12 +55,32 @@ public class AuthenticationManager: ObservableObject {
             return
         }
         
-        saveUser(email: email, password: password)
-        
-        DispatchQueue.main.async {
-            self.isAuthenticated = true
-            self.currentUserEmail = email
-            completion(.success(()))
+        // Firebase Auth Create User
+        Auth.auth().createUser(withEmail: email, password: password) { [weak self] authResult, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            
+            guard let user = authResult?.user else {
+                completion(.failure(AuthError.userNotFound))
+                return
+            }
+            
+            // Create Firestore Record
+            self?.createUserDocument(uid: user.uid, email: email, username: username) { error in
+                if let error = error {
+                    // It's a non-fatal error if Firestore fails, but we should log it
+                    print("Error creating user document: \(error)")
+                }
+                
+                DispatchQueue.main.async {
+                    self?.isAuthenticated = true
+                    self?.currentUserEmail = email
+                    self?.saveUIDToKeychain(uid: user.uid)
+                    completion(.success(()))
+                }
+            }
         }
     }
     
@@ -56,28 +90,34 @@ public class AuthenticationManager: ObservableObject {
             return
         }
         
-        if let data = KeychainHelper.standard.read(service: serviceName, account: email),
-           let storedHash = String(data: data, encoding: .utf8) {
-            let passwordHash = hash(password)
-            if passwordHash == storedHash {
-                saveUserSession(email: email)
-                DispatchQueue.main.async {
-                    self.isAuthenticated = true
-                    self.currentUserEmail = email
-                    completion(.success(()))
-                }
-            } else {
-                completion(.failure(AuthError.incorrectPassword))
+        Auth.auth().signIn(withEmail: email, password: password) { [weak self] authResult, error in
+            if let error = error {
+                completion(.failure(error))
+                return
             }
-        } else {
-            // Strict checking, must sign up first
-            completion(.failure(AuthError.userNotFound))
+            
+            guard let user = authResult?.user else {
+                completion(.failure(AuthError.userNotFound))
+                return
+            }
+            
+            DispatchQueue.main.async {
+                self?.isAuthenticated = true
+                self?.currentUserEmail = user.email
+                self?.saveUIDToKeychain(uid: user.uid)
+                completion(.success(()))
+            }
         }
     }
     
+    // Note: To fully integrate Apple Sign In with Firebase, use OAuthProvider. 
+    // This is kept here to not break the UI flow, but creates an anonymous-like session locally.
     public func signInWithApple(credential: ASAuthorizationAppleIDCredential) {
         let email = credential.email ?? "appleuser@apple.com"
-        saveUserSession(email: email)
+        let mockUid = credential.user // Apple's unique user identifier
+        
+        saveUIDToKeychain(uid: mockUid)
+        
         DispatchQueue.main.async {
             self.isAuthenticated = true
             self.currentUserEmail = email
@@ -85,30 +125,45 @@ public class AuthenticationManager: ObservableObject {
     }
     
     public func signOut() {
-        KeychainHelper.standard.delete(service: serviceName, account: "userEmail")
-        DispatchQueue.main.async {
-            self.isAuthenticated = false
-            self.currentUserEmail = nil
+        do {
+            try Auth.auth().signOut()
+            KeychainHelper.standard.delete(service: serviceName, account: uidAccount)
+            
+            DispatchQueue.main.async {
+                self.isAuthenticated = false
+                self.currentUserEmail = nil
+            }
+        } catch {
+            print("Error signing out: \(error)")
         }
     }
     
-    private func saveUser(email: String, password: String) {
-        let passwordHash = hash(password)
-        let hashData = Data(passwordHash.utf8)
-        KeychainHelper.standard.save(hashData, service: serviceName, account: email)
-        saveUserSession(email: email)
+    // MARK: - Firestore Helpers
+    
+    private func createUserDocument(uid: String, email: String, username: String, completion: @escaping (Error?) -> Void) {
+        let db = Firestore.firestore()
+        let userRef = db.collection("users").document(uid)
+        
+        let userData: [String: Any] = [
+            "email": email,
+            "username": username,
+            "subscription": "free",
+            "created": FieldValue.serverTimestamp()
+        ]
+        
+        userRef.setData(userData) { error in
+            completion(error)
+        }
     }
     
-    private func hash(_ password: String) -> String {
-        let inputData = Data(password.utf8)
-        let hashed = SHA256.hash(data: inputData)
-        return hashed.compactMap { String(format: "%02x", $0) }.joined()
+    // MARK: - Local Keychain Auth
+    
+    private func saveUIDToKeychain(uid: String) {
+        let uidData = Data(uid.utf8)
+        KeychainHelper.standard.save(uidData, service: serviceName, account: uidAccount)
     }
     
-    private func saveUserSession(email: String) {
-        let emailData = Data(email.utf8)
-        KeychainHelper.standard.save(emailData, service: serviceName, account: "userEmail")
-    }
+    // MARK: - Validation
     
     public func isValidEmail(_ email: String) -> Bool {
         let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
