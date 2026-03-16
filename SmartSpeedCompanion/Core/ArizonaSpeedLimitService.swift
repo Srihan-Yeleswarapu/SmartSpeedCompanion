@@ -175,15 +175,15 @@ public actor ArizonaSpeedLimitService {
             let dy = segment.maxy - segment.miny
             let diagonalDegrees = sqrt(dx*dx + dy*dy)
             
-            // CRITICAL FIX: Relaxed from 0.0012 to 0.1 (~11km). 
-            // 0.0012 was filtering out all highways and major roads because they are longer than 130m.
-            if diagonalDegrees > 0.1 { continue }
+            // RELAXED: Highway segments in AZ can be very long (50+ miles). 
+            // 0.1 was ~7 miles. 1.0 (~70 miles) is safer for interstates.
+            if diagonalDegrees > 1.0 { continue }
             
             let distance = segment.distance(to: coordinate)
             guard distance <= maxSnappingDistance else { continue }
             
             // --- HEADING AWARENESS LOGIC ---
-            var headingPenalty: Double = 1.0
+            var scoreMultiplier: Double = 1.0
             
             if let carHeading = heading {
                 let isNorthSouth = dy > dx
@@ -193,17 +193,26 @@ public actor ArizonaSpeedLimitService {
                 let normalizedDiff = min(diff, 180 - diff)
                 
                 if normalizedDiff > 40 {
-                    headingPenalty = 6.0 // Stronger penalty for cross-streets
+                    scoreMultiplier *= 8.0 // Heavy penalty for cross-streets
                 } else if normalizedDiff > 20 {
-                    headingPenalty = 2.0 // Mild penalty for diagonal misalignment
+                    scoreMultiplier *= 2.5 // Moderate penalty for diagonal misalignment
+                }
+            }
+
+            // --- VELOCITY MATCHING (EXIT RAMP PROTECTION) ---
+            // If we are driving 65mph, and one segment says 65 and another says 35,
+            // we strongly prefer the 65 even if the 35 is slightly closer (like a ramp).
+            if let currentSpdMph = currentSpeedMph, currentSpdMph > 30 {
+                let speedDiff = abs(Double(segment.limit) - currentSpdMph)
+                if speedDiff > 25 {
+                    scoreMultiplier *= 3.0 // Road limit is very different from current speed
                 }
             }
             
-            // Score = Distance * Penalty
-            // We also give a slight "incumbency bonus" to the current road to prevent flickering
-            var score = distance * headingPenalty
+            // Score = Distance * Multiplier
+            var score = distance * scoreMultiplier
             if let lastId = self.lastSegmentId, segment.routeId == lastId {
-                score *= 0.8 // 20% bias towards staying on the same road
+                score *= 0.40 // 60% bias towards staying on the same road segment
             }
             
             if score < minScore {

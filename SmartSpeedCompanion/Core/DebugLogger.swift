@@ -17,7 +17,7 @@ public final class DebugLogger: ObservableObject {
     public static let shared = DebugLogger()
     
     @Published public private(set) var logs: [LogEntry] = []
-    private let maxLogs = 500
+    private let maxLogs = 1500
     private let queue = DispatchQueue(label: "com.speedsense.debuglogger", qos: .utility)
     
     private init() {}

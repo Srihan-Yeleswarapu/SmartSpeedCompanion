@@ -38,7 +38,7 @@ public final class SpeedEngine: ObservableObject {
         updateStatus(speed: currentSpeed, limit: Double(self.limit))
         
         Task { @MainActor in
-            if location.horizontalAccuracy > 0 && location.horizontalAccuracy < 20 {
+            if location.horizontalAccuracy > 0 && location.horizontalAccuracy < 10 {
                 // Pass heading (course) to ensure we only snap to roads running in our direction
                 let carHeading = location.course >= 0 ? location.course : nil
                 

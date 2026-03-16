@@ -365,6 +365,7 @@ fileprivate struct SpeedHUDPill: View {
                         .foregroundColor(.white.opacity(0.4))
                 }
             }
+            .frame(minWidth: isLandscape ? 80 : 100, alignment: .leading) // Prevent squishing against limit sign or buttons
             
             Spacer(minLength: 0)
             

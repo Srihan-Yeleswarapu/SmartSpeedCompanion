@@ -145,7 +145,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Speed camera proximity check removed (API disabled)
         locManager.$latestLocation
             .compactMap { $0 }
-            .throttle(for: .seconds(2), scheduler: RunLoop.main, latest: true)
+            .throttle(for: .milliseconds(500), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] location in
                 guard let self = self else { return }
                 if self.isNavigating {
@@ -280,6 +280,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Start Traffic Monitoring / Rerouting Timer
         startRerouteTimer()
         
+        // Reset ETA to fresh calculation
+        self.eta = Date().addingTimeInterval(route.expectedTravelTime)
+        
         // Auto-start session if not already recording
         if !isRecording {
             startSession() // This now picks up the destination ID from the property
@@ -288,20 +291,24 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
         // Pre-cache speed limits along the route polyline points
         // Essential to prevent limits from 'glitching away' during the drive.
-        Task {
-            let polylinePoints = route.polyline.points()
-            let pointCount = route.polyline.pointCount
-            var coordinates: [CLLocationCoordinate2D] = []
-            
-            for i in stride(from: 0, to: pointCount, by: 20) {
-                coordinates.append(polylinePoints[i].coordinate)
-            }
-            if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
-            
-            await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
-        }
+        await cacheRouteSegments(route)
 
-        if let dest = self.destination {
+    private func cacheRouteSegments(_ route: MKRoute) async {
+        let polylinePoints = route.polyline.points()
+        let pointCount = route.polyline.pointCount
+        var coordinates: [CLLocationCoordinate2D] = []
+        
+        // Cache every ~1 mile or so (stride by 40 points which is ~1-1.5km on highway)
+        for i in stride(from: 0, to: pointCount, by: 30) {
+            coordinates.append(polylinePoints[i].coordinate)
+        }
+        if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
+        
+        await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
+        DebugLogger.shared.log("Route segments cached (\(coordinates.count) points)")
+    }
+
+    if let dest = self.destination {
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
         }
         
@@ -474,30 +481,61 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             }
             
             // Voice Announcements (multi-stage)
-            let turnInMeters = Int(distanceToTurn)
-            if turnInMeters == 1000 || turnInMeters == 1001 { 
-                announce("In one kilometer, \(instruction)")
-            } else if turnInMeters == 150 || turnInMeters == 151 {
-                announce("In 150 meters, \(instruction)")
+            let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
+            
+            // Check for stage-based announcements (5km/mi, 1km, 300m/ft)
+            let stage: String?
+            if isMetric {
+                if distanceToTurn > 1950 && distanceToTurn < 2050 { stage = "2km" }
+                else if distanceToTurn > 950 && distanceToTurn < 1050 { stage = "1km" }
+                else if distanceToTurn > 250 && distanceToTurn < 350 { stage = "300m" }
+                else { stage = nil }
+            } else {
+                let miles = distanceToTurn * 0.000621371
+                if miles > 1.95 && miles < 2.05 { stage = "2mi" }
+                else if miles > 0.95 && miles < 1.05 { stage = "1mi" }
+                else if miles > 0.45 && miles < 0.55 { stage = "0.5mi" }
+                else if distanceToTurn > 450 && distanceToTurn < 550 { stage = "500ft" }
+                else { stage = nil }
             }
             
-            if distanceToTurn < 15 { // Reduced from 30m to prevent premature turn skipping
-                self.currentStepIndex += 1
-                if self.currentStepIndex < steps.count {
-                    let newStep = steps[self.currentStepIndex]
-                    announce(newStep.instructions) // Announce the maneuver JUST as it happens
-                } else if let dest = destination?.placemark.location, 
-                          location.distance(from: dest) < 50 {
-                    Task { await self.endNavigation() }
+            if let s = stage, !announcementStages.contains("\(currentStepIndex)_\(s)") {
+                announcementStages.insert("\(currentStepIndex)_\(s)")
+                let distText = isMetric ? (s.contains("km") ? "\(s.replacingOccurrences(of: "km", with: "")) kilometers" : "\(s.replacingOccurrences(of: "m", with: "")) meters") : 
+                                         (s.contains("mi") ? "\(s.replacingOccurrences(of: "mi", with: "")) miles" : "\(s.replacingOccurrences(of: "ft", with: "")) feet")
+                announce("In \(distText), \(instruction)")
+            }
+            
+            if distanceToTurn < 20 { 
+                if self.currentStepIndex != lastAnnouncedStep {
+                    lastAnnouncedStep = self.currentStepIndex
+                    self.currentStepIndex += 1
+                    if self.currentStepIndex < steps.count {
+                        let newStep = steps[self.currentStepIndex]
+                        announce(newStep.instructions) 
+                    } else if let dest = destination?.placemark.location, 
+                              location.distance(from: dest) < 50 {
+                        Task { await self.endNavigation() }
+                    }
                 }
             }
         }
         
-        // Simple ETA calculation
-        if self.eta == nil {
-            self.eta = Date().addingTimeInterval(route.expectedTravelTime)
-        }
+        // 3. Regular ETA calculation refresh (every location update)
+        // Adjust for current progress
+        let remainingDistance = route.distance - (route.distance(to: currentStepIndex))
+        let progressPercent = 1.0 - (remainingDistance / route.distance)
+        let totalExpectedTime = route.expectedTravelTime
+        let elapsed = Date().timeIntervalSince(sessionStartTime ?? Date())
+        
+        // Simple smoothing for ETA
+        let newETA = Date().addingTimeInterval(max(30, totalExpectedTime * (1.0 - progressPercent)))
+        self.eta = newETA
     }
+    
+    // Helper to sum distances up to index bounds safely
+    private var lastAnnouncedStep: Int = -1
+    private var announcementStages: Set<String> = []
     
     // Helper to find nearest point on polyline to a coordinate
     // Restored to full scan to ensure we NEVER lose tracking if the user goes off-route
@@ -561,6 +599,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         guard voiceEnabled, !message.isEmpty else { return }
         
+        // Expand common road abbreviations for natural speech
+        let expandedMessage = expandAbbreviations(message)
+        
         // 1. Activate session only when speaking starts
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
@@ -568,7 +609,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
         }
         
-        let utterance = AVSpeechUtterance(string: message)
+        let utterance = AVSpeechUtterance(string: expandedMessage)
         if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
         } else {
@@ -583,7 +624,32 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
         
         speechSynthesizer.speak(utterance)
-        DebugLogger.shared.log("NAV VOICE SENT: \(message)")
+        DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage)")
+    }
+
+    private func expandAbbreviations(_ text: String) -> String {
+        var result = text
+        let mapping: [String: String] = [
+            " Ave": " Avenue", " St": " Street", " Pl": " Place", " Rd": " Road",
+            " Dr": " Drive", " Blvd": " Boulevard", " Hwy": " Highway", " Fwy": " Freeway",
+            " Expy": " Expressway", " Pkwy": " Parkway", " Ln": " Lane", " Cir": " Circle",
+            " Ct": " Court", " Ter": " Terrace", " Way": " Way", " Blvd.": " Boulevard",
+            " Ave.": " Avenue", " Rd.": " Road", " St.": " Street", " Pl.": " Place"
+        ]
+        
+        for (abbr, full) in mapping {
+            // Use word boundary-like matching for abbreviations
+            result = result.replacingOccurrences(of: abbr + " ", with: full + " ")
+            if result.hasSuffix(abbr) {
+                result = String(result.dropLast(abbr.count)) + full
+            }
+        }
+        
+        // Special case for uppercase Pl or St at end
+        if result.hasSuffix(" PL") { result = result.replacingOccurrences(of: " PL", with: " Place") }
+        if result.hasSuffix(" ST") { result = result.replacingOccurrences(of: " ST", with: " Street") }
+        
+        return result
     }
 
     // AVSpeechSynthesizerDelegate

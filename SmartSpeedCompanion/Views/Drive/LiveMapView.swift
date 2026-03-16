@@ -214,13 +214,15 @@ public struct LiveMapView: UIViewRepresentable {
             zoomReason = "idle"
         }
         
-        // ─── DEAD-BAND ─────────────────────────────────────────────────────────
-        // Only animate if the change is large enough to be noticeable.
-        // 200m altitude / 10° pitch threshold prevents micro-jitter from speed noise.
+        // ─── DEAD-BAND (STRICT) ──────────────────────────────────────────────────
+        // Increase thresholds to prevent constant camera movement.
+        // 500m altitude / 15° pitch is noticeable but not jittery.
         let altDiff = abs(currentAltitude - targetAltitude)
         let pitchDiff = abs(currentPitch - targetPitch)
         
-        if altDiff > 200 || pitchDiff > 10 {
+        if altDiff > 500 || pitchDiff > 15 {
+            // Log only on SIGNIFICANT jumps, not every micro-calc
+            // DebugLogger.shared.log("ZOOM: \(Int(currentAltitude))->\(Int(targetAltitude))m")
             DebugLogger.shared.log("ZOOM CHANGE [\(zoomReason)]: \(Int(currentAltitude))->\(Int(targetAltitude))m | speed=\(String(format:"%.1f",speed)) dist=\(Int(distanceToTurn))m nav=\(isNavigating) rec=\(isRecording)")
             
             let newCamera = uiView.camera.copy() as! MKMapCamera

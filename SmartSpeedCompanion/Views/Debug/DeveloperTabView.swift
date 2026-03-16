@@ -57,10 +57,23 @@ public struct DeveloperTabView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Clear") {
-                        logger.clear()
+                    HStack(spacing: 20) {
+                        Button(action: {
+                            let allLogs = logger.logs.map { "[\($0.formattedTimestamp)] \($0.message)" }.joined(separator: "\n")
+                            UIPasteboard.general.string = allLogs
+                            // Subtly log the action
+                            DebugLogger.shared.log("COPIED: All logs copied to clipboard.")
+                        }) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(DesignSystem.cyan)
+                        }
+                        
+                        Button("Clear") {
+                            logger.clear()
+                        }
+                        .foregroundColor(DesignSystem.alertRed)
                     }
-                    .foregroundColor(DesignSystem.alertRed)
                 }
                 
                 ToolbarItem(placement: .navigationBarLeading) {
