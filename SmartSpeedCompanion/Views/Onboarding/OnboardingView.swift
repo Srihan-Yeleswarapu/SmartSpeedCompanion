@@ -60,6 +60,14 @@ public struct OnboardingView: View {
                 .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .move(edge: .leading).combined(with: .opacity)))
                 
                 Spacer()
+                
+                // DRIVING DISCLAIMER (Requirement 8)
+                Text("Do not interact with SpeedSense while driving.\nAlways prioritize road safety.")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 20)
+                
                 Spacer()
             }
         }

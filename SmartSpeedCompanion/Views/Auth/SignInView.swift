@@ -80,7 +80,7 @@ public struct SignInView: View {
                 }
                 .padding(.horizontal)
                 
-                SignInWithAppleButton { request in
+                SignInWithAppleButton(.signIn) { request in
                     request.requestedScopes = [.email, .fullName]
                 } onCompletion: { result in
                     switch result {

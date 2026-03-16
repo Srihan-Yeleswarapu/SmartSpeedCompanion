@@ -8,10 +8,18 @@ public struct AppRootView: View {
     
     public var body: some View {
         Group {
-            if !appState.authManager.isAuthenticated {
+            if !appState.authManager.initialAuthChecked {
+                ZStack {
+                    DesignSystem.bgDeep.ignoresSafeArea()
+                    ProgressView()
+                        .tint(DesignSystem.cyan)
+                }
+            } else if !appState.authManager.isAuthenticated {
                 AuthView()
             } else if !appState.hasCompletedOnboarding {
                 OnboardingView()
+            } else if !appState.hasSeenTutorialTransition {
+                TutorialTransitionView()
             } else if !appState.hasCompletedTutorial {
                 TutorialView()
             } else {

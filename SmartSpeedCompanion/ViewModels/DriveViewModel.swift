@@ -123,11 +123,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             .receive(on: RunLoop.main)
             .assign(to: &$speedLimitSource)
         
-        // Request Location Authorization
-        locManager.requestAuthorization()
-        locManager.startUpdatingLocation()
-        
-        // Load Local Arizona Geodatabase Data
+        // Throttled Live Activity update (every 5 seconds)
         Task {
             await ArizonaSpeedLimitService.shared.loadDataIfNeeded()
         }
@@ -162,6 +158,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     public func startSession() {
         DebugLogger.shared.log("Drive session STARTED")
+        
+        // Request authorization only when session starts
+        locationManager.requestAuthorization()
+        locationManager.startUpdatingLocation()
+        
         var destID: String? = nil
         if #available(iOS 18.0, *) {
             destID = destination?.identifier?.rawValue
@@ -405,6 +406,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     public func searchDestination(query: String) async {
         guard !query.isEmpty else { searchResults = []; return }
+        
+        // Only request location if search is actually happening (needed for region)
+        if locationManager.authorizationStatus == .notDetermined {
+            locationManager.requestAuthorization()
+        }
+        
         isSearching = true
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = query

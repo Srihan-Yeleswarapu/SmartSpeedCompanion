@@ -1,9 +1,11 @@
 import Foundation
 import AuthenticationServices
+import CryptoKit
 
 public class AuthenticationManager: ObservableObject {
     @Published public var isAuthenticated: Bool = false
     @Published public var currentUserEmail: String?
+    @Published public var initialAuthChecked: Bool = false
     
     private let serviceName = "com.speedsense.auth"
     
@@ -17,11 +19,13 @@ public class AuthenticationManager: ObservableObject {
             DispatchQueue.main.async {
                 self.isAuthenticated = true
                 self.currentUserEmail = email
+                self.initialAuthChecked = true
             }
         } else {
             DispatchQueue.main.async {
                 self.isAuthenticated = false
                 self.currentUserEmail = nil
+                self.initialAuthChecked = true
             }
         }
     }
@@ -53,8 +57,9 @@ public class AuthenticationManager: ObservableObject {
         }
         
         if let data = KeychainHelper.standard.read(service: serviceName, account: email),
-           let storedPassword = String(data: data, encoding: .utf8) {
-            if password == storedPassword {
+           let storedHash = String(data: data, encoding: .utf8) {
+            let passwordHash = hash(password)
+            if passwordHash == storedHash {
                 saveUserSession(email: email)
                 DispatchQueue.main.async {
                     self.isAuthenticated = true
@@ -88,9 +93,16 @@ public class AuthenticationManager: ObservableObject {
     }
     
     private func saveUser(email: String, password: String) {
-        let pwdData = Data(password.utf8)
-        KeychainHelper.standard.save(pwdData, service: serviceName, account: email)
+        let passwordHash = hash(password)
+        let hashData = Data(passwordHash.utf8)
+        KeychainHelper.standard.save(hashData, service: serviceName, account: email)
         saveUserSession(email: email)
+    }
+    
+    private func hash(_ password: String) -> String {
+        let inputData = Data(password.utf8)
+        let hashed = SHA256.hash(data: inputData)
+        return hashed.compactMap { String(format: "%02x", $0) }.joined()
     }
     
     private func saveUserSession(email: String) {
