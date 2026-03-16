@@ -6,7 +6,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // Shared ViewModel instance to pass to CarPlay
     // In a real app, this should be injected or handled via a shared container.
     // We expose it here for simplicity of connecting CPSceneDelegate to the same State.
+    // Shared instance for phone + CarPlay
     static let sharedDriveViewModel = DriveViewModel()
+    static let sharedAppState = AppState()
     
     func application(
         _ application: UIApplication,

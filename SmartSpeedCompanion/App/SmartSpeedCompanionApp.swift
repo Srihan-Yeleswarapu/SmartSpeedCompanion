@@ -6,7 +6,6 @@ import WidgetKit
 @main
 struct SpeedSenseApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var appState = AppState()
     
     // Create shared container so background and app intents work smoothly
     let container: ModelContainer
@@ -23,7 +22,7 @@ struct SpeedSenseApp: App {
     var body: some Scene {
         WindowGroup {
             AppRootView()
-                .environmentObject(appState)
+                .environmentObject(AppDelegate.sharedAppState)
                 .environmentObject(AppDelegate.sharedDriveViewModel)
                 .modelContainer(container) // Share same exact container with SwiftData queries
         }

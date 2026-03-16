@@ -11,8 +11,23 @@ public struct AppRootView: View {
             if !appState.authManager.initialAuthChecked {
                 ZStack {
                     DesignSystem.bgDeep.ignoresSafeArea()
-                    ProgressView()
-                        .tint(DesignSystem.cyan)
+                    VStack(spacing: 20) {
+                        Image(systemName: "speedometer")
+                            .font(.system(size: 60))
+                            .foregroundColor(DesignSystem.cyan)
+                        
+                        Text("SpeedSense")
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        
+                        ProgressView()
+                            .tint(DesignSystem.cyan)
+                            .scaleEffect(1.5)
+                        
+                        Text("Initializing...")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
                 }
             } else if !appState.authManager.isAuthenticated {
                 AuthView()

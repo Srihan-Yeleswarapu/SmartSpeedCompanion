@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 public class AppState: ObservableObject {
     @AppStorage("hasCompletedOnboarding") public var hasCompletedOnboarding: Bool = false
@@ -7,5 +8,14 @@ public class AppState: ObservableObject {
     
     @Published public var authManager = AuthenticationManager()
     
-    public init() {}
+    // Relay changes from authManager to appState so views can react
+    private var cancellables = Set<AnyCancellable>()
+    
+    public init() {
+        authManager.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+    }
 }

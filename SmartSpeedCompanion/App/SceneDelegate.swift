@@ -16,7 +16,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let window = UIWindow(windowScene: windowScene)
         
         if let container = try? ModelContainer(for: DriveSession.self, SpeedReading.self) {
-            let rootView = DriveRootView()
+            AppDelegate.sharedDriveViewModel.sessionRecorder.setModelContext(container.mainContext)
+            
+            let rootView = AppRootView()
+                .environmentObject(AppDelegate.sharedAppState)
                 .environmentObject(AppDelegate.sharedDriveViewModel)
                 .modelContainer(container)
                 .preferredColorScheme(.dark)
