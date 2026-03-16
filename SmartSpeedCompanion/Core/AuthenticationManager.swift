@@ -2,6 +2,7 @@ import Foundation
 import AuthenticationServices
 import FirebaseAuth
 import FirebaseFirestore
+import FirebaseCore
 import UIKit // For device info if needed
 
 public class AuthenticationManager: ObservableObject {
@@ -15,6 +16,8 @@ public class AuthenticationManager: ObservableObject {
     public init() {
         checkAuthStatus()
     }
+    
+    private var authHandle: AuthStateDidChangeListenerHandle?
     
     public func checkAuthStatus() {
         // Fast local check via Keychain for perceived performance
@@ -31,7 +34,7 @@ public class AuthenticationManager: ObservableObject {
         }
         
         // Listen to actual Firebase Auth state
-        Auth.auth().addStateDidChangeListener { [weak self] auth, user in
+        authHandle = Auth.auth().addStateDidChangeListener { [weak self] auth, user in
             guard let self = self else { return }
             
             DispatchQueue.main.async {
