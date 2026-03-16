@@ -103,7 +103,7 @@ private struct AnalyticsContentView: View {
                         Text(session.title)
                             .font(.headline.weight(.semibold))
                             .foregroundColor(.white)
-                        Text(session.startTime.formatted(date: .abbreviated, time: .middle))
+                        Text(session.startTime.formatted(date: .abbreviated, time: .shortened))
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundColor(.gray)
                     }
