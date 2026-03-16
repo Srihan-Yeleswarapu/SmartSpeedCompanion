@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import ActivityKit
 import WidgetKit
+import FirebaseCore
 
 @main
 struct SpeedSenseApp: App {
@@ -11,6 +12,9 @@ struct SpeedSenseApp: App {
     let container: ModelContainer
     
     init() {
+        // MUST be called before any static properties (like sharedAppState) are accessed
+        FirebaseApp.configure()
+        
         do {
             container = try ModelContainer(for: DriveSession.self, SpeedReading.self)
             AppDelegate.sharedDriveViewModel.sessionRecorder.setModelContext(container.mainContext)
