@@ -293,22 +293,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Essential to prevent limits from 'glitching away' during the drive.
         await cacheRouteSegments(route)
 
-    private func cacheRouteSegments(_ route: MKRoute) async {
-        let polylinePoints = route.polyline.points()
-        let pointCount = route.polyline.pointCount
-        var coordinates: [CLLocationCoordinate2D] = []
-        
-        // Cache every ~1 mile or so (stride by 40 points which is ~1-1.5km on highway)
-        for i in stride(from: 0, to: pointCount, by: 30) {
-            coordinates.append(polylinePoints[i].coordinate)
-        }
-        if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
-        
-        await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
-        DebugLogger.shared.log("Route segments cached (\(coordinates.count) points)")
-    }
-
-    if let dest = self.destination {
+        if let dest = self.destination {
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
         }
         
@@ -328,11 +313,23 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
 
         if #available(iOS 16.1, *) {
-            if !isRecording {
-                LiveActivityManager.shared.startActivity(sessionStartDate: Date())
-            }
-            updateLiveActivity()
+            LiveActivityManager.shared.startActivity(with: route)
         }
+    }
+
+    private func cacheRouteSegments(_ route: MKRoute) async {
+        let polylinePoints = route.polyline.points()
+        let pointCount = route.polyline.pointCount
+        var coordinates: [CLLocationCoordinate2D] = []
+        
+        // Cache every ~1 mile or so (stride by 40 points which is ~1-1.5km on highway)
+        for i in stride(from: 0, to: pointCount, by: 30) {
+            coordinates.append(polylinePoints[i].coordinate)
+        }
+        if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
+        
+        await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
+        DebugLogger.shared.log("Route segments cached (\(coordinates.count) points)")
     }
     
     public func startNavigation(to destination: MKMapItem) async {
@@ -523,7 +520,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         // 3. Regular ETA calculation refresh (every location update)
         // Adjust for current progress
-        let remainingDistance = route.distance - (route.distance(to: currentStepIndex))
+        let remainingDistance = route.steps[currentStepIndex...].reduce(0) { $0 + $1.distance }
         let progressPercent = 1.0 - (remainingDistance / route.distance)
         let totalExpectedTime = route.expectedTravelTime
         let elapsed = Date().timeIntervalSince(sessionStartTime ?? Date())

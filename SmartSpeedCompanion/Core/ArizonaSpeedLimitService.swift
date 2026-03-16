@@ -150,7 +150,7 @@ public actor ArizonaSpeedLimitService {
 
     /// Finds the legal speed limit for a given coordinate.
     /// Added heading awareness to prevent snapping to cross-streets or nearby parallel roads.
-    public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double? = nil, expandedSearch: Bool = false) async throws -> Int {
+    public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double? = nil, currentSpeedMph: Double? = nil, expandedSearch: Bool = false) async throws -> Int {
         if !isLoaded {
             loadDataIfNeeded()
         }
