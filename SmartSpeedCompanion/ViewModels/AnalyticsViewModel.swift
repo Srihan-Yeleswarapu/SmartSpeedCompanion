@@ -5,15 +5,18 @@ import SwiftData
 @MainActor
 public final class AnalyticsViewModel: ObservableObject {
     @Published public var selectedSession: DriveSession?
+    @Published public var showSessionPicker: Bool = false
     
     public init() {}
     
     /// Selects a new session to display in analytics dashboard
     public func selectSession(_ session: DriveSession?) {
         self.selectedSession = session
+        self.showSessionPicker = false
     }
     
-    // Extracted formatted stats for the UI
+    // MARK: - Formatted Stats
+    
     public var formattedDuration: String {
         guard let session = selectedSession else { return "--" }
         let duration = Int(session.durationSeconds)
@@ -50,12 +53,30 @@ public final class AnalyticsViewModel: ObservableObject {
         return session.drivingScore
     }
     
+    // MARK: - Actions
+    
     public func deleteSession(_ session: DriveSession, context: ModelContext) {
         context.delete(session)
-        // No need to explicitly save as SwiftData handles it, but good for immediate persistence
         try? context.save()
         if selectedSession?.id == session.id {
             selectedSession = nil
         }
+    }
+    
+    public func toggleStar(_ session: DriveSession, context: ModelContext) {
+        session.isStarred.toggle()
+        try? context.save()
+    }
+    
+    /// Deletes all non-starred sessions older than 30 days.
+    public func purgeOldSessions(sessions: [DriveSession], context: ModelContext) {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+        for session in sessions {
+            if !session.isStarred && session.startTime < cutoff {
+                if selectedSession?.id == session.id { selectedSession = nil }
+                context.delete(session)
+            }
+        }
+        try? context.save()
     }
 }
