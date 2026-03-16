@@ -544,7 +544,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             // We configure the CATEGORY here but do NOT call setActive(true) yet.
             // Calling setActive(true) on launch is what interrupts background music.
             // .mixWithOthers is CRITICAL to let Spotify/Apple Music keep playing.
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers, .mixWithOthers, .defaultToSpeaker])
+            var options: AVAudioSession.CategoryOptions = [.duckOthers, .mixWithOthers, .defaultToSpeaker]
+            if #available(iOS 17.0, *) {
+                options.insert(.interruptSpokenAudioAndMixWithOthers)
+            }
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
             DebugLogger.shared.log("Audio Session Configured (Inactive): playback/mixWithOthers")
         } catch {
             DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")

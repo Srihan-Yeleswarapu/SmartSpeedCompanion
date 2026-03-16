@@ -10,7 +10,7 @@ public final class DriveSession {
     public var startLocationName: String?
     public var endLocationName: String?
     public var destinationPlaceID: String?
-    public var isStarred: Bool
+    public var isStarred: Bool?
     
     @Relationship(deleteRule: .cascade)
     public var readings: [SpeedReading]

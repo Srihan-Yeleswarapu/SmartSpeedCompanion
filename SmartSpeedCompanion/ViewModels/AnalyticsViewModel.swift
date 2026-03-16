@@ -64,7 +64,8 @@ public final class AnalyticsViewModel: ObservableObject {
     }
     
     public func toggleStar(_ session: DriveSession, context: ModelContext) {
-        session.isStarred.toggle()
+        let current = session.isStarred ?? false
+        session.isStarred = !current
         try? context.save()
     }
     
@@ -72,7 +73,8 @@ public final class AnalyticsViewModel: ObservableObject {
     public func purgeOldSessions(sessions: [DriveSession], context: ModelContext) {
         let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
         for session in sessions {
-            if !session.isStarred && session.startTime < cutoff {
+            let isStarred = session.isStarred ?? false
+            if !isStarred && session.startTime < cutoff {
                 if selectedSession?.id == session.id { selectedSession = nil }
                 context.delete(session)
             }

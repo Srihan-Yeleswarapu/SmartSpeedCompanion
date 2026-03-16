@@ -119,13 +119,13 @@ private struct AnalyticsContentView: View {
                             viewModel.toggleStar(session, context: modelContext)
                         }
                     } label: {
-                        Image(systemName: session.isStarred ? "star.fill" : "star")
+                        Image(systemName: (session.isStarred ?? false) ? "star.fill" : "star")
                             .font(.title3)
-                            .foregroundColor(session.isStarred ? .yellow : .gray.opacity(0.4))
+                            .foregroundColor((session.isStarred ?? false) ? .yellow : .gray.opacity(0.4))
                             .frame(width: 44, height: 44)
                             .background(
                                 Circle()
-                                    .fill(session.isStarred ? Color.yellow.opacity(0.12) : Color.white.opacity(0.05))
+                                    .fill((session.isStarred ?? false) ? Color.yellow.opacity(0.12) : Color.white.opacity(0.05))
                             )
                     }
                 }
@@ -223,7 +223,9 @@ private struct SessionPickerSheet: View {
     // Starred sessions first, then by date descending
     private var sortedSessions: [DriveSession] {
         sessions.sorted {
-            if $0.isStarred != $1.isStarred { return $0.isStarred }
+            let s0 = $0.isStarred ?? false
+            let s1 = $1.isStarred ?? false
+            if s0 != s1 { return s0 }
             return $0.startTime > $1.startTime
         }
     }
@@ -286,19 +288,19 @@ private struct SessionPickerSheet: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        if !sortedSessions.filter({ $0.isStarred }).isEmpty {
+                        if !sortedSessions.filter({ $0.isStarred ?? false }).isEmpty {
                             SectionLabel(title: "Starred Favorites")
                         }
 
-                        ForEach(sortedSessions.filter { $0.isStarred }) { session in
+                        ForEach(sortedSessions.filter { $0.isStarred ?? false }) { session in
                             SessionRow(session: session, viewModel: viewModel)
                         }
 
-                        if !sortedSessions.filter({ !$0.isStarred }).isEmpty {
+                        if !sortedSessions.filter({ !($0.isStarred ?? false) }).isEmpty {
                             SectionLabel(title: "Recent Rides")
                         }
 
-                        ForEach(sortedSessions.filter { !$0.isStarred }) { session in
+                        ForEach(sortedSessions.filter { !($0.isStarred ?? false) }) { session in
                             SessionRow(session: session, viewModel: viewModel)
                         }
                     }
@@ -339,7 +341,7 @@ private struct SessionRow: View {
     @State private var showContextMenu = false
 
     private var daysLeft: Int? {
-        guard !session.isStarred else { return nil }
+        guard !(session.isStarred ?? false) else { return nil }
         let expiry = Calendar.current.date(byAdding: .day, value: 30, to: session.startTime) ?? session.startTime
         let days = Calendar.current.dateComponents([.day], from: Date(), to: expiry).day ?? 0
         return max(0, days)
@@ -366,7 +368,7 @@ private struct SessionRow: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
-                        if session.isStarred {
+                        if session.isStarred ?? false {
                             Image(systemName: "star.fill")
                                 .font(.system(size: 10))
                                 .foregroundColor(.yellow)
@@ -427,8 +429,9 @@ private struct SessionRow: View {
             Button {
                 viewModel.toggleStar(session, context: modelContext)
             } label: {
-                Label(session.isStarred ? "Unstar" : "Star Session",
-                      systemImage: session.isStarred ? "star.slash" : "star.fill")
+                let isStarred = session.isStarred ?? false
+                Label(isStarred ? "Unstar" : "Star Session",
+                      systemImage: isStarred ? "star.slash" : "star.fill")
             }
 
             Divider()

@@ -15,15 +15,19 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         
         let window = UIWindow(windowScene: windowScene)
         
-        // Use SwiftData container
-        let container = try? ModelContainer(for: DriveSession.self, SpeedReading.self)
-        
-        let rootView = DriveRootView()
-            .environmentObject(AppDelegate.sharedDriveViewModel)
-            .modelContainer(container!)
-            .preferredColorScheme(.dark)
-        
-        window.rootViewController = UIHostingController(rootView: rootView)
+        if let container = try? ModelContainer(for: DriveSession.self, SpeedReading.self) {
+            let rootView = DriveRootView()
+                .environmentObject(AppDelegate.sharedDriveViewModel)
+                .modelContainer(container)
+                .preferredColorScheme(.dark)
+            window.rootViewController = UIHostingController(rootView: rootView)
+        } else {
+            // Fallback to simple root view if SwiftData fails (allows app to at least open)
+            let rootView = Text("Database Error. Please reinstall the app.")
+                .foregroundColor(.white)
+                .preferredColorScheme(.dark)
+            window.rootViewController = UIHostingController(rootView: rootView)
+        }
         self.window = window
         window.makeKeyAndVisible()
     }
