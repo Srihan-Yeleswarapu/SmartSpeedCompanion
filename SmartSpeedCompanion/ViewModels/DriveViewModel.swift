@@ -527,7 +527,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                         
                         // ONLY speak the instruction for the current index.
                         // We DO NOT check steps[currentStepIndex + 1] here to avoid skip-ahead confusion.
-                        announce("In \(text), \(instruction)")
+                        announce("In \(text), \(currentInstruction)")
                         break
                     }
                 }
@@ -637,6 +637,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private func announce(_ message: String) {
         let rawVoiceVal = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool
         let voiceEnabled = rawVoiceVal ?? true
+        
+        guard voiceEnabled, !message.isEmpty else { return }
         
         // 1. Remove punctuation that triggers "Full Stop" or "Period" speech
         var cleanMessage = message.replacingOccurrences(of: "...", with: "")
