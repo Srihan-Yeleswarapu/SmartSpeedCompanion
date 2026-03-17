@@ -514,9 +514,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let stepPolyline = currentStep.polyline
         let pointCount = stepPolyline.pointCount
         
-        // 2. TURN PROXIMITY: Calcuate distance to the end of the current step
+        // 2. TURN PROXIMITY: Calculate distance to the START of the current step (where the maneuver happens)
         if pointCount > 0 {
-            let maneuverPoint = stepPolyline.points()[pointCount - 1].coordinate
+            let maneuverPoint = stepPolyline.points()[0].coordinate
             let maneuverLocation = CLLocation(latitude: maneuverPoint.latitude, longitude: maneuverPoint.longitude)
             let distanceToTurn = location.distance(from: maneuverLocation)
             
@@ -538,7 +538,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             // 25m threshold ensures we don't jump steps too early but react fast enough for complex junctions.
             if distanceToTurn < 25 && isMoving { 
                 advanceToNextStep(steps)
-            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 25 && distanceToTurn < 250 && isMoving {
+            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 30 && distanceToTurn < 100 && isMoving {
                 // We've passed the intersection (distance started increasing again)
                 advanceToNextStep(steps)
             }
@@ -577,8 +577,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 // START OF TRIP LOGIC
                 if distanceToTurn < 150 { // If the first turn is very close (< 500ft)
                     var msg = "Starting route. \(instruction)"
-                    // "TEN" LOOKAHEAD: check if another turn happens immediately after
-                    if stepIndex + 1 < steps.count, steps[stepIndex+1].distance < 150, !steps[stepIndex+1].instructions.isEmpty {
+                    // "THEN" LOOKAHEAD: check if another turn happens immediately after the current one
+                    if currentStep.distance < 150, stepIndex + 1 < steps.count, !steps[stepIndex+1].instructions.isEmpty {
                         msg += ", then \(steps[stepIndex+1].instructions)"
                         // Mark the next step's immediate flags as used so we don't repeat the instruction
                         stepStageFlags[stepIndex+1] = ["immediate", "quartermi"] 
@@ -634,17 +634,20 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
                     // BUNDLING: "Turn left, THEN turn right" logic for turns within 500ft of each other.
                     if key == "immediate" || key == "quartermi" {
-                        let nextIdx = stepIndex + 1
-                        if nextIdx < steps.count {
-                            let nextStep = steps[nextIdx]
-                            if !nextStep.instructions.isEmpty && nextStep.distance < 150 {
-                                speech += ", then \(nextStep.instructions)"
-                                
-                                // Mute the next step's duplicate approach warnings
-                                if stepStageFlags[nextIdx] == nil { stepStageFlags[nextIdx] = [] }
-                                stepStageFlags[nextIdx]?.insert("immediate")
-                                stepStageFlags[nextIdx]?.insert("quartermi")
-                            }
+                        // The gap between this turn and the next is the 'distance' of the current road (step).
+                        if currentStep.distance < 150 {
+                             let nextIdx = stepIndex + 1
+                             if nextIdx < steps.count {
+                                 let nextStep = steps[nextIdx]
+                                 if !nextStep.instructions.isEmpty {
+                                     speech += ", then \(nextStep.instructions)"
+                                     
+                                     // Mute the next step's duplicate approach warnings
+                                     if stepStageFlags[nextIdx] == nil { stepStageFlags[nextIdx] = [] }
+                                     stepStageFlags[nextIdx]?.insert("immediate")
+                                     stepStageFlags[nextIdx]?.insert("quartermi")
+                                 }
+                             }
                         }
                     }
 
