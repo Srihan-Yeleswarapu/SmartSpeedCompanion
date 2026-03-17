@@ -511,36 +511,51 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Validate index to prevent out-of-bounds
         if self.currentStepIndex >= steps.count { return }
         
-        let currentStep = steps[self.currentStepIndex]
+        // Skip empty polyline steps
+        var currentStep = steps[self.currentStepIndex]
+        while currentStep.polyline.pointCount == 0 && self.currentStepIndex < steps.count - 1 {
+            self.currentStepIndex += 1
+            currentStep = steps[self.currentStepIndex]
+            self.lastDistanceToTurn = nil
+        }
+        
         let stepPolyline = currentStep.polyline
         let pointCount = stepPolyline.pointCount
         
-        // 2. TURN PROXIMITY: Calculate distance to the START of the current step (where the maneuver happens)
+        // 2. TURN PROXIMITY: Calculate distance to the END of the current step (the upcoming turn)
         if pointCount > 0 {
-            let maneuverPoint = stepPolyline.points()[0].coordinate
+            let maneuverPoint = stepPolyline.points()[pointCount - 1].coordinate
             let maneuverLocation = CLLocation(latitude: maneuverPoint.latitude, longitude: maneuverPoint.longitude)
             let distanceToTurn = location.distance(from: maneuverLocation)
             
             self.distanceToNextTurn = distanceToTurn
             
-            // Sync UI text immediately
-            let currentInstruction = currentStep.instructions
-            if self.nextManeuverInstruction != currentInstruction && !currentInstruction.isEmpty {
-                self.nextManeuverInstruction = currentInstruction
-                self.nextManeuverImageName = getImageForManeuver(currentInstruction)
+            // Find the upcoming instruction (usually the NEXT step's instruction)
+            var upcomingInstruction = ""
+            var targetIdx = self.currentStepIndex + 1
+            while targetIdx < steps.count && steps[targetIdx].instructions.isEmpty {
+                targetIdx += 1
+            }
+            if targetIdx < steps.count {
+                upcomingInstruction = steps[targetIdx].instructions
+            } else {
+                upcomingInstruction = currentStep.instructions // Fallback to current if it's the last step
             }
             
-            // Trigger spoken alerts (1mi, 0.5mi, Turn Now, etc.)
+            // Sync UI text immediately
+            if self.nextManeuverInstruction != upcomingInstruction && !upcomingInstruction.isEmpty {
+                self.nextManeuverInstruction = upcomingInstruction
+                self.nextManeuverImageName = getImageForManeuver(upcomingInstruction)
+            }
+            
+            // Trigger spoken alerts
             processVoiceAnnouncements(for: currentStepIndex, distanceToTurn: distanceToTurn, steps: steps, speed: location.speed)
             
-            // 3. STEP PROGRESSION: Advance to next step once we are close enough OR have passed the point
-            let isMoving = location.speed > 1.0 
-            
-            // 25m threshold ensures we don't jump steps too early but react fast enough for complex junctions.
-            if distanceToTurn < 25 && isMoving { 
+            // 3. STEP PROGRESSION: Advance to next step once we pass the point
+            let isMoving = location.speed > 2.0 
+            if distanceToTurn < 15 { 
                 advanceToNextStep(steps)
-            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 30 && distanceToTurn < 100 && isMoving {
-                // We've passed the intersection (distance started increasing again)
+            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 15 && distanceToTurn < 100 && isMoving {
                 advanceToNextStep(steps)
             }
             
@@ -557,135 +572,70 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     /**
      Handles the logic for spoken turn-by-turn guidance. 
-     Implements multiple 'stages' (milestones) for each turn to mimic Apple Maps' conversational style.
-     - 1. Long range warnings (2mi, 1mi)
-     - 2. Medium range approach (half mile, quarter mile)
-     - 3. Immediate maneuver warning (Turn Now)
-     - 4. Lookahead "Then..." logic to bundle consecutive short turns.
+     Provides exactly two announcements per step: 
+     1) Right after turning onto a new road (long distance)
+     2) Right before the upcoming turn
      */
     private func processVoiceAnnouncements(for stepIndex: Int, distanceToTurn: Double, steps: [MKRoute.Step], speed: Double) {
-        let currentStep = steps[stepIndex]
-        let instruction = currentStep.instructions
-        guard !instruction.isEmpty else { return }
-
-        // 1. New Step Initialization: Triggers when the user first enters a new step's zone.
         if stepStageFlags[stepIndex] == nil {
             stepStageFlags[stepIndex] = []
-            
-            let routeName = self.currentRoute?.name ?? "the road"
-            
-            if stepIndex == 0 {
-                // START OF TRIP LOGIC
-                if distanceToTurn < 150 { // If the first turn is very close (< 500ft)
-                    var msg = "\(instruction)"
-                    // "THEN" LOOKAHEAD: check if another turn happens immediately after the current one
-                    if currentStep.distance < 150, stepIndex + 1 < steps.count, !steps[stepIndex+1].instructions.isEmpty {
-                        msg += ", then \(steps[stepIndex+1].instructions)"
-                        // Mark the next step's immediate flags as used so we don't repeat the instruction
-                        stepStageFlags[stepIndex+1] = ["immediate", "quartermi"] 
-                    }
-                    announce(msg)
-                } else {
-                    announce("Continue on \(routeName) for \(formatDistance(distanceToTurn)).")
-                }
-            } else {
-                // MID-ROUTE TRANSITION: e.g. "Continue on Main St for 5 miles"
-                if distanceToTurn > 3218 { // > 2 miles
-                    announce("Continue on \(routeName) for \(formatDistance(distanceToTurn)).")
-                } else {
-                    // Always give an entry announcement for the turn if it's the user's focus
-                    announce("In \(formatDistance(distanceToTurn)), \(instruction)")
-                }
-            }
         }
-
         var flags = stepStageFlags[stepIndex]!
-        // If this is the first tick for this step, we use a very large 'previous' distance 
-        // to ensure immediate/close milestones trigger if we're already past them.
-        let lastDist = lastDistanceToTurn ?? (distanceToTurn + 10) 
-
-        let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
         
-        // DYNAMIC THRESHOLD: give highway drivers more time to react (250m) vs local drivers (80m)
-        let immediateThreshold: Double = speed > 22.0 ? 250.0 : 80.0 
-
-        let milestones: [(key: String, distance: Double, prefix: String)]
-        if isMetric {
-            milestones = [
-                ("2km", 2000, "In 2 kilometers, "),
-                ("1km", 1000, "In 1 kilometer, "),
-                ("500m", 500, "In 500 meters, "),
-                ("immediate", immediateThreshold, "")
-            ]
-        } else {
-            milestones = [
-                ("2mi", 3218, "In 2 miles, "),
-                ("1mi", 1609, "In 1 mile, "),
-                ("halfmi", 804, "In half a mile, "),
-                ("quartermi", 402, "In a quarter mile, "),
-                ("immediate", immediateThreshold, "")
-            ]
+        // Find the next meaningful instruction
+        var upcomingInstruction = ""
+        var instructionStepIndex = stepIndex + 1
+        while instructionStepIndex < steps.count && steps[instructionStepIndex].instructions.isEmpty {
+            instructionStepIndex += 1
         }
+        if instructionStepIndex < steps.count {
+            upcomingInstruction = steps[instructionStepIndex].instructions
+        } else {
+            upcomingInstruction = steps[stepIndex].instructions
+        }
+        
+        if upcomingInstruction.isEmpty { return }
 
-        // 2. DOWNWARD CROSSING CHECK: Triggers only when the user crosses BELOW a milestone distance.
-        for (key, thresholdDist, prefix) in milestones {
-            if lastDist > thresholdDist && distanceToTurn <= thresholdDist {
-                if !flags.contains(key) {
-                    flags.insert(key)
-                    stepStageFlags[stepIndex] = flags
-
-                    var speech = prefix + instruction
-
-                    // BUNDLING: "Turn left, THEN turn right" logic for turns within 500ft of each other.
-                    if key == "immediate" || key == "quartermi" {
-                        // The gap between this turn and the next is the 'distance' of the current road (step).
-                        if currentStep.distance < 150 {
-                             let nextIdx = stepIndex + 1
-                             if nextIdx < steps.count {
-                                 let nextStep = steps[nextIdx]
-                                 if !nextStep.instructions.isEmpty {
-                                     speech += ", then \(nextStep.instructions)"
-                                     
-                                     // Mute the next step's duplicate approach warnings
-                                     if stepStageFlags[nextIdx] == nil { stepStageFlags[nextIdx] = [] }
-                                     stepStageFlags[nextIdx]?.insert("immediate")
-                                     stepStageFlags[nextIdx]?.insert("quartermi")
-                                 }
-                             }
-                        }
-                    }
-
-                    announce(speech)
-                    break // Ensure we only trigger one announcement per location ping.
+        let formattedDist = formatDistance(distanceToTurn)
+        // Immediate announcement threshold based on speed (higher speed = more warning)
+        let immediateThreshold = speed > 18.0 ? 150.0 : 60.0 // meters. 150m = ~500ft, 60m = ~200ft
+        
+        // 1. Initial Advance Warning (Right after previous turn)
+        if !flags.contains("initial") {
+            flags.insert("initial")
+            
+            // Only give advance warning if we aren't already right on top of the turn
+            if distanceToTurn > immediateThreshold + 50 {
+                if distanceToTurn > 3218 { // > 2 miles, give a "continue"
+                    let routeName = steps[stepIndex].name.isEmpty ? (currentRoute?.name ?? "the road") : steps[stepIndex].name
+                    announce("Continue on \(routeName) for \(formattedDist).")
+                } else {
+                    announce("In \(formattedDist), \(upcomingInstruction)")
                 }
             }
         }
+        
+        // 2. Immediate Turning Warning (Right before the turn)
+        if distanceToTurn <= immediateThreshold && !flags.contains("immediate") {
+            flags.insert("immediate")
+            announce(upcomingInstruction)
+        }
+        
+        stepStageFlags[stepIndex] = flags
     }
     
     /// Updates the index and UI state for the next turn. 
-    /// Skips empty placeholder steps (like "Proceed to Route") automatically.
     private func advanceToNextStep(_ steps: [MKRoute.Step]) {
-        var nextIdx = self.currentStepIndex + 1
-        
-        while nextIdx < steps.count && steps[nextIdx].instructions.isEmpty {
-            nextIdx += 1
-        }
-        
-        self.currentStepIndex = nextIdx
-        self.lastDistanceToTurn = nil // Resets the milestone crossing check for the new turn
-        
-        if self.currentStepIndex < steps.count {
-            let nextStep = steps[self.currentStepIndex]
-            self.nextManeuverInstruction = nextStep.instructions
-            self.nextManeuverImageName = getImageForManeuver(nextStep.instructions)
-            
-            // Notice: We intentionally do NOT announce a turn here. 
-            // The processVoiceAnnouncements loop will notice the distance change and triggers 
-            // the conversational guidance (e.g., "In half a mile...") on the next GPS tick.
-        } else if let dest = destination?.placemark.location, 
-                  locationManager.latestLocation?.distance(from: dest) ?? 100 < 50 {
-            announce("You have arrived at your destination.")
-            Task { await self.endNavigation() }
+        if self.currentStepIndex < steps.count - 1 {
+            self.currentStepIndex += 1
+            self.lastDistanceToTurn = nil
+        } else {
+            // We are on the final step/arrival
+            if let dest = destination?.placemark.location, 
+               locationManager.latestLocation?.distance(from: dest) ?? 100 < 50 {
+                announce("You have arrived at your destination.")
+                Task { await self.endNavigation() }
+            }
         }
     }
     
