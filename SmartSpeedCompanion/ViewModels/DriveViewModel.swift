@@ -29,6 +29,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     @Published public var speedLimitSource: String = "No Data"
     @Published public var nearbyCameras: [SpeedCamera] = []
     @Published public var activeCameraAlert: SpeedCamera? = nil
+    
     // Navigation state
     @Published public var isNavigating: Bool = false {
         didSet { updateIdleTimer() }
@@ -52,7 +53,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     @Published public var showShortSessionPrompt: Bool = false
     public var lastSessionToPotentialDelete: DriveSession? = nil
 
-    
     // Guidance details
     @Published public var nextManeuverInstruction: String = ""
     @Published var nextManeuverImageName: String = "arrow.up"
@@ -61,7 +61,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     // Search Completer
     private let completer = MKLocalSearchCompleter()
-    
     private let speechSynthesizer = AVSpeechSynthesizer()
     
     // Timer properties
@@ -70,6 +69,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private var rerouteTimer: Timer?
     private var currentStepIndex: Int = 0
     private var cancellables = Set<AnyCancellable>()
+    
+    // Voice Navigation State
+    private var announcementStages: Set<String> = []
+    private var lastDistanceToTurn: CLLocationDistance? = nil
+    
     // A weak reference or delegate will handle actual logic in CarPlay layer
     public var navigationDelegate: NavigationActionDelegate?
     
@@ -93,17 +97,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.speechSynthesizer.delegate = self
         setupAudioSession()
         
-        // NOTE: Speed Camera API fetch is DISABLED. SpeedCameraService struct is
-        // kept in the codebase for future re-enablement. Map annotations will simply
-        // not appear until re-enabled.
-        // Task { await SpeedCameraService.shared.fetchCameras() }
-        
         // Setup Completer
         completer.delegate = self
         completer.resultTypes = [.pointOfInterest, .address]
         
         // Bind UI state
-        // Use course for heading when moving > 5mph for stability, fall back to compass
         Publishers.CombineLatest(locManager.$latestLocation, locManager.$latestHeading)
             .map { location, heading -> Double? in
                 if let loc = location, loc.speed > 2.0 { // > ~4.5 mph
@@ -120,17 +118,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         alrtEngine.$audioAlertActive.assign(to: &$alertActive)
         rec.$isRecording.assign(to: &$isRecording)
         
-        // Bind Data Source
         SmartSpeedLimitService.shared.$dataSource
             .receive(on: RunLoop.main)
             .assign(to: &$speedLimitSource)
         
-        // Throttled Live Activity update (every 5 seconds)
         Task {
             await ArizonaSpeedLimitService.shared.loadDataIfNeeded()
         }
         
-        // Throttled Live Activity update (every 5 seconds)
         Timer.publish(every: 5.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
@@ -139,8 +134,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             }
             .store(in: &cancellables)
         
-        // Listen to location updates for navigation progress and live activity
-        // Speed camera proximity check removed (API disabled)
         locManager.$latestLocation
             .compactMap { $0 }
             .throttle(for: .milliseconds(500), scheduler: RunLoop.main, latest: true)
@@ -150,12 +143,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                     self.updateNavigationProgress(at: location)
                 }
                 
-                // Keep the Dynamic Island / Live Activity updated with live speed
                 if self.isRecording || self.isNavigating {
                     self.updateLiveActivity()
                 }
                 
-                // PERIODIC SYNC: Update last location in Firestore
                 AuthenticationManager.shared.updateLastLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
             }
             .store(in: &cancellables)
@@ -163,8 +154,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     public func startSession() {
         DebugLogger.shared.log("Drive session STARTED")
-        
-        // Request authorization only when session starts
         locationManager.requestAuthorization()
         locationManager.startUpdatingLocation()
         
@@ -174,7 +163,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
         sessionRecorder.startSession(destinationPlaceID: destID)
         
-        // Timer tracking
         sessionStartTime = Date()
         sessionTimer = Timer.publish(every: 1, on: .main, in: .common)
             .autoconnect()
@@ -195,7 +183,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 speedLimit: limit,
                 status: status.rawValue,
                 isRecording: isRecording,
-                consecutiveOverSeconds: 0, // Should be tracked in SpeedEngine
+                consecutiveOverSeconds: 0,
                 sessionDuration: sessionDuration,
                 nextManeuver: isNavigating ? nextManeuverInstruction : nil,
                 nextManeuverImageName: isNavigating ? nextManeuverImageName : nil,
@@ -210,11 +198,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         DebugLogger.shared.log("Drive session ENDING (Duration: \(Int(sessionDuration))s)")
         if let session = sessionRecorder.endSession() {
             if session.durationSeconds < 90 {
-                // Short trip: Prompt user before saving
                 self.lastSessionToPotentialDelete = session
                 self.showShortSessionPrompt = true
             } else {
-                // Normal trip: Save immediately
                 sessionRecorder.saveSession(session)
                 AuthenticationManager.shared.syncDriveSession(session)
             }
@@ -227,8 +213,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         if !isNavigating {
             LiveActivityManager.shared.endActivity()
-            
-            // Clear Arizona Speed Limit cache when session fully ends
             Task {
                 await ArizonaSpeedLimitService.shared.clearCache()
             }
@@ -244,8 +228,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
     
     public func deleteLastSession(context: ModelContext) {
-        // Since we stopped auto-saving short trips in endSession,
-        // we just need to clear our local reference to it.
         lastSessionToPotentialDelete = nil
         showShortSessionPrompt = false
     }
@@ -259,7 +241,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         request.destination = destination
         request.transportType = .automobile
         request.requestsAlternateRoutes = true
-        request.departureDate = .now // ESSENTIAL for traffic-aware routing
+        request.departureDate = .now
         
         if UserDefaults.standard.bool(forKey: "avoidHighways") {
             request.highwayPreference = .avoid
@@ -284,36 +266,28 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.isNavigating = true
         self.currentRoute = route
         self.currentStepIndex = 0
+        self.announcementStages.removeAll()
         
-        // Start Traffic Monitoring / Rerouting Timer
         startRerouteTimer()
-        
-        // Reset ETA to fresh calculation
         self.eta = Date().addingTimeInterval(route.expectedTravelTime)
         
-        // Auto-start session if not already recording
         if !isRecording {
-            startSession() // This now picks up the destination ID from the property
+            startSession()
             DebugLogger.shared.log("Session AUTO-STARTED with navigation")
         }
 
-        // Pre-cache speed limits along the route polyline points
-        // Essential to prevent limits from 'glitching away' during the drive.
         await cacheRouteSegments(route)
 
         if let dest = self.destination {
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
         }
         
-        // Initialize navigation state correctly at the first MEANINGFUL step
         if !route.steps.isEmpty {
             var firstRealIndex = 0
-            // Skip steps with no instructions (like 'Proceed to route' placeholders)
             while firstRealIndex < route.steps.count && route.steps[firstRealIndex].instructions.isEmpty {
                 firstRealIndex += 1
             }
             
-            // Fallback to 0 if all are empty
             let targetIndex = firstRealIndex < route.steps.count ? firstRealIndex : 0
             self.currentStepIndex = targetIndex
             
@@ -321,8 +295,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             self.nextManeuverInstruction = activeStep.instructions
             self.nextManeuverImageName = getImageForManeuver(activeStep.instructions)
             
+            // Initial Start Announcement
             if !activeStep.instructions.isEmpty {
-                announce(activeStep.instructions)
+                announce("Starting route. \(activeStep.instructions)")
             }
         }
 
@@ -336,24 +311,18 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let pointCount = route.polyline.pointCount
         var coordinates: [CLLocationCoordinate2D] = []
         
-        // Cache every ~1 mile or so (stride by 40 points which is ~1-1.5km on highway)
         for i in stride(from: 0, to: pointCount, by: 30) {
             coordinates.append(polylinePoints[i].coordinate)
         }
         if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
         
         await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
-        DebugLogger.shared.log("Route segments cached (\(coordinates.count) points)")
     }
     
     public func startNavigation(to destination: MKMapItem) async {
         self.destination = destination
         self.isNavigating = true
-        
-        if !isRecording {
-            startSession()
-        }
-        
+        if !isRecording { startSession() }
         await navigationDelegate?.startNavigationTrigger(to: destination, route: nil)
     }
     
@@ -367,10 +336,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
 
-    
     public func endNavigation() async {
         self.isNavigating = false
         self.currentRoute = nil
+        self.announcementStages.removeAll()
         rerouteTimer?.invalidate()
         rerouteTimer = nil
         await navigationDelegate?.endNavigationTrigger()
@@ -380,7 +349,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
     
-    // Search completions update
     public func updateSearchQuery(_ query: String) {
         if query.isEmpty {
             searchCompletions = []
@@ -388,9 +356,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             isSearchingLocally = false
             return
         }
-        
         isSearchingLocally = true
-        
         if let userLocation = locationManager.latestLocation {
             completer.region = MKCoordinateRegion(
                 center: userLocation.coordinate,
@@ -401,16 +367,13 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         completer.queryFragment = query
     }
     
-    // Resolve completion to MKMapItem
     public func selectCompletion(_ completion: MKLocalSearchCompletion) async {
         let searchRequest = MKLocalSearch.Request(completion: completion)
         let search = MKLocalSearch(request: searchRequest)
-        
         do {
             let response = try await search.start()
             if let first = response.mapItems.first {
                 searchResults = [first]
-                // Typically would auto-start navigation or show detail
             }
         } catch {
             print("Failed to resolve completion: \(error)")
@@ -419,8 +382,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     public func searchDestination(query: String) async {
         guard !query.isEmpty else { searchResults = []; return }
-        
-        // Only request location if search is actually happening (needed for region)
         if locationManager.authorizationStatus == .notDetermined {
             locationManager.requestAuthorization()
         }
@@ -449,12 +410,13 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         return await navigationDelegate?.searchDestinationTrigger(query) ?? []
     }
     
+    // MARK: - Core Navigation Loop (Apple Maps Parity)
+    
     private func updateNavigationProgress(at location: CLLocation) {
         guard let route = currentRoute else { return }
         let steps = route.steps
         
-        // 1. Off-Route Detection (more accurate)
-        // Check distance to the nearest point on the route polyline
+        // 1. Off-Route Detection
         let nearestPoint = findNearestPointOnPolyline(location.coordinate, polyline: route.polyline)
         let distanceToRoute = location.distance(from: CLLocation(latitude: nearestPoint.latitude, longitude: nearestPoint.longitude))
         
@@ -472,7 +434,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
 
         // 2. Step Progress Tracking
-        // Ensure index stays valid
         if self.currentStepIndex >= steps.count { return }
         
         let currentStep = steps[self.currentStepIndex]
@@ -480,91 +441,106 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let pointCount = stepPolyline.pointCount
         
         if pointCount > 0 {
-            // Maneuver point is the LAST point of the current step's polyline
             let maneuverPoint = stepPolyline.points()[pointCount - 1].coordinate
             let maneuverLocation = CLLocation(latitude: maneuverPoint.latitude, longitude: maneuverPoint.longitude)
             let distanceToTurn = location.distance(from: maneuverLocation)
-            
             self.distanceToNextTurn = distanceToTurn
             
-            // UI should strictly match the step we are currently navigating through.
             let currentInstruction = currentStep.instructions
             if self.nextManeuverInstruction != currentInstruction && !currentInstruction.isEmpty {
                 self.nextManeuverInstruction = currentInstruction
                 self.nextManeuverImageName = getImageForManeuver(currentInstruction)
             }
             
-            // Voice Announcements (multi-stage)
-            let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
+            // APPLE MAPS VOICE LOGIC
+            handleAppleMapsStyleAnnouncements(
+                distanceToTurn: distanceToTurn,
+                currentInstruction: currentInstruction,
+                stepIndex: currentStepIndex,
+                steps: steps
+            )
             
-            let thresholds: [(distance: Double, key: String, text: String)]
-            if isMetric {
-                thresholds = [
-                    (10000.0, "10km", "10 kilometers"),
-                    (5000.0, "5km", "5 kilometers"),
-                    (3000.0, "3km", "3 kilometers"),
-                    (2000.0, "2km", "2 kilometers"),
-                    (1000.0, "1km", "1 kilometer"),
-                    (500.0, "500m", "500 meters"),
-                    (200.0, "200m", "200 meters")
-                ]
-            } else {
-                thresholds = [
-                    (16093.4, "10mi", "10 miles"),
-                    (8046.72, "5mi", "5 miles"),
-                    (3218.69, "2mi", "2 miles"),
-                    (1609.34, "1mi", "1 mile"),
-                    (804.67, "halfi", "half a mile"),
-                    (304.8, "1000ft", "1000 feet"),
-                    (152.4, "500ft", "500 feet")
-                ]
-            }
-            
-            // Check thresholds in descending order
-            for (threshold, key, text) in thresholds {
-                // Buffer reduced to 50m to prevent overlapping alerts. 
-                // Alerts will only trigger when you ENTER the specific distance zone.
-                if distanceToTurn <= threshold && distanceToTurn > threshold - 50 {
-                    let stageKey = "\(currentStepIndex)_\(key)"
-                    if !announcementStages.contains(stageKey) {
-                        announcementStages.insert(stageKey)
-                        announce("In \(text), \(currentInstruction)")
-                        break
-                    }
-                }
-            }
-            
-            // Tightened from 45m to 25m based on user's high-precision GPS (3-5m accuracy)
-            // We ONLY auto-advance if the user is moving (speed > 1m/s) to prevent jitter-advancement
+            // Advance logic
             let isMoving = location.speed > 1.0 
-            
+            // Tight 25m threshold to allow immediate action instruction to play right before intersection
             if distanceToTurn < 25 && isMoving { 
                 advanceToNextStep(steps)
-            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 25 && distanceToTurn < 250 && isMoving {
-                // User drove past the point (distance now increasing).
+            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 20 && distanceToTurn < 250 && isMoving {
                 advanceToNextStep(steps)
             }
             lastDistanceToTurn = distanceToTurn
         }
         
-        // 3. Regular ETA calculation refresh (every location update)
-        // Adjust for current progress
+        // 3. ETA Refresher
         let remainingDistance = route.steps[currentStepIndex...].reduce(0) { $0 + $1.distance }
         let progressPercent = 1.0 - (remainingDistance / route.distance)
         let totalExpectedTime = route.expectedTravelTime
-        
-        // Simple smoothing for ETA
         let newETA = Date().addingTimeInterval(max(30, totalExpectedTime * (1.0 - progressPercent)))
         self.eta = newETA
     }
     
-    private var lastDistanceToTurn: CLLocationDistance? = nil
+    private func handleAppleMapsStyleAnnouncements(distanceToTurn: CLLocationDistance, currentInstruction: String, stepIndex: Int, steps: [MKRoute.Step]) {
+        guard !currentInstruction.isEmpty else { return }
+        
+        let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
+        
+        // Thresholds mapping - closely mimicking standard GPS warning stages
+        struct Stage { let id: String; let maxDist: Double; let prefix: String }
+        
+        let stages: [Stage]
+        if isMetric {
+            stages = [
+                Stage(id: "3km", maxDist: 3000, prefix: "In 3 kilometers, "),
+                Stage(id: "1km", maxDist: 1000, prefix: "In 1 kilometer, "),
+                Stage(id: "500m", maxDist: 500, prefix: "In 500 meters, "),
+                Stage(id: "immediate", maxDist: 60, prefix: "") // ~200ft
+            ]
+        } else {
+            stages = [
+                Stage(id: "2mi", maxDist: 3218, prefix: "In 2 miles, "),
+                Stage(id: "1mi", maxDist: 1609, prefix: "In 1 mile, "),
+                Stage(id: "half_mi", maxDist: 804, prefix: "In half a mile, "),
+                Stage(id: "quarter_mi", maxDist: 402, prefix: "In a quarter mile, "),
+                Stage(id: "immediate", maxDist: 75, prefix: "") // ~250ft for immediate
+            ]
+        }
+        
+        // Find the lowest threshold we currently fall under to trigger sequentially
+        for stage in stages.reversed() { // Start from closest (immediate) up to furthest
+            if distanceToTurn <= stage.maxDist {
+                let stageKey = "\(stepIndex)_\(stage.id)"
+                
+                if !announcementStages.contains(stageKey) {
+                    announcementStages.insert(stageKey)
+                    
+                    var spokenText = stage.prefix + currentInstruction
+                    
+                    // APPLE MAPS: "Then..." Lookahead Logic
+                    // If we are at the "immediate" stage or "quarter mile" stage, check the next step
+                    if (stage.id == "immediate" || stage.id == "quarter_mi" || stage.id == "500m") {
+                        let nextIndex = stepIndex + 1
+                        if nextIndex < steps.count {
+                            let nextStep = steps[nextIndex]
+                            let nextInstruction = nextStep.instructions
+                            // If the next maneuver is very short (< 500 feet / 150m), append it
+                            if !nextInstruction.isEmpty && nextStep.distance < 152.0 {
+                                spokenText += ", then \(nextInstruction)"
+                                // Prevent the next step from announcing its own approach/immediate stages since we bundled it
+                                announcementStages.insert("\(nextIndex)_immediate")
+                            }
+                        }
+                    }
+                    
+                    announce(spokenText)
+                    break // Only announce one stage at a time
+                }
+            }
+        }
+    }
     
     private func advanceToNextStep(_ steps: [MKRoute.Step]) {
         var nextIdx = self.currentStepIndex + 1
         
-        // COLLAPSE: Skip any intermediate steps that don't have instructions.
-        // This ensures the currentStepIndex ALWAYS points to a meaningful target.
         while nextIdx < steps.count && steps[nextIdx].instructions.isEmpty {
             nextIdx += 1
         }
@@ -574,24 +550,20 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         if self.currentStepIndex < steps.count {
             let nextStep = steps[self.currentStepIndex]
-            
-            // Update the UI immediately so it matches the voice
             self.nextManeuverInstruction = nextStep.instructions
             self.nextManeuverImageName = getImageForManeuver(nextStep.instructions)
             
-            announce(nextStep.instructions)
+            // If the user advances naturally but missed the long-range thresholds because the step itself was short,
+            // we do NOT auto-announce the immediate instruction here unless it wasn't bundled. 
+            // `handleAppleMapsStyleAnnouncements` will catch it on the next location tick.
+            
         } else if let dest = destination?.placemark.location, 
                   locationManager.latestLocation?.distance(from: dest) ?? 100 < 50 {
+            announce("You have arrived at your destination.")
             Task { await self.endNavigation() }
         }
     }
     
-    // Helper to sum distances up to index bounds safely
-    private var lastAnnouncedStep: Int = -1
-    private var announcementStages: Set<String> = []
-    
-    // Helper to find nearest point on polyline to a coordinate
-    // Restored to full scan to ensure we NEVER lose tracking if the user goes off-route
     private func findNearestPointOnPolyline(_ coord: CLLocationCoordinate2D, polyline: MKPolyline) -> CLLocationCoordinate2D {
         let points = polyline.points()
         let count = polyline.pointCount
@@ -630,18 +602,16 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         )
     }
     
+    // MARK: - Audio Session & Announcements
+    
     private func setupAudioSession() {
         do {
-            // We configure the CATEGORY here but do NOT call setActive(true) yet.
-            // Calling setActive(true) on launch is what interrupts background music.
-            // .mixWithOthers is CRITICAL to let Spotify/Apple Music keep playing.
-            // .allowBluetoothA2DP ensures high quality audio over car systems.
-            var options: AVAudioSession.CategoryOptions = [.duckOthers, .mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
+            var options: AVAudioSession.CategoryOptions = [.duckOthers, .defaultToSpeaker, .allowBluetoothA2DP]
             if #available(iOS 17.0, *) {
                 options.insert(.interruptSpokenAudioAndMixWithOthers)
             }
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
-            DebugLogger.shared.log("Audio Session Configured (Inactive): playback/mixWithOthers")
+            DebugLogger.shared.log("Audio Session Configured (Inactive)")
         } catch {
             DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
         }
@@ -653,29 +623,22 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         guard voiceEnabled, !message.isEmpty else { return }
         
-        // 1. Remove punctuation that triggers "Full Stop" or "Period" speech
         var cleanMessage = message.replacingOccurrences(of: "...", with: "")
         cleanMessage = cleanMessage.replacingOccurrences(of: "..", with: "")
-        // Remove trailing period if it exists to prevent "Full Stop" at end of sentences
-        if cleanMessage.hasSuffix(".") {
-            cleanMessage.removeLast()
-        }
+        if cleanMessage.hasSuffix(".") { cleanMessage.removeLast() }
         
-        // 2. Expand common road abbreviations for natural speech
         let expandedMessage = expandAbbreviations(cleanMessage)
         
-        // 3. Activate session only when speaking starts
         do {
+            // Activate session just before speaking to ensure ducking happens smoothly
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
         }
         
-        // Bluetooth/Car Audio systems often have a "wake-up" lag that cuts off the first 1-2 seconds.
-        // Pre-utterance delay forces the car system to wake up.
         let utterance = AVSpeechUtterance(string: expandedMessage)
-        utterance.preUtteranceDelay = 0.5 
-        utterance.postUtteranceDelay = 0.2
+        utterance.preUtteranceDelay = 0.4 // Wake up bluetooth
+        utterance.postUtteranceDelay = 0.2 // Let music stay ducked briefly after speaking
         
         if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
@@ -683,11 +646,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         }
         
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.rate = 0.52 // Slightly faster than default for natural pacing
         utterance.volume = 1.0
-        
-        // We do NOT stop speaking immediately. This allows announcements to enqueue
-        // naturally instead of abruptly cutting themselves off.
         
         speechSynthesizer.speak(utterance)
         DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage)")
@@ -695,6 +655,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
     private func expandAbbreviations(_ text: String) -> String {
         var result = text
+        
+        // Conversational replacements
         let mapping: [String: String] = [
             "Ave": "Avenue", "St": "Street", "Pl": "Place", "Rd": "Road",
             "Dr": "Drive", "Blvd": "Boulevard", "Hwy": "Highway", "Fwy": "Freeway",
@@ -702,31 +664,28 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             "Ct": "Court", "Ter": "Terrace", "US": "U.S.", 
             "N": "North", "S": "South", "E": "East", "W": "West", 
             "NE": "Northeast", "NW": "Northwest",
-            "SE": "Southeast", "SW": "Southwest"
+            "SE": "Southeast", "SW": "Southwest",
+            "I-": "Interstate ", "US-": "U.S. ", "SR-": "State Route "
         ]
         
         for (abbr, full) in mapping {
-            // \\b matches word boundaries safely so we don't replace "W" inside "Way"
-            let pattern = "\\b\(abbr)\\b\\.?"
-            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
-                let range = NSRange(result.startIndex..., in: result)
-                result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: full)
+            // Handle hyphenated roads (e.g. I-10) directly without boundary requirements for the hyphen
+            if abbr.hasSuffix("-") {
+                result = result.replacingOccurrences(of: abbr, with: full, options: .caseInsensitive)
+            } else {
+                let pattern = "\\b\(abbr)\\b\\.?"
+                if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                    let range = NSRange(result.startIndex..., in: result)
+                    result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: full)
+                }
             }
-        }
-        
-        // Handle Interstates (e.g. I-95 -> Interstate 95)
-        if let regex = try? NSRegularExpression(pattern: "\\bI-", options: [.caseInsensitive]) {
-            let range = NSRange(result.startIndex..., in: result)
-            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "Interstate ")
         }
         
         return result
     }
 
-    // AVSpeechSynthesizerDelegate
     nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            // Deactivate with .notifyOthersOnDeactivation to restore music volume
             if !synthesizer.isSpeaking {
                 try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
                 DebugLogger.shared.log("Audio Session Deactivated (Music Restored)")
@@ -743,9 +702,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
 
     private func updateIdleTimer() {
-        // Prevent screen dimming if we are driving OR navigating
         UIApplication.shared.isIdleTimerDisabled = isRecording || isNavigating
-        DebugLogger.shared.log("Idle Timer Disabled: \(UIApplication.shared.isIdleTimerDisabled)")
     }
     
     private func getImageForManeuver(_ instruction: String) -> String {
@@ -754,11 +711,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         if lower.contains("exit") { return "arrow.up.right.square" }
         if lower.contains("merge") { return "arrow.merge" }
         
-        // Slight/Keep checks must precede general turn checks
         if lower.contains("slight right") || lower.contains("keep right") { return "arrow.up.right" }
         if lower.contains("slight left") || lower.contains("keep left") { return "arrow.up.left" }
         
-        // General turn checks
         if lower.contains("right") { return "arrow.turn.up.right" }
         if lower.contains("left") { return "arrow.turn.up.left" }
         
@@ -768,7 +723,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // MARK: - Dynamic Rerouting (Traffic Awareness)
     private func startRerouteTimer() {
         rerouteTimer?.invalidate()
-        // Check for a faster route every 5 minutes
         rerouteTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.checkForFasterRoute()
@@ -789,11 +743,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             let directions = MKDirections(request: request)
             let response = try await directions.calculate()
             if let fastest = response.routes.first {
-                // If the new route is at least 120 seconds (2 mins) faster than the expected remaining time
-                // of the current route, then reroute.
                 let remainingTime = current.expectedTravelTime - (Date().timeIntervalSince(sessionStartTime ?? Date()))
                 if fastest.expectedTravelTime < remainingTime - 120 {
-                    DebugLogger.shared.log("TRAFFIC ALERT: Faster route found (\(Int(remainingTime - fastest.expectedTravelTime))s saved). Rerouting...")
+                    DebugLogger.shared.log("TRAFFIC ALERT: Faster route found. Rerouting...")
                     await startNavigation(with: fastest, isReroute: true)
                 }
             }
