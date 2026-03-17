@@ -265,6 +265,24 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
     
+    /// User explicitly chose to 'Keep' a drive that was under 90 seconds. 
+    /// Manually triggers the write to SwiftData and Firebase.
+    public func saveLastSession() {
+        if let session = self.lastSessionToPotentialDelete {
+            self.sessionRecorder.saveSession(session)
+            AuthenticationManager.shared.syncDriveSession(session)
+            self.lastSessionToPotentialDelete = nil
+        }
+    }
+    
+    /// User explicitly chose 'Delete Drive' for a short session. We clear local refs and log.
+    public func deleteLastSession(context: ModelContext) {
+        // Since we didn't insert it into the modelContext yet during endSession(), 
+        // we just nulify our reference and log it.
+        self.lastSessionToPotentialDelete = nil
+        DebugLogger.shared.log("Short drive session DISCARDED by user.")
+    }
+    
     // MARK: - Route Calculation
     
     /// Requests route options from MapKit and triggers the selection view.
