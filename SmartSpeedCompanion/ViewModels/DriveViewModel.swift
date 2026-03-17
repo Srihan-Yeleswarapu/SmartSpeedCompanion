@@ -155,10 +155,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                     self.updateLiveActivity()
                 }
                 
-                // PERIODIC SYNC: Update last location every 10 meters OR if moving slowly
-                if let loc = location {
-                    AuthenticationManager.shared.updateLastLocation(latitude: loc.coordinate.latitude, longitude: loc.coordinate.longitude)
-                }
+                // PERIODIC SYNC: Update last location in Firestore
+                AuthenticationManager.shared.updateLastLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
             }
             .store(in: &cancellables)
     }

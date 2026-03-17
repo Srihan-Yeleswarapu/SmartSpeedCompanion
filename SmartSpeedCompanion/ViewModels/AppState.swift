@@ -29,7 +29,7 @@ public class AppState: ObservableObject {
             "voiceNavEnabled", "speedUnit", "avoidHighways", "measurementSystem"
         ]
         
-        for key in settingsKeys {
+        for _ in settingsKeys {
             UserDefaults.standard
                 .publisher(for: \.self)
                 .debounce(for: .seconds(2), scheduler: RunLoop.main) // Prevent spamming Firestore
