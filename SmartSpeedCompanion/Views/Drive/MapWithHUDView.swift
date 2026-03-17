@@ -142,17 +142,16 @@ fileprivate struct NavigationInstructionCard: View {
         
         if system == "Metric" {
             if distance < 1000 {
-                return "\(Int(distance)) m"
+                let rounded = Int(round(distance / 50.0) * 50)
+                return "\(max(50, rounded)) m"
             } else {
                 return String(format: "%.1f km", distance / 1000.0)
             }
         } else {
             let feet = distance * 3.28084
-            if feet < 500 {
-                return "\(Int(feet)) ft"
-            } else if feet < 5280 {
-                let yards = feet / 3
-                return "\(Int(yards)) yd"
+            if feet < 1000 {
+                let rounded = Int(round(feet / 100.0) * 100)
+                return "\(max(100, rounded)) ft"
             } else {
                 let miles = distance * 0.000621371
                 return String(format: "%.1f mi", miles)

@@ -349,7 +349,7 @@ public struct LiveMapView: UIViewRepresentable {
                 if reading.overLimit {
                     if !safeCoords.isEmpty {
                         let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                        polyline.statusColor = UIColor(DesignSystem.cyan)
+                        polyline.statusColor = UIColor(white: 0.5, alpha: 0.5) // Light gray for safe path
                         mapView.addOverlay(polyline, level: .aboveRoads)
                         safeCoords.removeAll()
                     }
@@ -366,7 +366,7 @@ public struct LiveMapView: UIViewRepresentable {
             }
             if !safeCoords.isEmpty {
                 let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                polyline.statusColor = UIColor(DesignSystem.cyan)
+                polyline.statusColor = UIColor(white: 0.5, alpha: 0.5) // Light gray for safe path
                 mapView.addOverlay(polyline, level: .aboveRoads)
             }
             if !overCoords.isEmpty {

@@ -164,8 +164,8 @@ public actor ArizonaSpeedLimitService {
         var closestRouteId: String?
         var minScore: Double = Double.infinity 
         
-        // Base snapping radius — increased for better coverage in urban canyons
-        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 150.0 : 85.0 
+        // Extremely tight snapping radius for high precision, expanding only if lost
+        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 60.0 : 25.0 
         
         for segment in segments {
             guard segment.limit > 0 else { continue }
@@ -214,6 +214,10 @@ public actor ArizonaSpeedLimitService {
             if let lastId = self.lastSegmentId, segment.routeId == lastId {
                 score *= 0.40 // 60% bias towards staying on the same road segment
             }
+            
+            // TIE-BREAKER: If multiple bounding boxes contain the user (distance == 0),
+            // prefer the one with the smaller area (e.g., a specific exit ramp vs a huge highway).
+            score += (segment.area * 1000.0) // small enough not to override real distance, big enough to break ties
             
             if score < minScore {
                 minScore = score

@@ -496,42 +496,51 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             // Voice Announcements (multi-stage)
             let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
             
-            // Check for stage-based announcements (5km/mi, 1km, 300m/ft)
-            let stage: String?
+            let thresholds: [(distance: Double, key: String, text: String)]
             if isMetric {
-                if distanceToTurn > 1950 && distanceToTurn < 2050 { stage = "2km" }
-                else if distanceToTurn > 950 && distanceToTurn < 1050 { stage = "1km" }
-                else if distanceToTurn > 250 && distanceToTurn < 350 { stage = "300m" }
-                else { stage = nil }
+                thresholds = [
+                    (3000.0, "3km", "3 kilometers"),
+                    (2000.0, "2km", "2 kilometers"),
+                    (1000.0, "1km", "1 kilometer"),
+                    (500.0, "500m", "500 meters"),
+                    (200.0, "200m", "200 meters")
+                ]
             } else {
-                let miles = distanceToTurn * 0.000621371
-                if miles > 1.95 && miles < 2.05 { stage = "2mi" }
-                else if miles > 0.95 && miles < 1.05 { stage = "1mi" }
-                else if miles > 0.45 && miles < 0.55 { stage = "0.5mi" }
-                else if distanceToTurn > 450 && distanceToTurn < 550 { stage = "500ft" }
-                else { stage = nil }
+                thresholds = [
+                    (3218.69, "2mi", "2 miles"),
+                    (1609.34, "1mi", "1 mile"),
+                    (804.67, "halfi", "half a mile"),
+                    (304.8, "1000ft", "1000 feet"),
+                    (152.4, "500ft", "500 feet")
+                ]
             }
             
-            if let s = stage, !announcementStages.contains("\(currentStepIndex)_\(s)") {
-                announcementStages.insert("\(currentStepIndex)_\(s)")
-                let distText = isMetric ? (s.contains("km") ? "\(s.replacingOccurrences(of: "km", with: "")) kilometers" : "\(s.replacingOccurrences(of: "m", with: "")) meters") : 
-                                         (s.contains("mi") ? "\(s.replacingOccurrences(of: "mi", with: "")) miles" : "\(s.replacingOccurrences(of: "ft", with: "")) feet")
-                announce("In \(distText), \(instruction)")
-            }
-            
-            if distanceToTurn < 20 { 
-                if self.currentStepIndex != lastAnnouncedStep {
-                    lastAnnouncedStep = self.currentStepIndex
-                    self.currentStepIndex += 1
-                    if self.currentStepIndex < steps.count {
-                        let newStep = steps[self.currentStepIndex]
-                        announce(newStep.instructions) 
-                    } else if let dest = destination?.placemark.location, 
-                              location.distance(from: dest) < 50 {
-                        Task { await self.endNavigation() }
+            // Check thresholds in descending order
+            for (threshold, key, text) in thresholds {
+                // If we've just crossed under this threshold (within a 200m buffer to avoid announcing late)
+                if distanceToTurn <= threshold && distanceToTurn > threshold - 200 {
+                    let stageKey = "\(currentStepIndex)_\(key)"
+                    if !announcementStages.contains(stageKey) {
+                        // Mark all larger thresholds as announced so we don't say them out of order
+                        for (largerThresh, largerKey, _) in thresholds where largerThresh > threshold {
+                            announcementStages.insert("\(currentStepIndex)_\(largerKey)")
+                        }
+                        
+                        announcementStages.insert(stageKey)
+                        announce("In \(text), \(instruction)")
+                        break // Only announce one stage at a time
                     }
                 }
             }
+            
+            if distanceToTurn < 45 { 
+                advanceToNextStep(steps)
+            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 15 && distanceToTurn < 250 {
+                // If the distance to the turn is abruptly INCREASING while still on the route, 
+                // it implies the user passed the maneuver point without hitting the 45m inner circle.
+                advanceToNextStep(steps)
+            }
+            lastDistanceToTurn = distanceToTurn
         }
         
         // 3. Regular ETA calculation refresh (every location update)
@@ -543,6 +552,26 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Simple smoothing for ETA
         let newETA = Date().addingTimeInterval(max(30, totalExpectedTime * (1.0 - progressPercent)))
         self.eta = newETA
+    }
+    
+    private var lastDistanceToTurn: CLLocationDistance? = nil
+    
+    private func advanceToNextStep(_ steps: [MKRoute.Step]) {
+                if self.currentStepIndex != lastAnnouncedStep {
+                    lastAnnouncedStep = self.currentStepIndex
+                    self.currentStepIndex += 1
+                    self.lastDistanceToTurn = nil // Reset tracking for next turn
+                    
+                    if self.currentStepIndex < steps.count {
+                        let newStep = steps[self.currentStepIndex]
+                        if !newStep.instructions.isEmpty {
+                            announce(newStep.instructions) 
+                        }
+                    } else if let dest = destination?.placemark.location, 
+                              locationManager.latestLocation?.distance(from: dest) ?? 100 < 50 {
+                        Task { await self.endNavigation() }
+                    }
+                }
     }
     
     // Helper to sum distances up to index bounds safely
@@ -631,9 +660,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.volume = 1.0
         
-        if speechSynthesizer.isSpeaking {
-            speechSynthesizer.stopSpeaking(at: .immediate)
-        }
+        // We do NOT stop speaking immediately. This allows announcements to enqueue
+        // naturally instead of abruptly cutting themselves off.
         
         speechSynthesizer.speak(utterance)
         DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage)")
@@ -642,24 +670,29 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private func expandAbbreviations(_ text: String) -> String {
         var result = text
         let mapping: [String: String] = [
-            " Ave": " Avenue", " St": " Street", " Pl": " Place", " Rd": " Road",
-            " Dr": " Drive", " Blvd": " Boulevard", " Hwy": " Highway", " Fwy": " Freeway",
-            " Expy": " Expressway", " Pkwy": " Parkway", " Ln": " Lane", " Cir": " Circle",
-            " Ct": " Court", " Ter": " Terrace", " Way": " Way", " Blvd.": " Boulevard",
-            " Ave.": " Avenue", " Rd.": " Road", " St.": " Street", " Pl.": " Place"
+            "Ave": "Avenue", "St": "Street", "Pl": "Place", "Rd": "Road",
+            "Dr": "Drive", "Blvd": "Boulevard", "Hwy": "Highway", "Fwy": "Freeway",
+            "Expy": "Expressway", "Pkwy": "Parkway", "Ln": "Lane", "Cir": "Circle",
+            "Ct": "Court", "Ter": "Terrace", "US": "U.S.", 
+            "N": "North", "S": "South", "E": "East", "W": "West", 
+            "NE": "Northeast", "NW": "Northwest",
+            "SE": "Southeast", "SW": "Southwest"
         ]
         
         for (abbr, full) in mapping {
-            // Use word boundary-like matching for abbreviations
-            result = result.replacingOccurrences(of: abbr + " ", with: full + " ")
-            if result.hasSuffix(abbr) {
-                result = String(result.dropLast(abbr.count)) + full
+            // \\b matches word boundaries safely so we don't replace "W" inside "Way"
+            let pattern = "\\b\(abbr)\\b\\.?"
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                let range = NSRange(result.startIndex..., in: result)
+                result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: full)
             }
         }
         
-        // Special case for uppercase Pl or St at end
-        if result.hasSuffix(" PL") { result = result.replacingOccurrences(of: " PL", with: " Place") }
-        if result.hasSuffix(" ST") { result = result.replacingOccurrences(of: " ST", with: " Street") }
+        // Handle Interstates (e.g. I-95 -> Interstate 95)
+        if let regex = try? NSRegularExpression(pattern: "\\bI-", options: [.caseInsensitive]) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "Interstate ")
+        }
         
         return result
     }
@@ -691,15 +724,18 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     private func getImageForManeuver(_ instruction: String) -> String {
         let lower = instruction.lowercased()
-        if lower.contains("right") { return "arrow.turn.up.right" }
-        if lower.contains("left") { return "arrow.turn.up.left" }
-        if lower.contains("slight right") { return "arrow.up.right" }
-        if lower.contains("slight left") { return "arrow.up.left" }
-        if lower.contains("keep right") { return "arrow.up.right" }
-        if lower.contains("keep left") { return "arrow.up.left" }
         if lower.contains("u-turn") { return "arrow.uturn.left" }
         if lower.contains("exit") { return "arrow.up.right.square" }
         if lower.contains("merge") { return "arrow.merge" }
+        
+        // Slight/Keep checks must precede general turn checks
+        if lower.contains("slight right") || lower.contains("keep right") { return "arrow.up.right" }
+        if lower.contains("slight left") || lower.contains("keep left") { return "arrow.up.left" }
+        
+        // General turn checks
+        if lower.contains("right") { return "arrow.turn.up.right" }
+        if lower.contains("left") { return "arrow.turn.up.left" }
+        
         return "arrow.up"
     }
 

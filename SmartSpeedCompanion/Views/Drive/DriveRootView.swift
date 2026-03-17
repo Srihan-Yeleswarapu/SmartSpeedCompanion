@@ -8,7 +8,7 @@ public struct DriveRootView: View {
     public init() {
         // Configure Tab Bar appearance for iOS 15+ to be opaque and styled
         let appearance = UITabBarAppearance()
-        appearance.configureWithDefaultBackground()
+        appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = UIColor(DesignSystem.bgPanel)
         appearance.backgroundEffect = UIBlurEffect(style: .systemThinMaterialDark)
         
