@@ -523,14 +523,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 if distanceToTurn <= threshold && distanceToTurn > threshold - 200 {
                     let stageKey = "\(currentStepIndex)_\(key)"
                     if !announcementStages.contains(stageKey) {
-                        // Mark all larger thresholds as announced so we don't say them out of order
-                        for (largerThresh, largerKey, _) in thresholds where largerThresh > threshold {
-                            announcementStages.insert("\(currentStepIndex)_\(largerKey)")
-                        }
-                        
+                        // Mark ALL thresholds for this SPECIFIC currentStepIndex as used
+                        // to ensure we don't repeat alerts for the SAME turn.
                         announcementStages.insert(stageKey)
+                        
+                        // ONLY speak the instruction for the current index.
+                        // We DO NOT check steps[currentStepIndex + 1] here to avoid skip-ahead confusion.
                         announce("In \(text), \(instruction)")
-                        break // Only announce one stage at a time
+                        break
                     }
                 }
             }
@@ -559,21 +559,21 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private var lastDistanceToTurn: CLLocationDistance? = nil
     
     private func advanceToNextStep(_ steps: [MKRoute.Step]) {
-                if self.currentStepIndex != lastAnnouncedStep {
-                    lastAnnouncedStep = self.currentStepIndex
-                    self.currentStepIndex += 1
-                    self.lastDistanceToTurn = nil // Reset tracking for next turn
-                    
-                    if self.currentStepIndex < steps.count {
-                        let newStep = steps[self.currentStepIndex]
-                        if !newStep.instructions.isEmpty {
-                            announce(newStep.instructions) 
-                        }
-                    } else if let dest = destination?.placemark.location, 
-                              locationManager.latestLocation?.distance(from: dest) ?? 100 < 50 {
-                        Task { await self.endNavigation() }
-                    }
-                }
+        // Increment step index first
+        self.currentStepIndex += 1
+        self.lastDistanceToTurn = nil 
+        
+        if self.currentStepIndex < steps.count {
+            let nextStep = steps[self.currentStepIndex]
+            
+            // Only announce if it's a new unique instruction to prevent "In 500ft Turn Left" -> "Turn Left" spam
+            if !nextStep.instructions.isEmpty && nextStep.instructions != self.nextManeuverInstruction {
+                announce(nextStep.instructions)
+            }
+        } else if let dest = destination?.placemark.location, 
+                  locationManager.latestLocation?.distance(from: dest) ?? 100 < 50 {
+            Task { await self.endNavigation() }
+        }
     }
     
     // Helper to sum distances up to index bounds safely
@@ -641,12 +641,18 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let rawVoiceVal = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool
         let voiceEnabled = rawVoiceVal ?? true
         
-        guard voiceEnabled, !message.isEmpty else { return }
+        // 1. Remove punctuation that triggers "Full Stop" or "Period" speech
+        var cleanMessage = message.replacingOccurrences(of: "...", with: "")
+        cleanMessage = cleanMessage.replacingOccurrences(of: "..", with: "")
+        // Remove trailing period if it exists to prevent "Full Stop" at end of sentences
+        if cleanMessage.hasSuffix(".") {
+            cleanMessage.removeLast()
+        }
         
-        // Expand common road abbreviations for natural speech
-        let expandedMessage = expandAbbreviations(message)
+        // 2. Expand common road abbreviations for natural speech
+        let expandedMessage = expandAbbreviations(cleanMessage)
         
-        // 1. Activate session only when speaking starts
+        // 3. Activate session only when speaking starts
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
@@ -654,11 +660,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
         
         // Bluetooth/Car Audio systems often have a "wake-up" lag that cuts off the first 1-2 seconds.
-        // We prepend a "period" with a pre-utterance delay to force the audio session to stay open
-        // during the hardware transition.
-        let bluetoothWakeUp = ". . "
-        let utterance = AVSpeechUtterance(string: bluetoothWakeUp + expandedMessage)
-        utterance.preUtteranceDelay = 0.5 // Half second of silence to wake up the car's speakers
+        // Pre-utterance delay forces the car system to wake up.
+        let utterance = AVSpeechUtterance(string: expandedMessage)
+        utterance.preUtteranceDelay = 0.5 
+        utterance.postUtteranceDelay = 0.2
         
         if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
