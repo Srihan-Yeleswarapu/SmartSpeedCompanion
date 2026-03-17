@@ -70,12 +70,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private var currentStepIndex: Int = 0
     private var cancellables = Set<AnyCancellable>()
     
-    // Voice Navigation State
-    private var announcementStages: Set<String> = []
-    private var lastDistanceToTurn: CLLocationDistance? = nil
-    
     // A weak reference or delegate will handle actual logic in CarPlay layer
     public var navigationDelegate: NavigationActionDelegate?
+    
+    // Voice Navigation Tracking
+    private var stepStageFlags: [Int: Set<String>] = [:]
+    private var lastDistanceToTurn: CLLocationDistance? = nil
     
     public init(modelContext: ModelContext? = nil) {
         let locManager = LocationManager()
@@ -97,14 +97,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.speechSynthesizer.delegate = self
         setupAudioSession()
         
-        // Setup Completer
         completer.delegate = self
         completer.resultTypes = [.pointOfInterest, .address]
         
-        // Bind UI state
         Publishers.CombineLatest(locManager.$latestLocation, locManager.$latestHeading)
             .map { location, heading -> Double? in
-                if let loc = location, loc.speed > 2.0 { // > ~4.5 mph
+                if let loc = location, loc.speed > 2.0 {
                     return loc.course >= 0 ? loc.course : heading?.trueHeading
                 }
                 return heading?.trueHeading
@@ -241,7 +239,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         request.destination = destination
         request.transportType = .automobile
         request.requestsAlternateRoutes = true
-        request.departureDate = .now
+        request.departureDate = .now 
         
         if UserDefaults.standard.bool(forKey: "avoidHighways") {
             request.highwayPreference = .avoid
@@ -266,7 +264,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.isNavigating = true
         self.currentRoute = route
         self.currentStepIndex = 0
-        self.announcementStages.removeAll()
+        
+        // Reset Voice State
+        self.stepStageFlags.removeAll()
+        self.lastDistanceToTurn = nil
         
         startRerouteTimer()
         self.eta = Date().addingTimeInterval(route.expectedTravelTime)
@@ -294,11 +295,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             let activeStep = route.steps[targetIndex]
             self.nextManeuverInstruction = activeStep.instructions
             self.nextManeuverImageName = getImageForManeuver(activeStep.instructions)
-            
-            // Initial Start Announcement
-            if !activeStep.instructions.isEmpty {
-                announce("Starting route. \(activeStep.instructions)")
-            }
         }
 
         if #available(iOS 16.1, *) {
@@ -339,9 +335,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     public func endNavigation() async {
         self.isNavigating = false
         self.currentRoute = nil
-        self.announcementStages.removeAll()
         rerouteTimer?.invalidate()
         rerouteTimer = nil
+        self.stepStageFlags.removeAll()
         await navigationDelegate?.endNavigationTrigger()
         
         if !isRecording {
@@ -416,7 +412,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         guard let route = currentRoute else { return }
         let steps = route.steps
         
-        // 1. Off-Route Detection
         let nearestPoint = findNearestPointOnPolyline(location.coordinate, polyline: route.polyline)
         let distanceToRoute = location.distance(from: CLLocation(latitude: nearestPoint.latitude, longitude: nearestPoint.longitude))
         
@@ -433,7 +428,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             return
         }
 
-        // 2. Step Progress Tracking
         if self.currentStepIndex >= steps.count { return }
         
         let currentStep = steps[self.currentStepIndex]
@@ -444,6 +438,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             let maneuverPoint = stepPolyline.points()[pointCount - 1].coordinate
             let maneuverLocation = CLLocation(latitude: maneuverPoint.latitude, longitude: maneuverPoint.longitude)
             let distanceToTurn = location.distance(from: maneuverLocation)
+            
             self.distanceToNextTurn = distanceToTurn
             
             let currentInstruction = currentStep.instructions
@@ -452,26 +447,19 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 self.nextManeuverImageName = getImageForManeuver(currentInstruction)
             }
             
-            // APPLE MAPS VOICE LOGIC
-            handleAppleMapsStyleAnnouncements(
-                distanceToTurn: distanceToTurn,
-                currentInstruction: currentInstruction,
-                stepIndex: currentStepIndex,
-                steps: steps
-            )
+            processVoiceAnnouncements(for: currentStepIndex, distanceToTurn: distanceToTurn, steps: steps, speed: location.speed)
             
-            // Advance logic
             let isMoving = location.speed > 1.0 
-            // Tight 25m threshold to allow immediate action instruction to play right before intersection
+            
             if distanceToTurn < 25 && isMoving { 
                 advanceToNextStep(steps)
-            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 20 && distanceToTurn < 250 && isMoving {
+            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 25 && distanceToTurn < 250 && isMoving {
                 advanceToNextStep(steps)
             }
+            
             lastDistanceToTurn = distanceToTurn
         }
         
-        // 3. ETA Refresher
         let remainingDistance = route.steps[currentStepIndex...].reduce(0) { $0 + $1.distance }
         let progressPercent = 1.0 - (remainingDistance / route.distance)
         let totalExpectedTime = route.expectedTravelTime
@@ -479,60 +467,89 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.eta = newETA
     }
     
-    private func handleAppleMapsStyleAnnouncements(distanceToTurn: CLLocationDistance, currentInstruction: String, stepIndex: Int, steps: [MKRoute.Step]) {
-        guard !currentInstruction.isEmpty else { return }
-        
+    private func processVoiceAnnouncements(for stepIndex: Int, distanceToTurn: Double, steps: [MKRoute.Step], speed: Double) {
+        let currentStep = steps[stepIndex]
+        let instruction = currentStep.instructions
+        guard !instruction.isEmpty else { return }
+
+        // 1. New Step Initialization
+        if stepStageFlags[stepIndex] == nil {
+            stepStageFlags[stepIndex] = []
+            
+            let routeName = currentStep.name.isEmpty ? "the current route" : currentStep.name
+            
+            if stepIndex == 0 {
+                if distanceToTurn < 150 { // Very close start (< 500ft)
+                    var msg = "Starting route. \(instruction)"
+                    // Lookahead to bundle the next turn if it's right after this one
+                    if stepIndex + 1 < steps.count, steps[stepIndex+1].distance < 150, !steps[stepIndex+1].instructions.isEmpty {
+                        msg += ", then \(steps[stepIndex+1].instructions)"
+                        stepStageFlags[stepIndex+1] = ["immediate", "quartermi"] // Prevent repeating next turn
+                    }
+                    announce(msg)
+                } else {
+                    announce("Starting route. Continue on \(routeName) for \(formatDistance(distanceToTurn)).")
+                }
+            } else {
+                // Mid-route transition into a new step
+                if distanceToTurn > 3218 { // > 2 miles
+                    announce("Continue on \(routeName) for \(formatDistance(distanceToTurn)).")
+                } else if distanceToTurn > 1200 { // ~0.75 miles
+                    announce("In \(formatDistance(distanceToTurn)), \(instruction)")
+                }
+            }
+        }
+
+        var flags = stepStageFlags[stepIndex]!
+        guard let lastDist = lastDistanceToTurn else { return }
+
         let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
-        
-        // Thresholds mapping - closely mimicking standard GPS warning stages
-        struct Stage { let id: String; let maxDist: Double; let prefix: String }
-        
-        let stages: [Stage]
+        let immediateThreshold: Double = speed > 22.0 ? 250.0 : 80.0 // Give more warning time at highway speeds
+
+        let milestones: [(key: String, distance: Double, prefix: String)]
         if isMetric {
-            stages = [
-                Stage(id: "3km", maxDist: 3000, prefix: "In 3 kilometers, "),
-                Stage(id: "1km", maxDist: 1000, prefix: "In 1 kilometer, "),
-                Stage(id: "500m", maxDist: 500, prefix: "In 500 meters, "),
-                Stage(id: "immediate", maxDist: 60, prefix: "") // ~200ft
+            milestones = [
+                ("2km", 2000, "In 2 kilometers, "),
+                ("1km", 1000, "In 1 kilometer, "),
+                ("500m", 500, "In 500 meters, "),
+                ("immediate", immediateThreshold, "")
             ]
         } else {
-            stages = [
-                Stage(id: "2mi", maxDist: 3218, prefix: "In 2 miles, "),
-                Stage(id: "1mi", maxDist: 1609, prefix: "In 1 mile, "),
-                Stage(id: "half_mi", maxDist: 804, prefix: "In half a mile, "),
-                Stage(id: "quarter_mi", maxDist: 402, prefix: "In a quarter mile, "),
-                Stage(id: "immediate", maxDist: 75, prefix: "") // ~250ft for immediate
+            milestones = [
+                ("2mi", 3218, "In 2 miles, "),
+                ("1mi", 1609, "In 1 mile, "),
+                ("halfmi", 804, "In half a mile, "),
+                ("quartermi", 402, "In a quarter mile, "),
+                ("immediate", immediateThreshold, "")
             ]
         }
-        
-        // Find the lowest threshold we currently fall under to trigger sequentially
-        for stage in stages.reversed() { // Start from closest (immediate) up to furthest
-            if distanceToTurn <= stage.maxDist {
-                let stageKey = "\(stepIndex)_\(stage.id)"
-                
-                if !announcementStages.contains(stageKey) {
-                    announcementStages.insert(stageKey)
-                    
-                    var spokenText = stage.prefix + currentInstruction
-                    
-                    // APPLE MAPS: "Then..." Lookahead Logic
-                    // If we are at the "immediate" stage or "quarter mile" stage, check the next step
-                    if (stage.id == "immediate" || stage.id == "quarter_mi" || stage.id == "500m") {
-                        let nextIndex = stepIndex + 1
-                        if nextIndex < steps.count {
-                            let nextStep = steps[nextIndex]
-                            let nextInstruction = nextStep.instructions
-                            // If the next maneuver is very short (< 500 feet / 150m), append it
-                            if !nextInstruction.isEmpty && nextStep.distance < 152.0 {
-                                spokenText += ", then \(nextInstruction)"
-                                // Prevent the next step from announcing its own approach/immediate stages since we bundled it
-                                announcementStages.insert("\(nextIndex)_immediate")
+
+        // 2. Downward Crossing Check
+        for (key, thresholdDist, prefix) in milestones {
+            if lastDist > thresholdDist && distanceToTurn <= thresholdDist {
+                if !flags.contains(key) {
+                    flags.insert(key)
+                    stepStageFlags[stepIndex] = flags
+
+                    var speech = prefix + instruction
+
+                    // "Then..." Lookahead Logic for immediate turns
+                    if key == "immediate" || key == "quartermi" {
+                        let nextIdx = stepIndex + 1
+                        if nextIdx < steps.count {
+                            let nextStep = steps[nextIdx]
+                            if !nextStep.instructions.isEmpty && nextStep.distance < 150 {
+                                speech += ", then \(nextStep.instructions)"
+                                
+                                if stepStageFlags[nextIdx] == nil { stepStageFlags[nextIdx] = [] }
+                                stepStageFlags[nextIdx]?.insert("immediate")
+                                stepStageFlags[nextIdx]?.insert("quartermi")
                             }
                         }
                     }
-                    
-                    announce(spokenText)
-                    break // Only announce one stage at a time
+
+                    announce(speech)
+                    break // Prevent announcing multiple milestones in a single location update
                 }
             }
         }
@@ -546,17 +563,15 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
         
         self.currentStepIndex = nextIdx
-        self.lastDistanceToTurn = nil 
+        self.lastDistanceToTurn = nil // Crucial: Resets tracking for the new step
         
         if self.currentStepIndex < steps.count {
             let nextStep = steps[self.currentStepIndex]
             self.nextManeuverInstruction = nextStep.instructions
             self.nextManeuverImageName = getImageForManeuver(nextStep.instructions)
             
-            // If the user advances naturally but missed the long-range thresholds because the step itself was short,
-            // we do NOT auto-announce the immediate instruction here unless it wasn't bundled. 
-            // `handleAppleMapsStyleAnnouncements` will catch it on the next location tick.
-            
+            // Notice: We intentionally do NOT announce here. 
+            // The processVoiceAnnouncements engine will handle it gracefully on the next location tick.
         } else if let dest = destination?.placemark.location, 
                   locationManager.latestLocation?.distance(from: dest) ?? 100 < 50 {
             announce("You have arrived at your destination.")
@@ -602,16 +617,40 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         )
     }
     
+    // Formats distance conversationally
+    private func formatDistance(_ meters: Double) -> String {
+        let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
+        if isMetric {
+            if meters >= 1000 {
+                return String(format: "%.1f kilometers", meters / 1000.0)
+            } else {
+                return "\(Int(meters / 50) * 50) meters"
+            }
+        } else {
+            let miles = meters / 1609.34
+            if miles >= 1.0 {
+                return String(format: "%.1f miles", miles).replacingOccurrences(of: ".0", with: "")
+            } else if miles >= 0.4 {
+                return "half a mile"
+            } else if miles >= 0.2 {
+                return "a quarter mile"
+            } else {
+                let feet = meters * 3.28084
+                return "\(Int(feet / 100) * 100) feet"
+            }
+        }
+    }
+    
     // MARK: - Audio Session & Announcements
     
     private func setupAudioSession() {
         do {
-            var options: AVAudioSession.CategoryOptions = [.duckOthers, .defaultToSpeaker, .allowBluetoothA2DP]
+            var options: AVAudioSession.CategoryOptions = [.duckOthers, .mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
             if #available(iOS 17.0, *) {
                 options.insert(.interruptSpokenAudioAndMixWithOthers)
             }
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
-            DebugLogger.shared.log("Audio Session Configured (Inactive)")
+            DebugLogger.shared.log("Audio Session Configured")
         } catch {
             DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
         }
@@ -630,15 +669,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let expandedMessage = expandAbbreviations(cleanMessage)
         
         do {
-            // Activate session just before speaking to ensure ducking happens smoothly
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
         }
         
         let utterance = AVSpeechUtterance(string: expandedMessage)
-        utterance.preUtteranceDelay = 0.4 // Wake up bluetooth
-        utterance.postUtteranceDelay = 0.2 // Let music stay ducked briefly after speaking
+        utterance.preUtteranceDelay = 0.5 
+        utterance.postUtteranceDelay = 0.2
         
         if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
@@ -646,7 +684,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         }
         
-        utterance.rate = 0.52 // Slightly faster than default for natural pacing
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.volume = 1.0
         
         speechSynthesizer.speak(utterance)
@@ -655,30 +693,27 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
     private func expandAbbreviations(_ text: String) -> String {
         var result = text
-        
-        // Conversational replacements
         let mapping: [String: String] = [
             "Ave": "Avenue", "St": "Street", "Pl": "Place", "Rd": "Road",
             "Dr": "Drive", "Blvd": "Boulevard", "Hwy": "Highway", "Fwy": "Freeway",
             "Expy": "Expressway", "Pkwy": "Parkway", "Ln": "Lane", "Cir": "Circle",
             "Ct": "Court", "Ter": "Terrace", "US": "U.S.", 
             "N": "North", "S": "South", "E": "East", "W": "West", 
-            "NE": "Northeast", "NW": "Northwest",
-            "SE": "Southeast", "SW": "Southwest",
-            "I-": "Interstate ", "US-": "U.S. ", "SR-": "State Route "
+            "NE": "Northeast", "NW": "Northwest", "SE": "Southeast", "SW": "Southwest",
+            "SR": "State Route", "CR": "County Route"
         ]
         
         for (abbr, full) in mapping {
-            // Handle hyphenated roads (e.g. I-10) directly without boundary requirements for the hyphen
-            if abbr.hasSuffix("-") {
-                result = result.replacingOccurrences(of: abbr, with: full, options: .caseInsensitive)
-            } else {
-                let pattern = "\\b\(abbr)\\b\\.?"
-                if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
-                    let range = NSRange(result.startIndex..., in: result)
-                    result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: full)
-                }
+            let pattern = "\\b\(abbr)\\b\\.?"
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                let range = NSRange(result.startIndex..., in: result)
+                result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: full)
             }
+        }
+        
+        if let regex = try? NSRegularExpression(pattern: "\\bI-", options: [.caseInsensitive]) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "Interstate ")
         }
         
         return result
