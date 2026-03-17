@@ -305,17 +305,18 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
         }
         
-        // Announce first instruction
+        // Initialize navigation state correctly at step 0
         if !route.steps.isEmpty {
-            // Find first step with actual content
-            let firstStep = route.steps.first(where: { !$0.instructions.isEmpty })
-            if let step = firstStep {
+            self.currentStepIndex = 0
+            let firstInstructionStep = route.steps.first(where: { !$0.instructions.isEmpty })
+            if let step = firstInstructionStep {
                 self.nextManeuverInstruction = step.instructions
                 self.nextManeuverImageName = getImageForManeuver(step.instructions)
+                
                 if isReroute {
-                    announce("Rerouting. \(step.instructions)")
+                    announce("Rerouting... \(step.instructions)")
                 } else {
-                    announce("Navigation started. \(step.instructions)")
+                    announce("Navigation started... \(step.instructions)")
                 }
             }
         }
@@ -481,14 +482,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             
             self.distanceToNextTurn = distanceToTurn
             
-            // UI should show the instructions for the NEXT maneuver we are approaching.
-            // If we are on step N, we are approaching the maneuver point at the END of step N.
-            // The instructions for step N describe what to do at that point.
-            
-            let instruction = currentStep.instructions
-            if self.nextManeuverInstruction != instruction && !instruction.isEmpty {
-                self.nextManeuverInstruction = instruction
-                self.nextManeuverImageName = getImageForManeuver(instruction)
+            // UI should strictly match the step we are currently navigating through.
+            let currentInstruction = currentStep.instructions
+            if self.nextManeuverInstruction != currentInstruction && !currentInstruction.isEmpty {
+                self.nextManeuverInstruction = currentInstruction
+                self.nextManeuverImageName = getImageForManeuver(currentInstruction)
             }
             
             // Voice Announcements (multi-stage)
@@ -537,9 +535,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             
             if distanceToTurn < 45 { 
                 advanceToNextStep(steps)
-            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 15 && distanceToTurn < 250 {
-                // If the distance to the turn is abruptly INCREASING while still on the route, 
-                // it implies the user passed the maneuver point without hitting the 45m inner circle.
+            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 20 && distanceToTurn < 250 {
+                // User drove past the point without hitting the 45m trigger.
                 advanceToNextStep(steps)
             }
             lastDistanceToTurn = distanceToTurn
