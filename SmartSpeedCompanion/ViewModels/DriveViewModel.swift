@@ -577,7 +577,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             if stepIndex == 0 {
                 // START OF TRIP LOGIC
                 if distanceToTurn < 150 { // If the first turn is very close (< 500ft)
-                    var msg = "Starting route. \(instruction)"
+                    var msg = "\(instruction)"
                     // "THEN" LOOKAHEAD: check if another turn happens immediately after the current one
                     if currentStep.distance < 150, stepIndex + 1 < steps.count, !steps[stepIndex+1].instructions.isEmpty {
                         msg += ", then \(steps[stepIndex+1].instructions)"
@@ -586,7 +586,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                     }
                     announce(msg)
                 } else {
-                    announce("Starting route. Continue on \(routeName) for \(formatDistance(distanceToTurn)).")
+                    announce("Continue on \(routeName) for \(formatDistance(distanceToTurn)).")
                 }
             } else {
                 // MID-ROUTE TRANSITION: e.g. "Continue on Main St for 5 miles"
@@ -783,11 +783,13 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         guard voiceEnabled, !message.isEmpty else { return }
         
         // Sanitize punctuation that causes natural speech to sound robotic ("Period", "Full Stop")
-        var cleanMessage = message.replacingOccurrences(of: "...", with: "")
-        cleanMessage = cleanMessage.replacingOccurrences(of: "..", with: "")
-        if cleanMessage.hasSuffix(".") { cleanMessage.removeLast() }
+        var cleanMessage = message
+            .replacingOccurrences(of: "...", with: " ")
+            .replacingOccurrences(of: "..", with: " ")
+            .replacingOccurrences(of: ".", with: " ") // Replace all dots with spaces to prevent "Full Stop" speech
+            .trimmingCharacters(in: .whitespaces)
         
-        // Conver abbreviations like "Ave" to "Avenue" before speaking
+        // Convert abbreviations like "Ave" to "Avenue" before speaking
         let expandedMessage = expandAbbreviations(cleanMessage)
         
         do {
