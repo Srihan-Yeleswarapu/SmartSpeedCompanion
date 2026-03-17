@@ -5,6 +5,8 @@ import MapKit
 import ActivityKit
 import AVFoundation
 import UIKit
+import FirebaseAuth
+import FirebaseFirestore
 
 /// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
@@ -152,6 +154,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 if self.isRecording || self.isNavigating {
                     self.updateLiveActivity()
                 }
+                
+                // PERIODIC SYNC: Update last location every 10 meters OR if moving slowly
+                if let loc = location {
+                    AuthenticationManager.shared.updateLastLocation(latitude: loc.coordinate.latitude, longitude: loc.coordinate.longitude)
+                }
             }
             .store(in: &cancellables)
     }
@@ -211,6 +218,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             } else {
                 // Normal trip: Save immediately
                 sessionRecorder.saveSession(session)
+                AuthenticationManager.shared.syncDriveSession(session)
             }
         }
         
@@ -232,6 +240,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     public func saveLastSession() {
         if let session = lastSessionToPotentialDelete {
             sessionRecorder.saveSession(session)
+            AuthenticationManager.shared.syncDriveSession(session)
             lastSessionToPotentialDelete = nil
         }
     }

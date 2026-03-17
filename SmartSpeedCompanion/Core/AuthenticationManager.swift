@@ -6,6 +6,8 @@ import FirebaseCore
 import UIKit // For device info if needed
 
 public class AuthenticationManager: ObservableObject {
+    public static let shared = AuthenticationManager()
+    
     @Published public var isAuthenticated: Bool = false
     @Published public var currentUserEmail: String?
     @Published public var initialAuthChecked: Bool = false
@@ -20,16 +22,11 @@ public class AuthenticationManager: ObservableObject {
     private var authHandle: AuthStateDidChangeListenerHandle?
     
     public func checkAuthStatus() {
-        // Fast local check via Keychain for perceived performance
-        if let uidData = KeychainHelper.standard.read(service: serviceName, account: uidAccount),
-           let uid = String(data: uidData, encoding: .utf8), !uid.isEmpty {
-            self.isAuthenticated = true
-        }
-        
         // Ensure Firebase is actually configured before calling Auth.auth()
         // This prevents launch crashes if static initialization order is unpredictable.
-        guard let _ = try? FirebaseApp.app() else {
+        guard FirebaseApp.app() != nil else {
             print("AuthenticationManager: Firebase not yet configured. Skipping auth check.")
+            initialAuthChecked = true
             return
         }
         
@@ -42,6 +39,7 @@ public class AuthenticationManager: ObservableObject {
                     self.isAuthenticated = true
                     self.currentUserEmail = user.email
                     self.saveUIDToKeychain(uid: user.uid)
+                    self.fetchUserPreferences() // Restore settings
                 } else {
                     self.isAuthenticated = false
                     self.currentUserEmail = nil
@@ -119,17 +117,41 @@ public class AuthenticationManager: ObservableObject {
         }
     }
     
-    // Note: To fully integrate Apple Sign In with Firebase, use OAuthProvider. 
-    // This is kept here to not break the UI flow, but creates an anonymous-like session locally.
-    public func signInWithApple(credential: ASAuthorizationAppleIDCredential) {
-        let email = credential.email ?? "appleuser@apple.com"
-        let mockUid = credential.user // Apple's unique user identifier
+    // MARK: - Apple Sign In
+    
+    public func signInWithApple(idToken: String, nonce: String, fullName: PersonNameComponents?, completion: @escaping (Result<Void, Error>) -> Void) {
+        let credential = OAuthProvider.appleCredential(
+            withIDToken: idToken,
+            rawNonce: nonce,
+            fullName: fullName
+        )
         
-        saveUIDToKeychain(uid: mockUid)
-        
-        DispatchQueue.main.async {
-            self.isAuthenticated = true
-            self.currentUserEmail = email
+        Auth.auth().signIn(with: credential) { [weak self] authResult, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            
+            guard let user = authResult?.user else {
+                completion(.failure(AuthError.userNotFound))
+                return
+            }
+            
+            // If it's a new user, create their document
+            // Apple only provides fullName the FIRST time. 
+            // Firebase handles some of this mapping, but we'll ensure we have a record.
+            let username = [fullName?.givenName, fullName?.familyName]
+                .compactMap { $0 }
+                .joined(separator: " ")
+            
+            self?.createUserDocument(uid: user.uid, email: user.email ?? "", username: username.isEmpty ? "Apple User" : username) { _ in
+                DispatchQueue.main.async {
+                    self?.isAuthenticated = true
+                    self?.currentUserEmail = user.email
+                    self?.saveUIDToKeychain(uid: user.uid)
+                    completion(.success(()))
+                }
+            }
         }
     }
     
@@ -157,11 +179,114 @@ public class AuthenticationManager: ObservableObject {
             "email": email,
             "username": username,
             "subscription": "free",
-            "created": FieldValue.serverTimestamp()
+            "created": FieldValue.serverTimestamp(),
+            "lastLocation": [
+                "lat": 0.0,
+                "lon": 0.0,
+                "timestamp": FieldValue.serverTimestamp()
+            ]
         ]
         
-        userRef.setData(userData) { error in
+        userRef.setData(userData, merge: true) { error in
             completion(error)
+        }
+    }
+    
+    // MARK: - Cloud Data Syncing
+    
+    /// Syncs a completed drive session to Firestore under the user's account.
+    public func syncDriveSession(_ session: DriveSession) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        let db = Firestore.firestore()
+        
+        let readingsData: [[String: Any]] = session.readings.map { reading in
+            return [
+                "timestamp": reading.timestamp,
+                "lat": reading.latitude,
+                "lon": reading.longitude,
+                "speed": reading.speed,
+                "limit": reading.speedLimit,
+                "over": reading.overLimit
+            ]
+        }
+        
+        let sessionData: [String: Any] = [
+            "id": session.id.uuidString,
+            "startTime": session.startTime,
+            "endTime": session.endTime ?? Date(),
+            "startName": session.startLocationName ?? "Unknown",
+            "endName": session.endLocationName ?? "Unknown",
+            "score": session.drivingScore,
+            "duration": session.durationSeconds,
+            "readings": readingsData
+        ]
+        
+        db.collection("users").document(uid).collection("sessions").document(session.id.uuidString).setData(sessionData) { error in
+            if let error = error {
+                print("Failed to sync session to cloud: \(error.localizedDescription)")
+            } else {
+                print("Successfully synced session \(session.id) to cloud.")
+            }
+        }
+    }
+    
+    /// Updates the user's last known location in their profile.
+    public func updateLastLocation(latitude: Double, longitude: Double) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        let db = Firestore.firestore()
+        
+        db.collection("users").document(uid).updateData([
+            "lastLocation": [
+                "lat": latitude,
+                "lon": longitude,
+                "timestamp": FieldValue.serverTimestamp()
+            ]
+        ])
+    }
+    
+    /// Pushes local settings preferences to the cloud.
+    public func syncUserPreferences() {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        let db = Firestore.firestore()
+        
+        // Collate all @AppStorage keys
+        let defaults = UserDefaults.standard
+        let preferences: [String: Any] = [
+            "userBuffer": defaults.double(forKey: "userBuffer"),
+            "audioAlertsEnabled": defaults.bool(forKey: "audioAlertsEnabled"),
+            "hapticsEnabled": defaults.bool(forKey: "hapticsEnabled"),
+            "voiceNavEnabled": defaults.bool(forKey: "voiceNavEnabled"),
+            "speedUnit": defaults.string(forKey: "speedUnit") ?? "mph",
+            "avoidHighways": defaults.bool(forKey: "avoidHighways"),
+            "measurementSystem": defaults.string(forKey: "measurementSystem") ?? "Imperial"
+        ]
+        
+        db.collection("users").document(uid).updateData([
+            "preferences": preferences,
+            "updatedAt": FieldValue.serverTimestamp()
+        ])
+    }
+    
+    /// Pulls settings preferences from the cloud and applies them locally.
+    public func fetchUserPreferences() {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        let db = Firestore.firestore()
+        
+        db.collection("users").document(uid).getDocument { (document, error) in
+            if let document = document, document.exists, let data = document.data(), let prefs = data["preferences"] as? [String: Any] {
+                let defaults = UserDefaults.standard
+                
+                // Update local storage
+                if let buffer = prefs["userBuffer"] as? Double { defaults.set(buffer, forKey: "userBuffer") }
+                if let audio = prefs["audioAlertsEnabled"] as? Bool { defaults.set(audio, forKey: "audioAlertsEnabled") }
+                if let haptics = prefs["hapticsEnabled"] as? Bool { defaults.set(haptics, forKey: "hapticsEnabled") }
+                if let voice = prefs["voiceNavEnabled"] as? Bool { defaults.set(voice, forKey: "voiceNavEnabled") }
+                if let unit = prefs["speedUnit"] as? String { defaults.set(unit, forKey: "speedUnit") }
+                if let highways = prefs["avoidHighways"] as? Bool { defaults.set(highways, forKey: "avoidHighways") }
+                if let system = prefs["measurementSystem"] as? String { defaults.set(system, forKey: "measurementSystem") }
+                
+                print("User preferences restored from cloud.")
+            }
         }
     }
     

@@ -10,6 +10,7 @@ public struct SignInView: View {
     @State private var errorMessage = ""
     @State private var isError = false
     @State private var isSigningIn = false
+    @State private var currentNonce = ""
     
     public var body: some View {
         ZStack {
@@ -71,6 +72,7 @@ public struct SignInView: View {
                 .padding(.horizontal)
                 .disabled(isSigningIn)
                 
+                /*
                 HStack {
                     VStack { Divider().background(Color.gray) }
                     Text("OR")
@@ -81,12 +83,37 @@ public struct SignInView: View {
                 .padding(.horizontal)
                 
                 SignInWithAppleButton(.signIn) { request in
+                    let nonce = CryptoUtils.randomNonceString()
+                    currentNonce = nonce
                     request.requestedScopes = [.email, .fullName]
+                    request.nonce = CryptoUtils.sha256(nonce)
                 } onCompletion: { result in
                     switch result {
                     case .success(let authorization):
                         if let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential {
-                            appState.authManager.signInWithApple(credential: appleIDCredential)
+                            guard let appleIDToken = appleIDCredential.identityToken else {
+                                self.errorMessage = "Unable to fetch identity token"
+                                self.isError = true
+                                return
+                            }
+                            guard let idTokenString = String(data: appleIDToken, encoding: .utf8) else {
+                                self.errorMessage = "Unable to serialize token string"
+                                self.isError = true
+                                return
+                            }
+                            
+                            isSigningIn = true
+                            appState.authManager.signInWithApple(
+                                idToken: idTokenString,
+                                nonce: currentNonce,
+                                fullName: appleIDCredential.fullName
+                            ) { result in
+                                self.isSigningIn = false
+                                if case .failure(let error) = result {
+                                    self.errorMessage = error.localizedDescription
+                                    self.isError = true
+                                }
+                            }
                         }
                     case .failure(let error):
                         self.errorMessage = error.localizedDescription
@@ -96,6 +123,7 @@ public struct SignInView: View {
                 .signInWithAppleButtonStyle(.white)
                 .frame(height: 50)
                 .padding(.horizontal)
+                */
                 
                 Spacer()
                 
