@@ -496,6 +496,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         if distanceToRoute > 150 { // 150m is the industry standard for "Off Route"
             DebugLogger.shared.log("OFF ROUTE: \(Int(distanceToRoute))m. Rerouting...")
+            announce("Off route. recalculating.")
             if let dest = destination {
                 Task {
                     await selectDestinationAndCalculateRoutes(to: dest)
@@ -591,14 +592,17 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 // MID-ROUTE TRANSITION: e.g. "Continue on Main St for 5 miles"
                 if distanceToTurn > 3218 { // > 2 miles
                     announce("Continue on \(routeName) for \(formatDistance(distanceToTurn)).")
-                } else if distanceToTurn > 1200 { // ~0.75 miles
+                } else {
+                    // Always give an entry announcement for the turn if it's the user's focus
                     announce("In \(formatDistance(distanceToTurn)), \(instruction)")
                 }
             }
         }
 
         var flags = stepStageFlags[stepIndex]!
-        guard let lastDist = lastDistanceToTurn else { return }
+        // If this is the first tick for this step, we use a very large 'previous' distance 
+        // to ensure immediate/close milestones trigger if we're already past them.
+        let lastDist = lastDistanceToTurn ?? (distanceToTurn + 10) 
 
         let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
         
@@ -811,7 +815,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         utterance.volume = 1.0
         
         speechSynthesizer.speak(utterance)
-        DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage)")
+        DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage) (Voice enabled: \(voiceEnabled))")
     }
 
     /// Maps short address forms into full-blown words for synthesis.
