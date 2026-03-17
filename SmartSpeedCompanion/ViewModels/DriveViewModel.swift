@@ -305,19 +305,24 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
         }
         
-        // Initialize navigation state correctly at step 0
+        // Initialize navigation state correctly at the first MEANINGFUL step
         if !route.steps.isEmpty {
-            self.currentStepIndex = 0
-            let firstInstructionStep = route.steps.first(where: { !$0.instructions.isEmpty })
-            if let step = firstInstructionStep {
-                self.nextManeuverInstruction = step.instructions
-                self.nextManeuverImageName = getImageForManeuver(step.instructions)
-                
-                if isReroute {
-                    announce("Rerouting... \(step.instructions)")
-                } else {
-                    announce("Navigation started... \(step.instructions)")
-                }
+            var firstRealIndex = 0
+            // Skip steps with no instructions (like 'Proceed to route' placeholders)
+            while firstRealIndex < route.steps.count && route.steps[firstRealIndex].instructions.isEmpty {
+                firstRealIndex += 1
+            }
+            
+            // Fallback to 0 if all are empty
+            let targetIndex = firstRealIndex < route.steps.count ? firstRealIndex : 0
+            self.currentStepIndex = targetIndex
+            
+            let activeStep = route.steps[targetIndex]
+            self.nextManeuverInstruction = activeStep.instructions
+            self.nextManeuverImageName = getImageForManeuver(activeStep.instructions)
+            
+            if !activeStep.instructions.isEmpty {
+                announce(activeStep.instructions)
             }
         }
 
@@ -517,26 +522,26 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             
             // Check thresholds in descending order
             for (threshold, key, text) in thresholds {
-                // If we've just crossed under this threshold (within a 200m buffer to avoid announcing late)
-                if distanceToTurn <= threshold && distanceToTurn > threshold - 200 {
+                // Buffer reduced to 50m to prevent overlapping alerts. 
+                // Alerts will only trigger when you ENTER the specific distance zone.
+                if distanceToTurn <= threshold && distanceToTurn > threshold - 50 {
                     let stageKey = "\(currentStepIndex)_\(key)"
                     if !announcementStages.contains(stageKey) {
-                        // Mark ALL thresholds for this SPECIFIC currentStepIndex as used
-                        // to ensure we don't repeat alerts for the SAME turn.
                         announcementStages.insert(stageKey)
-                        
-                        // ONLY speak the instruction for the current index.
-                        // We DO NOT check steps[currentStepIndex + 1] here to avoid skip-ahead confusion.
                         announce("In \(text), \(currentInstruction)")
                         break
                     }
                 }
             }
             
-            if distanceToTurn < 45 { 
+            // Tightened from 45m to 25m based on user's high-precision GPS (3-5m accuracy)
+            // We ONLY auto-advance if the user is moving (speed > 1m/s) to prevent jitter-advancement
+            let isMoving = location.speed > 1.0 
+            
+            if distanceToTurn < 25 && isMoving { 
                 advanceToNextStep(steps)
-            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 20 && distanceToTurn < 250 {
-                // User drove past the point without hitting the 45m trigger.
+            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 25 && distanceToTurn < 250 && isMoving {
+                // User drove past the point (distance now increasing).
                 advanceToNextStep(steps)
             }
             lastDistanceToTurn = distanceToTurn
@@ -556,17 +561,25 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private var lastDistanceToTurn: CLLocationDistance? = nil
     
     private func advanceToNextStep(_ steps: [MKRoute.Step]) {
-        // Increment step index first
-        self.currentStepIndex += 1
+        var nextIdx = self.currentStepIndex + 1
+        
+        // COLLAPSE: Skip any intermediate steps that don't have instructions.
+        // This ensures the currentStepIndex ALWAYS points to a meaningful target.
+        while nextIdx < steps.count && steps[nextIdx].instructions.isEmpty {
+            nextIdx += 1
+        }
+        
+        self.currentStepIndex = nextIdx
         self.lastDistanceToTurn = nil 
         
         if self.currentStepIndex < steps.count {
             let nextStep = steps[self.currentStepIndex]
             
-            // Only announce if it's a new unique instruction to prevent "In 500ft Turn Left" -> "Turn Left" spam
-            if !nextStep.instructions.isEmpty && nextStep.instructions != self.nextManeuverInstruction {
-                announce(nextStep.instructions)
-            }
+            // Update the UI immediately so it matches the voice
+            self.nextManeuverInstruction = nextStep.instructions
+            self.nextManeuverImageName = getImageForManeuver(nextStep.instructions)
+            
+            announce(nextStep.instructions)
         } else if let dest = destination?.placemark.location, 
                   locationManager.latestLocation?.distance(from: dest) ?? 100 < 50 {
             Task { await self.endNavigation() }
