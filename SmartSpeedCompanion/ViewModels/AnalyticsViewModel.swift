@@ -56,10 +56,23 @@ public final class AnalyticsViewModel: ObservableObject {
     // MARK: - Actions
     
     public func deleteSession(_ session: DriveSession, context: ModelContext) {
+        let sessionIdToDelete = session.id
+        
+        // 1. Clear selection FIRST if it's the one being deleted.
+        // This ensures the UI detaches from the object before it's invalidated.
+        if selectedSession?.id == sessionIdToDelete {
+            withAnimation {
+                selectedSession = nil
+            }
+        }
+        
+        // 2. Perform the deletion.
         context.delete(session)
-        try? context.save()
-        if selectedSession?.id == session.id {
-            selectedSession = nil
+        
+        do {
+            try context.save()
+        } catch {
+            print("Failed to save deletion: \(error)")
         }
     }
     
