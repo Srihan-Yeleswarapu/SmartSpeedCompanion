@@ -497,6 +497,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             let thresholds: [(distance: Double, key: String, text: String)]
             if isMetric {
                 thresholds = [
+                    (10000.0, "10km", "10 kilometers"),
+                    (5000.0, "5km", "5 kilometers"),
                     (3000.0, "3km", "3 kilometers"),
                     (2000.0, "2km", "2 kilometers"),
                     (1000.0, "1km", "1 kilometer"),
@@ -505,6 +507,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 ]
             } else {
                 thresholds = [
+                    (16093.4, "10mi", "10 miles"),
+                    (8046.72, "5mi", "5 miles"),
                     (3218.69, "2mi", "2 miles"),
                     (1609.34, "1mi", "1 mile"),
                     (804.67, "halfi", "half a mile"),
@@ -621,7 +625,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             // We configure the CATEGORY here but do NOT call setActive(true) yet.
             // Calling setActive(true) on launch is what interrupts background music.
             // .mixWithOthers is CRITICAL to let Spotify/Apple Music keep playing.
-            var options: AVAudioSession.CategoryOptions = [.duckOthers, .mixWithOthers, .defaultToSpeaker]
+            // .allowBluetoothA2DP ensures high quality audio over car systems.
+            var options: AVAudioSession.CategoryOptions = [.duckOthers, .mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
             if #available(iOS 17.0, *) {
                 options.insert(.interruptSpokenAudioAndMixWithOthers)
             }
@@ -648,7 +653,13 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
         }
         
-        let utterance = AVSpeechUtterance(string: expandedMessage)
+        // Bluetooth/Car Audio systems often have a "wake-up" lag that cuts off the first 1-2 seconds.
+        // We prepend a "period" with a pre-utterance delay to force the audio session to stay open
+        // during the hardware transition.
+        let bluetoothWakeUp = ". . "
+        let utterance = AVSpeechUtterance(string: bluetoothWakeUp + expandedMessage)
+        utterance.preUtteranceDelay = 0.5 // Half second of silence to wake up the car's speakers
+        
         if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
         } else {
