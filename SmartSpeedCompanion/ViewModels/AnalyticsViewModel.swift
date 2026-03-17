@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import SwiftUI
 
 /// ViewModel for computing statistics and feeding the Analytics views.
 @MainActor
