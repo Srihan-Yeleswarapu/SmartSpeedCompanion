@@ -347,17 +347,24 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         // Setup initial UI text based on the first meaningful step
         if !route.steps.isEmpty {
-            var firstRealIndex = 0
-            while firstRealIndex < route.steps.count && route.steps[firstRealIndex].instructions.isEmpty {
-                firstRealIndex += 1
+            var targetIndex = 0
+            while targetIndex < route.steps.count && route.steps[targetIndex].instructions.isEmpty {
+                targetIndex += 1
             }
+            if targetIndex >= route.steps.count { targetIndex = 0 }
             
-            let targetIndex = firstRealIndex < route.steps.count ? firstRealIndex : 0
             self.currentStepIndex = targetIndex
             
             let activeStep = route.steps[targetIndex]
-            self.nextManeuverInstruction = activeStep.instructions
-            self.nextManeuverImageName = getImageForManeuver(activeStep.instructions)
+            
+            // Look ahead for the actual instruction if the current one is 'Proceed to route'
+            var displayInstruction = activeStep.instructions
+            if instructionIsGenericLabel(displayInstruction) && targetIndex + 1 < route.steps.count {
+                displayInstruction = route.steps[targetIndex + 1].instructions
+            }
+            
+            self.nextManeuverInstruction = displayInstruction
+            self.nextManeuverImageName = getImageForManeuver(displayInstruction)
         }
 
         // Display the route in a Live Activity on the lock screen
@@ -483,8 +490,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     // MARK: - Core Navigation Loop (Apple Maps Parity)
     
-    // MARK: - Core Navigation Loop (Apple Maps Parity)
-    
     /// The main "heartbeat" of navigation. Runs every location update to check for steps, turns, and reroutes.
     private func updateNavigationProgress(at location: CLLocation) {
         guard let route = currentRoute else { return }
@@ -536,14 +541,22 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             while targetIdx < steps.count && steps[targetIdx].instructions.isEmpty {
                 targetIdx += 1
             }
+            
             if targetIdx < steps.count {
                 upcomingInstruction = steps[targetIdx].instructions
             } else {
                 upcomingInstruction = currentStep.instructions // Fallback to current if it's the last step
             }
             
+            // Force display of the *next* turn if current step is just a generic arrival or starting label
+            if instructionIsGenericLabel(currentStep.instructions) && !upcomingInstruction.isEmpty {
+                upcomingInstruction = upcomingInstruction
+            } else if upcomingInstruction.isEmpty {
+                upcomingInstruction = currentStep.instructions
+            }
+            
             // Sync UI text immediately
-            if self.nextManeuverInstruction != upcomingInstruction && !upcomingInstruction.isEmpty {
+            if !upcomingInstruction.isEmpty {
                 self.nextManeuverInstruction = upcomingInstruction
                 self.nextManeuverImageName = getImageForManeuver(upcomingInstruction)
             }
@@ -553,9 +566,13 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             
             // 3. STEP PROGRESSION: Advance to next step once we pass the point
             let isMoving = location.speed > 2.0 
-            if distanceToTurn < 15 { 
+            // Threshold for advancement: 15m for local, 40m for high speed
+            let advanceThreshold = location.speed > 20 ? 40.0 : 15.0
+            
+            if distanceToTurn < advanceThreshold { 
                 advanceToNextStep(steps)
             } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 15 && distanceToTurn < 100 && isMoving {
+                // If distance starts INCREASING significantly after we were close (<100m), we passed it
                 advanceToNextStep(steps)
             }
             
@@ -596,9 +613,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         if upcomingInstruction.isEmpty { return }
 
-        let formattedDist = formatDistance(distanceToTurn)
         // Immediate announcement threshold based on speed (higher speed = more warning)
-        let immediateThreshold = speed > 18.0 ? 150.0 : 60.0 // meters. 150m = ~500ft, 60m = ~200ft
+        // Highway speed: ~400m (1/4 mile), City speed: ~80m (250ft)
+        let immediateThreshold = speed > 20.0 ? 400.0 : 80.0 
         
         // 1. Initial Advance Warning (Right after previous turn)
         if !flags.contains("initial") {
@@ -606,6 +623,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             
             // Only give advance warning if we aren't already right on top of the turn
             if distanceToTurn > immediateThreshold + 50 {
+                let formattedDist = formatDistance(distanceToTurn)
                 if distanceToTurn > 3218 { // > 2 miles, give a "continue"
                     let routeName = steps[stepIndex].name.isEmpty ? (currentRoute?.name ?? "the road") : steps[stepIndex].name
                     announce("Continue on \(routeName) for \(formattedDist).")
@@ -840,6 +858,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         if lower.contains("left") { return "arrow.turn.up.left" }
         
         return "arrow.up"
+    }
+
+    /// Checks if an instruction is a generic starting/ending label.
+    private func instructionIsGenericLabel(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return lower.contains("proceed to route") || lower.contains("starting route") || lower.contains("you have arrived")
     }
 
     // MARK: - Dynamic Rerouting (Traffic Awareness)
