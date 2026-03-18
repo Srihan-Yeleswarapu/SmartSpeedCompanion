@@ -53,6 +53,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     @Published public var currentRoute: MKRoute? = nil
     /// The destination selected by the user.
     @Published public var destination: MKMapItem? = nil
+    // Core Driving State
+    @Published public var destinationItem: MKMapItem? = nil
     /// Resolved search results for the user's manual query.
     @Published public var searchResults: [MKMapItem] = []
     /// Real-time search completion suggestions (addresses/POIs).
@@ -939,7 +941,29 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
 
-    // ... end of startNavigation function ...
+    private func checkForFasterRoute() async {
+        guard let dest = destinationItem, let current = currentRoute else { return }
+        
+        let request = MKDirections.Request()
+        request.source = MKMapItem.forCurrentLocation()
+        request.destination = dest
+        request.transportType = .automobile
+        
+        do {
+            let directions = MKDirections(request: request)
+            let response = try await directions.calculate()
+            if let fastest = response.routes.first {
+                let remainingTime = current.expectedTravelTime - (Date().timeIntervalSince(sessionStartTime ?? Date()))
+                // If the new route saves more than 2 minutes, reroute
+                if fastest.expectedTravelTime < remainingTime - 120 {
+                    DebugLogger.shared.log("TRAFFIC ALERT: Faster route found.")
+                    await startNavigation(to: dest) 
+                }
+            }
+        } catch {
+            // Silently fail traffic checks to avoid interrupting the drive
+        }
+    }
 
     // MARK: - Rerouting Logic
     private func checkOffRouteStatus(_ location: CLLocation) {
