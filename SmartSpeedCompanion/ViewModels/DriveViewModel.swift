@@ -964,24 +964,26 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
 
     // MARK: - Rerouting Logic
+    // MARK: - Rerouting Logic
     private func checkOffRouteStatus(_ location: CLLocation) {
         guard let route = currentRoute, !isCalculatingReroute else { return }
         
         let distance = distanceToPolyline(location, polyline: route.polyline)
         
-        // 35m is the "Sweet Spot" for driving reroutes
+        // 35m threshold to avoid GPS "noise"
         if distance > 35.0 { 
             let timeSinceLastReroute = Date().timeIntervalSince(lastRerouteTime)
             
-            // This hits your < 3.0s requirement
+            // 3-second cooldown for super fast rerouting
             if timeSinceLastReroute > 3.0 { 
                 DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting.")
                 lastRerouteTime = Date()
                 isCalculatingReroute = true
                 
                 Task { @MainActor in
+                    // FIXED: Using the correct property 'destinationItem' 
+                    // and calling startNavigation without the 'route' argument
                     if let dest = self.destinationItem {
-                        // This triggers a fresh route calculation immediately
                         await self.startNavigation(to: dest) 
                     }
                     self.isCalculatingReroute = false
@@ -1001,9 +1003,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
         return minDistance
     }
-} // <--- THIS BRACE CLOSES THE CLASS
+} // <--- THIS BRACE MUST CLOSE THE DRIVEVIEWMODEL CLASS
 
-// MARK: - Extensions (Must be at File Scope)
+// MARK: - File Scope Extensions (Outside the Class)
+
 extension DriveViewModel: @preconcurrency MKLocalSearchCompleterDelegate {
     public func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         self.searchCompletions = completer.results
