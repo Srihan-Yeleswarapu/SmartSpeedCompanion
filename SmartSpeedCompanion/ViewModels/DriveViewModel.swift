@@ -16,6 +16,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     public let speedEngine: SpeedEngine
     public let alertEngine: AlertEngine
     public let sessionRecorder: SessionRecorder
+    private var lastRerouteTime: Date = .distantPast
+    private var isCalculatingReroute: Bool = false
+    private let offRouteThreshold: CLLocationDistance = 10.0 // 10 meters (~33 feet)
     
     // MARK: - Core Driving State
     /// User's current speed in MPH (always converted to MPH for the logic layer).
@@ -175,17 +178,19 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             .throttle(for: .milliseconds(500), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] location in
                 guard let self = self else { return }
-                
+                self.speed = location.speedMPH
+                self.currentHeading = location.course >= 0 ? location.course : nil
                 // Advance turn-by-turn guidance
                 if self.isNavigating {
                     self.updateNavigationProgress(at: location)
                 }
-                
                 // Ensure Dynamic Island / Lock Screen stays fresh
                 if self.isRecording || self.isNavigating {
                     self.updateLiveActivity()
                 }
-                
+                if self.currentRoute != nil {
+                    self.checkOffRouteStatus(location)
+                }
                 // Sync position to Firebase for potential multi-device/dashboard features
                 AuthenticationManager.shared.updateLastLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
             }
@@ -957,6 +962,53 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         } catch {
             // Silently fail traffic checks
         }
+
+    
+    private func checkOffRouteStatus(_ location: CLLocation) {
+        guard let route = currentRoute, !isCalculatingReroute else { return }
+        
+        // 1. Calculate the actual distance to the closest point on the path
+        let distance = distanceToPolyline(location, polyline: route.polyline)
+        
+        // 2. If significantly off route (e.g., > 35 meters)
+        if distance > offRouteThreshold {
+            let timeSinceLastReroute = Date().timeIntervalSince(lastRerouteTime)
+            
+            // 3. Lower cooldown to 3 seconds for "super fast" response
+            if timeSinceLastReroute > 3.0 { 
+                DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting now.")
+                lastRerouteTime = Date()
+                isCalculatingReroute = true
+                
+                Task { @MainActor in
+                    // Call your existing navigation start
+                    await startNavigation(to: destinationItem!, route: nil)
+                    isCalculatingReroute = false
+                }
+            }
+        }
+    }
+
+    private func distanceToPolyline(_ location: CLLocation, polyline: MKPolyline) -> CLLocationDistance {
+        var minDistance: CLLocationDistance = .greatestFiniteMagnitude
+        let points = polyline.points()
+        
+        // We check every 5th point (stride) for performance. 
+        // This is extremely fast and more than accurate enough for driving.
+        for i in stride(from: 0, to: polyline.pointCount, by: 5) {
+            let mapPoint = points[i]
+            let coordinate = mapPoint.coordinate
+            let routeLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            let distance = location.distance(from: routeLocation)
+            
+            if distance < minDistance {
+                minDistance = distance
+            }
+            
+            // Optimization: If we find we are within 10m of a point, we are definitely "on track"
+            if minDistance < 10 { return minDistance }
+        }
+        return minDistance
     }
 }
 
