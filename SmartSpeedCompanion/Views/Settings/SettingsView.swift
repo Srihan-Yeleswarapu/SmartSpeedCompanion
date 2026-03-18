@@ -8,6 +8,7 @@ public struct SettingsView: View {
     @AppStorage("speedUnit") var speedUnit: String = "mph"
     @AppStorage("avoidHighways") var avoidHighways: Bool = false
     @AppStorage("measurementSystem") var measurementSystem: String = "Imperial"
+    @AppStorage("gpsAccuracyMode") var gpsAccuracyMode: String = "navigation"
     
     @EnvironmentObject var driveViewModel: DriveViewModel
     @EnvironmentObject var appState: AppState
@@ -66,6 +67,34 @@ public struct SettingsView: View {
                         .pickerStyle(SegmentedPickerStyle())
                     }
                     .padding(.vertical, 4)
+                }
+                .listRowBackground(DesignSystem.bgPanel)
+                
+                Section(header:
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("GPS ACCURACY").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)
+                    }
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("GPS Accuracy", selection: $gpsAccuracyMode) {
+                            Text("Navigation (High Accuracy)").tag("navigation")
+                            Text("Balanced (Battery Saver)").tag("balanced")
+                        }
+                        .pickerStyle(InlinePickerStyle())
+                        .onChange(of: gpsAccuracyMode) { _ in
+                            driveViewModel.locationManager.applyAccuracyMode()
+                        }
+                        
+                        Group {
+                            if gpsAccuracyMode == "navigation" {
+                                Text("Uses the highest GPS accuracy. Best for speed limit detection but uses more battery and may cause device warmth.")
+                            } else {
+                                Text("Slightly reduced GPS accuracy (~5-10m). Significantly reduces battery drain and device heat. Recommended if your phone runs hot.")
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    }
                 }
                 .listRowBackground(DesignSystem.bgPanel)
                 

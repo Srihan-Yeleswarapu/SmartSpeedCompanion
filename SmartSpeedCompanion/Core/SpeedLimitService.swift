@@ -16,7 +16,9 @@ public class SmartSpeedLimitService: ObservableObject {
     
     private var lastValidLimit: Int = 0
     private var consecutiveMissCount: Int = 0
-    private let missThresholdBeforeClear: Int = 15 
+    // After 20 consecutive misses, auto-clear the spatial cache so stale
+    // bounding boxes can't pin us to the wrong road.
+    private let missThresholdBeforeClear: Int = 20
     
     private init() {}
     
@@ -47,8 +49,13 @@ public class SmartSpeedLimitService: ObservableObject {
                 self.currentLimit = lastValidLimit
                 return lastValidLimit
             } else if consecutiveMissCount >= missThresholdBeforeClear {
+                // Bust the spatial cache so we get fresh data on the next update.
+                // This auto-fixes the "stuck speed limit" issue without a manual trigger.
+                await ArizonaSpeedLimitService.shared.clearCache()
+                self.lastValidLimit = 0
                 self.currentLimit = 0
                 self.dataSource = "No Data"
+                self.consecutiveMissCount = 0
             }
             
             return self.currentLimit

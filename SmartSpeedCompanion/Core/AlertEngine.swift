@@ -2,6 +2,7 @@
 import Foundation
 import Combine
 import AudioToolbox
+import AVFoundation
 
 @MainActor
 public protocol AlertEngineProtocol {
@@ -45,6 +46,9 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         }
     }
     
+    // Track the last time a beep was played to enforce a 5-second cooldown
+    private var lastBeepTime: Date = .distantPast
+
     private func startMonitoring() {
         consecutiveSeconds = 0
         timerCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
@@ -59,10 +63,14 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 }
                 
                 self.consecutiveSeconds += 1
-                // Reduced from 5s to 3s for better real-world responsiveness
+                // Trigger after 3s, then every 5s to avoid spam
                 if self.consecutiveSeconds >= 3 {
                     self.audioAlertActive = true
-                    self.playBeep()
+                    let now = Date()
+                    if now.timeIntervalSince(self.lastBeepTime) >= 5.0 {
+                        self.lastBeepTime = now
+                        self.playBeep()
+                    }
                 }
             }
     }
@@ -80,8 +88,17 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     
     private func playBeep() {
-        // Play the standard iOS alert sound. 1320 is a crisp "tink" perfect for notifications.
-        // It plays through the active audio route (including CarPlay) and handles its own lifecycle.
-        AudioServicesPlayAlertSound(1320)
+        // Must activate an audio session BEFORE playing a system sound so that
+        // the sound routes through CarPlay and isn't silenced by the ringer switch.
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP])
+            try session.setActive(true)
+        } catch {
+            DebugLogger.shared.log("AlertEngine: Audio session error: \(error.localizedDescription)")
+        }
+        // 1052 = "Tock" — a short, piercing alert that cuts through car noise
+        AudioServicesPlayAlertSound(1052)
+        DebugLogger.shared.log("AlertEngine: BEEP played.")
     }
 }

@@ -106,6 +106,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // Voice Navigation Tracking
     private var stepStageFlags: [Int: Set<String>] = [:]
     private var lastDistanceToTurn: CLLocationDistance? = nil
+    private var hasAnnouncedArrival: Bool = false
     
     public init(modelContext: ModelContext? = nil) {
         // Core Logic components are owned by the ViewModel
@@ -335,6 +336,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Reset flags so we can re-announce the approach to the first turn
         self.stepStageFlags.removeAll()
         self.lastDistanceToTurn = nil
+        self.hasAnnouncedArrival = false
         
         startRerouteTimer() // Every 5 minutes check for a faster path
         self.eta = Date().addingTimeInterval(route.expectedTravelTime)
@@ -508,6 +510,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let distanceToRoute = location.distance(from: CLLocation(latitude: nearestPoint.latitude, longitude: nearestPoint.longitude))
         
         if distanceToRoute > 150 { // 150m is the industry standard for "Off Route"
+            // Do NOT reroute when stationary or very slow (stopped at a light, parking lot).
+            // This prevents both false positives and the map going "bonkers" in car parks.
+            let currentSpeed = location.speed // m/s
+            if currentSpeed < 2.2 { // < ~5 mph
+                return
+            }
             if !self.isRerouting {
                 self.isRerouting = true
                 DebugLogger.shared.log("OFF ROUTE: \(Int(distanceToRoute))m. Rerouting...")
@@ -572,14 +580,15 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             processVoiceAnnouncements(for: currentStepIndex, distanceToTurn: distanceToTurn, steps: steps, speed: location.speed)
             
             // 3. STEP PROGRESSION: Advance to next step once we pass the point
-            let isMoving = location.speed > 2.0 
-            // Threshold for advancement: 15m for local, 40m for high speed
-            let advanceThreshold = location.speed > 20 ? 40.0 : 15.0
+            let isMoving = location.speed > 2.0
+            // Higher thresholds prevent premature advancement at traffic lights.
+            // At speed (>20 m/s) use 40m; otherwise 25m.
+            let advanceThreshold = location.speed > 20 ? 40.0 : 25.0
             
-            if distanceToTurn < advanceThreshold { 
+            if distanceToTurn < advanceThreshold && isMoving {
                 advanceToNextStep(steps)
-            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 15 && distanceToTurn < 100 && isMoving {
-                // If distance starts INCREASING significantly after we were close (<100m), we passed it
+            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 20 && distanceToTurn < 80 && isMoving {
+                // Distance increasing significantly after being very close: we passed the turn
                 advanceToNextStep(steps)
             }
             
@@ -592,6 +601,16 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let totalExpectedTime = route.expectedTravelTime
         let newETA = Date().addingTimeInterval(max(30, totalExpectedTime * (1.0 - progressPercent)))
         self.eta = newETA
+        
+        // 5. PROACTIVE ARRIVAL: Announce "arriving" when within 10m of destination,
+        //    regardless of whether step logic has completed.
+        if !hasAnnouncedArrival, let dest = destination?.placemark.location {
+            let distToDest = location.distance(from: dest)
+            if distToDest <= 10.0 {
+                hasAnnouncedArrival = true
+                announce("You are arriving at your destination.")
+            }
+        }
     }
     
     /**
@@ -655,9 +674,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             self.currentStepIndex += 1
             self.lastDistanceToTurn = nil
         } else {
-            // We are on the final step/arrival
-            if let dest = destination?.placemark.location, 
-               locationManager.latestLocation?.distance(from: dest) ?? 100 <= 15 {
+            // We are on the final step — announce arrival when within 50m
+            let dist = locationManager.latestLocation.flatMap { loc in
+                destination?.placemark.location.map { loc.distance(from: $0) }
+            } ?? 999
+            if dist <= 50 {
                 announce("You have arrived at your destination.")
                 Task { await self.endNavigation() }
             }
@@ -711,15 +732,26 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
         if isMetric {
             if meters >= 1000 {
-                return String(format: "%.1f kilometers", meters / 1000.0)
+                let km = meters / 1000.0
+                return formatDecimalForSpeech(km) + " kilometers"
             } else {
                 // Round to nearest 50m for more natural speech
                 return "\(Int(meters / 50) * 50) meters"
             }
         } else {
             let miles = meters / 1609.34
-            if miles >= 1.0 {
-                return String(format: "%.1f miles", miles).replacingOccurrences(of: ".0", with: "")
+            if miles >= 2.0 {
+                return formatDecimalForSpeech(miles) + " miles"
+            } else if miles >= 1.0 {
+                // Check for nice fractions first
+                let rounded = (miles * 4).rounded() / 4
+                switch rounded {
+                case 1.0: return "1 mile"
+                case 1.25: return "one and a quarter miles"
+                case 1.5: return "one and a half miles"
+                case 1.75: return "one and three quarter miles"
+                default: return formatDecimalForSpeech(miles) + " miles"
+                }
             } else if miles >= 0.4 {
                 return "half a mile"
             } else if miles >= 0.2 {
@@ -730,6 +762,18 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 return "\(Int(feet / 100) * 100) feet"
             }
         }
+    }
+    
+    /// Converts a decimal number to a speakable English string so TTS doesn't say "2 5" for 2.5.
+    private func formatDecimalForSpeech(_ value: Double) -> String {
+        let rounded = (value * 10).rounded() / 10
+        let intPart = Int(rounded)
+        let fracPart = Int((rounded - Double(intPart)) * 10 + 0.5)
+        if fracPart == 0 {
+            return "\(intPart)"
+        }
+        // e.g. 2.5 -> "2 point 5", 2.0 -> "2"
+        return "\(intPart) point \(fracPart)"
     }
     
     // MARK: - Audio Session & Announcements
@@ -751,7 +795,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
 
     /// Triggers speech synthesis for a given string.
-    private func announce(_ message: String) {
+    func announce(_ message: String) {
         let rawVoiceVal = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool
         let voiceEnabled = rawVoiceVal ?? true
         
@@ -855,13 +899,16 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// Logic to select the appropriate glyph for a step based on keywords in the text.
     private func getImageForManeuver(_ instruction: String) -> String {
         let lower = instruction.lowercased()
-        if lower.contains("u-turn") { return "arrow.uturn.left" }
+        // U-turn MUST be checked before left/right to avoid matching "left" inside "u-turn left"
+        if lower.contains("u-turn") || lower.contains("uturn") || lower.contains("u turn") { return "arrow.uturn.left" }
         if lower.contains("exit") { return "arrow.up.right.square" }
         if lower.contains("merge") { return "arrow.merge" }
         
         if lower.contains("slight right") || lower.contains("keep right") { return "arrow.up.right" }
         if lower.contains("slight left") || lower.contains("keep left") { return "arrow.up.left" }
         
+        if lower.contains("sharp right") { return "arrow.turn.up.right" }
+        if lower.contains("sharp left") { return "arrow.turn.up.left" }
         if lower.contains("right") { return "arrow.turn.up.right" }
         if lower.contains("left") { return "arrow.turn.up.left" }
         

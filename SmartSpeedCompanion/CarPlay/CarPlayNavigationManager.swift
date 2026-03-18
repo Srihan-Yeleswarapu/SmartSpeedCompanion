@@ -208,7 +208,10 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         } else {
             // Reached destination
             if let dest = viewModel.destination?.placemark.location {
-                if location.distance(from: dest) < 50.0 {
+                let distToDest = location.distance(from: dest)
+                if distToDest < 50.0 {
+                    // DriveViewModel.advanceToNextStep() handles the arrival announcement.
+                    // We just end the CarPlay session here.
                     endNavigation()
                     return
                 }
@@ -278,7 +281,9 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     
     private func symbolName(for step: MKRoute.Step) -> String {
         // Basic mapping of instructions to SF Symbols
+        // U-turn MUST be checked before left/right
         let inst = step.instructions.lowercased()
+        if inst.contains("u-turn") || inst.contains("uturn") || inst.contains("u turn") { return "arrow.uturn.left" }
         if inst.contains("left") { return "arrow.turn.up.left" }
         if inst.contains("right") { return "arrow.turn.up.right" }
         if inst.contains("exit") { return "arrow.up.right.circle" }

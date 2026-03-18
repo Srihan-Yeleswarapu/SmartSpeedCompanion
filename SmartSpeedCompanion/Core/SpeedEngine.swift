@@ -31,9 +31,10 @@ public final class SpeedEngine: ObservableObject {
         let isMetric = measurementSystem == "Metric"
         let conversionFactor = isMetric ? 3.6 : 2.23694 // m/s to km/h or mph
 
+        // Use raw GPS speed directly — do not add a manual offset.
+        // GPS chips already account for Doppler shift and the offset caused discrepancies.
         let rawSpeed = location.speed * conversionFactor
-        let speedOffset = rawSpeed > 5.0 ? (isMetric ? 3.0 : 2.0) : 0.0
-        let currentSpeed = max(0, rawSpeed + speedOffset)
+        let currentSpeed = max(0, rawSpeed)
         
         self.speed = currentSpeed
         
@@ -54,7 +55,7 @@ public final class SpeedEngine: ObservableObject {
                 self.limit = currentLimit
                 updateStatus(speed: currentSpeed, limit: Double(currentLimit))
             } else {
-                DebugLogger.shared.log("SpeedEngine: GPS too inaccurate (\(Int(location.horizontalAccuracy))m)")
+                DebugLogger.shared.log("SpeedEngine: GPS too inaccurate (\(Int(location.horizontalAccuracy))m), skipping limit update.")
             }
         }
     }

@@ -212,14 +212,16 @@ public struct LiveMapView: UIViewRepresentable {
             zoomReason = "idle"
         }
         
-        // ─── DEAD-BAND (STRICT) ──────────────────────────────────────────────────
-        // Increase thresholds to prevent constant camera movement.
-        // 800m altitude / 15° pitch is very stable.
+        // ─── DEAD-BAND + TIME DEBOUNCE ───────────────────────────────────────────
+        // Both the altitude/pitch difference AND a minimum cooldown period must pass
+        // before we apply a camera change. This eliminates rapid zoom-in/zoom-out jitter.
         let altDiff = abs(currentAltitude - targetAltitude)
         let pitchDiff = abs(currentPitch - targetPitch)
+        let timeSinceLastChange = Date().timeIntervalSince(context.coordinator.lastCameraChangeTime)
         
-        if altDiff > 800 || pitchDiff > 15 {
+        if (altDiff > 800 || pitchDiff > 15) && timeSinceLastChange >= context.coordinator.cameraChangeCooldown {
             DebugLogger.shared.log("CAM [\(zoomReason)]: \(Int(currentAltitude))m -> \(Int(targetAltitude))m | spd=\(Int(speed)) dist=\(Int(distanceToTurn))m")
+            context.coordinator.lastCameraChangeTime = Date()
             
             let newCamera = uiView.camera.copy() as! MKMapCamera
             newCamera.centerCoordinateDistance = targetAltitude
@@ -235,6 +237,9 @@ public struct LiveMapView: UIViewRepresentable {
     public class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: LiveMapView
         private var interactionTimer: Timer?
+        // Minimum seconds between camera altitude/pitch adjustments to suppress jitter
+        private var lastCameraChangeTime: Date = .distantPast
+        private let cameraChangeCooldown: TimeInterval = 3.0
         
         // Overlay state tracking to avoid redundant remove/add cycles
         private var lastRoutePolylineCount: Int = 0
