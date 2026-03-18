@@ -59,11 +59,11 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 }
                 
                 self.consecutiveSeconds += 1
-                // Trigger after 3s, then every 5s to avoid spam
+                // Trigger after 3s, then every 2s to avoid spam
                 if self.consecutiveSeconds >= 3 {
                     self.audioAlertActive = true
                     let now = Date()
-                    if now.timeIntervalSince(self.lastBeepTime) >= 5.0 {
+                    if now.timeIntervalSince(self.lastBeepTime) >= 2.0 {
                         self.lastBeepTime = now
                         self.playBeep()
                     }
