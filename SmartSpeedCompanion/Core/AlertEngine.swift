@@ -26,10 +26,6 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             }
     }
     
-    deinit {
-        cancelTimer()
-    }
-    
     private func handleStatusChange(_ status: SpeedStatus) {
         let alertsEnabled = UserDefaults.standard.bool(forKey: "audioAlertsEnabled")
         
