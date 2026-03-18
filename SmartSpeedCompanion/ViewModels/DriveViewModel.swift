@@ -64,6 +64,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // MARK: - Route Selection State
     /// Indicates if we are showing the alternate route selection screen.
     @Published public var isSelectingRoute: Bool = false
+    /// Indicates if the system is currently calculating a reroute.
+    @Published public var isRerouting: Bool = false
     /// The list of alternate routes returned by MKDirections.
     @Published public var availableRoutes: [MKRoute] = []
     
@@ -286,7 +288,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // MARK: - Route Calculation
     
     /// Requests route options from MapKit and triggers the selection view.
-    public func selectDestinationAndCalculateRoutes(to destination: MKMapItem) async {
+    public func selectDestinationAndCalculateRoutes(to destination: MKMapItem, isRerouting: Bool = false) async {
         self.destination = destination
         saveRecentSearch(destination.name ?? "Unknown Location")
         
@@ -294,7 +296,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         request.source = MKMapItem.forCurrentLocation()
         request.destination = destination
         request.transportType = .automobile
-        request.requestsAlternateRoutes = true
+        request.requestsAlternateRoutes = !isRerouting // Fast 1-route calculation if rerouting
         request.departureDate = .now 
         
         if UserDefaults.standard.bool(forKey: "avoidHighways") {
@@ -306,11 +308,17 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             DebugLogger.shared.log("Calculating routes to: \(destination.name ?? "Unknown")")
             let response = try await directions.calculate()
             self.availableRoutes = response.routes
-            DebugLogger.shared.log("Found \(response.routes.count) available routes")
-            self.isSelectingRoute = true
+            DebugLogger.shared.log("Found \(response.routes.count) available routes\(isRerouting ? " (Fast Reroute)" : "")")
+            if !isRerouting {
+                self.isSelectingRoute = true
+            }
         } catch {
             DebugLogger.shared.log("Route calculation FAILED: \(error.localizedDescription)")
             print("Route error: \(error)")
+        }
+        
+        if isRerouting {
+            self.isRerouting = false
         }
     }
     
@@ -500,14 +508,21 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let distanceToRoute = location.distance(from: CLLocation(latitude: nearestPoint.latitude, longitude: nearestPoint.longitude))
         
         if distanceToRoute > 150 { // 150m is the industry standard for "Off Route"
-            DebugLogger.shared.log("OFF ROUTE: \(Int(distanceToRoute))m. Rerouting...")
-            announce("Off route. recalculating.")
-            if let dest = destination {
-                Task {
-                    await selectDestinationAndCalculateRoutes(to: dest)
-                    if let newRoute = availableRoutes.first {
-                        await startNavigation(with: newRoute, isReroute: true)
+            if !self.isRerouting {
+                self.isRerouting = true
+                DebugLogger.shared.log("OFF ROUTE: \(Int(distanceToRoute))m. Rerouting...")
+                announce("Off route. recalculating.")
+                if let dest = destination {
+                    Task {
+                        await selectDestinationAndCalculateRoutes(to: dest, isRerouting: true)
+                        if let newRoute = availableRoutes.first {
+                            await startNavigation(with: newRoute, isReroute: true)
+                        } else {
+                            self.isRerouting = false
+                        }
                     }
+                } else {
+                    self.isRerouting = false
                 }
             }
             return
@@ -642,7 +657,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         } else {
             // We are on the final step/arrival
             if let dest = destination?.placemark.location, 
-               locationManager.latestLocation?.distance(from: dest) ?? 100 < 50 {
+               locationManager.latestLocation?.distance(from: dest) ?? 100 <= 15 {
                 announce("You have arrived at your destination.")
                 Task { await self.endNavigation() }
             }
@@ -743,10 +758,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         guard voiceEnabled, !message.isEmpty else { return }
         
         // Sanitize punctuation that causes natural speech to sound robotic ("Period", "Full Stop")
+        // NOTE: We only replace dots that are followed by a space to preserve decimals like "2.5"
         let cleanMessage = message
             .replacingOccurrences(of: "...", with: " ")
             .replacingOccurrences(of: "..", with: " ")
-            .replacingOccurrences(of: ".", with: " ") // Replace all dots with spaces to prevent "Full Stop" speech
+            .replacingOccurrences(of: ". ", with: " ") 
             .trimmingCharacters(in: .whitespaces)
         
         // Convert abbreviations like "Ave" to "Avenue" before speaking

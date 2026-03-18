@@ -31,14 +31,17 @@ public final class SpeedEngine: ObservableObject {
         let isMetric = measurementSystem == "Metric"
         let conversionFactor = isMetric ? 3.6 : 2.23694 // m/s to km/h or mph
 
-        let currentSpeed = max(0, location.speed * conversionFactor)
+        let rawSpeed = location.speed * conversionFactor
+        let speedOffset = rawSpeed > 5.0 ? (isMetric ? 3.0 : 2.0) : 0.0
+        let currentSpeed = max(0, rawSpeed + speedOffset)
+        
         self.speed = currentSpeed
         
         // Update status immediately with cache
         updateStatus(speed: currentSpeed, limit: Double(self.limit))
         
         Task { @MainActor in
-            if location.horizontalAccuracy > 0 && location.horizontalAccuracy < 3 {
+            if location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 3 {
                 // Pass heading (course) to ensure we only snap to roads running in our direction
                 let carHeading = location.course >= 0 ? location.course : nil
                 
@@ -70,8 +73,8 @@ public final class SpeedEngine: ObservableObject {
         
         if speed > threshold {
             self.status = .over
-        } else if speed > (threshold - (isMetric ? 3.0 : 2.0)) {
-            self.status = .warning
+        } else if speed >= (threshold - (isMetric ? 2.0 : 1.0)) {
+            self.status = .warning // Yellow only for the top 1 mph of buffer
         } else {
             self.status = .safe
         }
