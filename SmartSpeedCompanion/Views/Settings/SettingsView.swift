@@ -3,9 +3,7 @@ import SwiftUI
 public struct SettingsView: View {
     @AppStorage("userBuffer") var buffer: Double = 5
     @AppStorage("audioAlertsEnabled") var audioEnabled: Bool = true
-    @AppStorage("hapticsEnabled") var hapticsEnabled: Bool = true
     @AppStorage("voiceNavEnabled") var voiceNavEnabled: Bool = true
-    @AppStorage("speedUnit") var speedUnit: String = "mph"
     @AppStorage("avoidHighways") var avoidHighways: Bool = false
     @AppStorage("measurementSystem") var measurementSystem: String = "Imperial"
     @AppStorage("gpsAccuracyMode") var gpsAccuracyMode: String = "navigation"
@@ -15,7 +13,6 @@ public struct SettingsView: View {
     
     @State private var showingTutorial = false
     
-    let units = ["mph", "km/h"]
     let systems = ["Imperial", "Metric"]
     
     public init() {}
@@ -25,16 +22,14 @@ public struct SettingsView: View {
             Form {
                 Section(header: Text("ALERTS").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
                     VStack(alignment: .leading) {
-                        Text("Speed Buffer: +\(Int(buffer)) \(speedUnit)")
+                        let unitLabel = measurementSystem == "Imperial" ? "mph" : "km/h"
+                        Text("Speed Buffer: +\(Int(buffer)) \(unitLabel)")
                             .foregroundColor(.white)
                         Slider(value: $buffer, in: 0...15, step: 1)
                             .tint(DesignSystem.amber)
                     }
                     
                     Toggle("Audio Alerts", isOn: $audioEnabled)
-                        .tint(DesignSystem.neonGreen)
-                    
-                    Toggle("Haptic Feedback", isOn: $hapticsEnabled)
                         .tint(DesignSystem.neonGreen)
                 }
                 .listRowBackground(DesignSystem.bgPanel)
@@ -47,21 +42,10 @@ public struct SettingsView: View {
                         .tint(DesignSystem.neonGreen)
                     
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("SPEED UNIT")
+                        Text("UNITS")
                             .font(.caption2)
                             .foregroundColor(.gray)
-                        Picker("Speed Unit", selection: $speedUnit) {
-                            ForEach(units, id: \.self) { Text($0) }
-                        }
-                        .pickerStyle(SegmentedPickerStyle())
-                    }
-                    .padding(.vertical, 4)
-                    
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("DISTANCE SYSTEM")
-                            .font(.caption2)
-                            .foregroundColor(.gray)
-                        Picker("System", selection: $measurementSystem) {
+                        Picker("Units", selection: $measurementSystem) {
                             ForEach(systems, id: \.self) { Text($0) }
                         }
                         .pickerStyle(SegmentedPickerStyle())
@@ -70,65 +54,23 @@ public struct SettingsView: View {
                 }
                 .listRowBackground(DesignSystem.bgPanel)
                 
-                Section(header:
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("GPS ACCURACY").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)
+                Section(header: Text("GPS ACCURACY").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                    // Standard Picker style resolves the "can't switch" issue in Forms
+                    Picker("Accuracy Mode", selection: $gpsAccuracyMode) {
+                        Text("Navigation (High)").tag("navigation")
+                        Text("Balanced (Battery Saver)").tag("balanced")
                     }
-                ) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Picker("GPS Accuracy", selection: $gpsAccuracyMode) {
-                            Text("Navigation (High Accuracy)").tag("navigation")
-                            Text("Balanced (Battery Saver)").tag("balanced")
-                        }
-                        .pickerStyle(InlinePickerStyle())
-                        .onChange(of: gpsAccuracyMode) { oldValue, newValue in
-                            driveViewModel.locationManager.applyAccuracyMode()
-                        }
-                        
-                        Group {
-                            if gpsAccuracyMode == "navigation" {
-                                Text("Uses the highest GPS accuracy. Best for speed limit detection but uses more battery and may cause device warmth.")
-                            } else {
-                                Text("Slightly reduced GPS accuracy (~5-10m). Significantly reduces battery drain and device heat. Recommended if your phone runs hot.")
-                            }
-                        }
+                    .onChange(of: gpsAccuracyMode) { oldValue, newValue in
+                        driveViewModel.locationManager.applyAccuracyMode()
+                    }
+                    
+                    Text(gpsAccuracyMode == "navigation" ? 
+                         "Uses the highest GPS accuracy. Best for speed limit detection." : 
+                         "Reduced GPS accuracy (~5-10m). Significantly reduces battery drain.")
                         .font(.caption)
                         .foregroundColor(.gray)
-                    }
                 }
                 .listRowBackground(DesignSystem.bgPanel)
-                
-                Section(header: Text("DATA").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
-                    HStack {
-                        Text("Speed Limits")
-                            .foregroundColor(.white)
-                        Spacer()
-                        Text(driveViewModel.speedLimitSource)
-                            .foregroundColor(DesignSystem.amber)
-                            .font(.caption)
-                    }
-                }
-                .listRowBackground(DesignSystem.bgPanel)
-                
-                Section(header: Text("HISTORY").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
-                    Text("Session history list goes here")
-                        .foregroundColor(.gray)
-                }
-                .listRowBackground(DesignSystem.bgPanel)
-                
-                Section {
-                    Button(role: .destructive) {
-                        // Clear sessions logic
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Text("CLEAR ALL SESSIONS")
-                                .font(DesignSystem.labelFont.bold())
-                            Spacer()
-                        }
-                    }
-                }
-                .listRowBackground(DesignSystem.alertRed.opacity(0.15))
                 
                 Section(header: Text("ACCOUNT").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
                     Button(action: {
