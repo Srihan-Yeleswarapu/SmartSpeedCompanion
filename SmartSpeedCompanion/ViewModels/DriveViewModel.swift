@@ -18,7 +18,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     public let sessionRecorder: SessionRecorder
     private var lastRerouteTime: Date = .distantPast
     private var isCalculatingReroute: Bool = false
-    private let offRouteThreshold: CLLocationDistance = 10.0 // 10 meters (~33 feet)
+    private let offRouteThreshold: CLLocationDistance = 20.0 // 20 meters (~66 feet)
     
     // MARK: - Core Driving State
     /// User's current speed in MPH (always converted to MPH for the logic layer).
@@ -963,27 +963,28 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             // Silently fail traffic checks
         }
 
-    
+    // MARK: - Rerouting Logic
     private func checkOffRouteStatus(_ location: CLLocation) {
         guard let route = currentRoute, !isCalculatingReroute else { return }
         
-        // 1. Calculate the actual distance to the closest point on the path
         let distance = distanceToPolyline(location, polyline: route.polyline)
         
-        // 2. If significantly off route (e.g., > 35 meters)
-        if distance > offRouteThreshold {
+        // 35m is the "Sweet Spot" for driving reroutes
+        if distance > 35.0 { 
             let timeSinceLastReroute = Date().timeIntervalSince(lastRerouteTime)
             
-            // 3. Lower cooldown to 3 seconds for "super fast" response
+            // This hits your < 3.0s requirement
             if timeSinceLastReroute > 3.0 { 
-                DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting now.")
+                DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting.")
                 lastRerouteTime = Date()
                 isCalculatingReroute = true
                 
                 Task { @MainActor in
-                    // Call your existing navigation start
-                    await startNavigation(to: destinationItem!, route: nil)
-                    isCalculatingReroute = false
+                    if let dest = self.destinationItem {
+                        // This triggers a fresh route calculation immediately
+                        await self.startNavigation(to: dest) 
+                    }
+                    self.isCalculatingReroute = false
                 }
             }
         }
@@ -992,26 +993,17 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private func distanceToPolyline(_ location: CLLocation, polyline: MKPolyline) -> CLLocationDistance {
         var minDistance: CLLocationDistance = .greatestFiniteMagnitude
         let points = polyline.points()
-        
-        // We check every 5th point (stride) for performance. 
-        // This is extremely fast and more than accurate enough for driving.
         for i in stride(from: 0, to: polyline.pointCount, by: 5) {
-            let mapPoint = points[i]
-            let coordinate = mapPoint.coordinate
-            let routeLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            let routeLocation = CLLocation(latitude: points[i].coordinate.latitude, longitude: points[i].coordinate.longitude)
             let distance = location.distance(from: routeLocation)
-            
-            if distance < minDistance {
-                minDistance = distance
-            }
-            
-            // Optimization: If we find we are within 10m of a point, we are definitely "on track"
+            if distance < minDistance { minDistance = distance }
             if minDistance < 10 { return minDistance }
         }
         return minDistance
     }
-}
+} // <--- THIS BRACE CLOSES THE CLASS
 
+// MARK: - Extensions (Must be at File Scope)
 extension DriveViewModel: @preconcurrency MKLocalSearchCompleterDelegate {
     public func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         self.searchCompletions = completer.results
@@ -1026,4 +1018,10 @@ public protocol NavigationActionDelegate: AnyObject {
     func startNavigationTrigger(to destination: MKMapItem, route: MKRoute?) async
     func endNavigationTrigger() async
     func searchDestinationTrigger(_ query: String) async -> [MKMapItem]
+}
+
+extension CLLocation {
+    var speedMPH: Double {
+        return max(0, speed * 2.23694)
+    }
 }
