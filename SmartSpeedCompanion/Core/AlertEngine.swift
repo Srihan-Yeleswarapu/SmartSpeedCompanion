@@ -26,7 +26,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     }
     
     deinit {
-        stopMonitoring()
+        cancelTimer()
     }
     
     private func handleStatusChange(_ status: SpeedStatus) {
@@ -40,7 +40,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         } else {
             if timerCancellable != nil {
                 DebugLogger.shared.log("AlertEngine: Status is \(status) (Alerts: \(alertsEnabled)). Stopping monitor.")
-                stopMonitoring()
+                stopMonitoringState()
             }
         }
     }
@@ -54,7 +54,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 
                 // Re-check setting in case it changed mid-drive
                 guard UserDefaults.standard.bool(forKey: "audioAlertsEnabled") else {
-                    self.stopMonitoring()
+                    self.stopMonitoringState()
                     return
                 }
                 
@@ -67,12 +67,17 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             }
     }
     
-    private func stopMonitoring() {
-        timerCancellable?.cancel()
-        timerCancellable = nil
-        consecutiveSeconds = 0
-        audioAlertActive = false
+    private func stopMonitoringState() {
+        cancelTimer()
+        self.consecutiveSeconds = 0
+        self.audioAlertActive = false
+        self.timerCancellable = nil
     }
+    
+    nonisolated private func cancelTimer() {
+        timerCancellable?.cancel()
+    }
+    
     
     private func playBeep() {
         // Play the standard iOS alert sound. 1320 is a crisp "tink" perfect for notifications.
