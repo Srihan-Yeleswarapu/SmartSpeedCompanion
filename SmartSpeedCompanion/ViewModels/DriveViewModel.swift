@@ -535,30 +535,22 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             
             self.distanceToNextTurn = distanceToTurn
             
-            // Find the upcoming instruction (usually the NEXT step's instruction)
-            var upcomingInstruction = ""
-            var targetIdx = self.currentStepIndex + 1
-            while targetIdx < steps.count && steps[targetIdx].instructions.isEmpty {
-                targetIdx += 1
-            }
-            
-            if targetIdx < steps.count {
-                upcomingInstruction = steps[targetIdx].instructions
-            } else {
-                upcomingInstruction = currentStep.instructions // Fallback to current if it's the last step
-            }
-            
-            // Force display of the *next* turn if current step is just a generic arrival or starting label
-            if instructionIsGenericLabel(currentStep.instructions) && !upcomingInstruction.isEmpty {
-                upcomingInstruction = upcomingInstruction
-            } else if upcomingInstruction.isEmpty {
-                upcomingInstruction = currentStep.instructions
+            // Determine the actual active instruction (skip generic labels)
+            var activeInstruction = currentStep.instructions
+            if instructionIsGenericLabel(activeInstruction) {
+                var nextIdx = self.currentStepIndex + 1
+                while nextIdx < steps.count && steps[nextIdx].instructions.isEmpty {
+                    nextIdx += 1
+                }
+                if nextIdx < steps.count {
+                    activeInstruction = steps[nextIdx].instructions
+                }
             }
             
             // Sync UI text immediately
-            if !upcomingInstruction.isEmpty {
-                self.nextManeuverInstruction = upcomingInstruction
-                self.nextManeuverImageName = getImageForManeuver(upcomingInstruction)
+            if !activeInstruction.isEmpty {
+                self.nextManeuverInstruction = activeInstruction
+                self.nextManeuverImageName = getImageForManeuver(activeInstruction)
             }
             
             // Trigger spoken alerts
@@ -599,19 +591,19 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
         var flags = stepStageFlags[stepIndex]!
         
-        // Find the next meaningful instruction
-        var upcomingInstruction = ""
-        var instructionStepIndex = stepIndex + 1
-        while instructionStepIndex < steps.count && steps[instructionStepIndex].instructions.isEmpty {
-            instructionStepIndex += 1
-        }
-        if instructionStepIndex < steps.count {
-            upcomingInstruction = steps[instructionStepIndex].instructions
-        } else {
-            upcomingInstruction = steps[stepIndex].instructions
+        // Use current instruction unless it's generic, then use next
+        var activeInstruction = steps[stepIndex].instructions
+        if instructionIsGenericLabel(activeInstruction) {
+            var nextIdx = stepIndex + 1
+            while nextIdx < steps.count && steps[nextIdx].instructions.isEmpty {
+                nextIdx += 1
+            }
+            if nextIdx < steps.count {
+                activeInstruction = steps[nextIdx].instructions
+            }
         }
         
-        if upcomingInstruction.isEmpty { return }
+        if activeInstruction.isEmpty { return }
 
         // Immediate announcement threshold based on speed (higher speed = more warning)
         // Highway speed: ~400m (1/4 mile), City speed: ~80m (250ft)
@@ -625,10 +617,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             if distanceToTurn > immediateThreshold + 50 {
                 let formattedDist = formatDistance(distanceToTurn)
                 if distanceToTurn > 3218 { // > 2 miles, give a "continue"
-                    let routeName = steps[stepIndex].name.isEmpty ? (currentRoute?.name ?? "the road") : steps[stepIndex].name
+                    let routeName = currentRoute?.name ?? "the road"
                     announce("Continue on \(routeName) for \(formattedDist).")
                 } else {
-                    announce("In \(formattedDist), \(upcomingInstruction)")
+                    announce("In \(formattedDist), \(activeInstruction)")
                 }
             }
         }
@@ -636,7 +628,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // 2. Immediate Turning Warning (Right before the turn)
         if distanceToTurn <= immediateThreshold && !flags.contains("immediate") {
             flags.insert("immediate")
-            announce(upcomingInstruction)
+            announce(activeInstruction)
         }
         
         stepStageFlags[stepIndex] = flags
@@ -751,7 +743,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         guard voiceEnabled, !message.isEmpty else { return }
         
         // Sanitize punctuation that causes natural speech to sound robotic ("Period", "Full Stop")
-        var cleanMessage = message
+        let cleanMessage = message
             .replacingOccurrences(of: "...", with: " ")
             .replacingOccurrences(of: "..", with: " ")
             .replacingOccurrences(of: ".", with: " ") // Replace all dots with spaces to prevent "Full Stop" speech
