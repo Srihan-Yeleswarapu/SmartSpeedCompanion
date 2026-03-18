@@ -939,50 +939,24 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
 
-    /// Background check for traffic changes. If a different route saves >2 mins, it auto-switches.
-    private func checkForFasterRoute() async {
-        guard isNavigating, let dest = destination, let current = currentRoute else { return }
-        
-        let request = MKDirections.Request()
-        request.source = MKMapItem.forCurrentLocation()
-        request.destination = dest
-        request.transportType = .automobile
-        request.departureDate = .now
-        
-        do {
-            let directions = MKDirections(request: request)
-            let response = try await directions.calculate()
-            if let fastest = response.routes.first {
-                let remainingTime = current.expectedTravelTime - (Date().timeIntervalSince(sessionStartTime ?? Date()))
-                if fastest.expectedTravelTime < remainingTime - 120 {
-                    DebugLogger.shared.log("TRAFFIC ALERT: Faster route found. Rerouting...")
-                    await startNavigation(with: fastest, isReroute: true)
-                }
-            }
-        } catch {
-            // Silently fail traffic checks
-        }
+    // ... end of startNavigation function ...
 
-    // MARK: - Rerouting Logic
     // MARK: - Rerouting Logic
     private func checkOffRouteStatus(_ location: CLLocation) {
         guard let route = currentRoute, !isCalculatingReroute else { return }
         
         let distance = distanceToPolyline(location, polyline: route.polyline)
         
-        // 35m threshold to avoid GPS "noise"
         if distance > 35.0 { 
             let timeSinceLastReroute = Date().timeIntervalSince(lastRerouteTime)
             
-            // 3-second cooldown for super fast rerouting
             if timeSinceLastReroute > 3.0 { 
                 DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting.")
                 lastRerouteTime = Date()
                 isCalculatingReroute = true
                 
                 Task { @MainActor in
-                    // FIXED: Using the correct property 'destinationItem' 
-                    // and calling startNavigation without the 'route' argument
+                    // FIXED: Using destinationItem which is defined at line 72
                     if let dest = self.destinationItem {
                         await self.startNavigation(to: dest) 
                     }
@@ -1003,10 +977,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
         return minDistance
     }
-} // <--- THIS BRACE MUST CLOSE THE DRIVEVIEWMODEL CLASS
+} // <--- THIS BRACE CLOSES THE DRIVEVIEWMODEL CLASS
 
-// MARK: - File Scope Extensions (Outside the Class)
-
+// MARK: - File Scope Extensions
 extension DriveViewModel: @preconcurrency MKLocalSearchCompleterDelegate {
     public func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         self.searchCompletions = completer.results
