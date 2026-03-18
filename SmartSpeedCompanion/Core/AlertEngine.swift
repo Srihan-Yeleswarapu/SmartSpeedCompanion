@@ -82,7 +82,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         self.timerCancellable = nil
     }
     
-    nonisolated private func cancelTimer() {
+    private func cancelTimer() {
         timerCancellable?.cancel()
     }
     

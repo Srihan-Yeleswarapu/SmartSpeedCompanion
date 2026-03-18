@@ -81,7 +81,7 @@ public struct SettingsView: View {
                             Text("Balanced (Battery Saver)").tag("balanced")
                         }
                         .pickerStyle(InlinePickerStyle())
-                        .onChange(of: gpsAccuracyMode) { _ in
+                        .onChange(of: gpsAccuracyMode) { oldValue, newValue in
                             driveViewModel.locationManager.applyAccuracyMode()
                         }
                         

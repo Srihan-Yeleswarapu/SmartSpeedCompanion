@@ -238,8 +238,9 @@ public struct LiveMapView: UIViewRepresentable {
         var parent: LiveMapView
         private var interactionTimer: Timer?
         // Minimum seconds between camera altitude/pitch adjustments to suppress jitter
-        private var lastCameraChangeTime: Date = .distantPast
-        private let cameraChangeCooldown: TimeInterval = 3.0
+        // Variables must be internal (not private) so the View can access them
+        var lastCameraChangeTime: Date = .distantPast
+        let cameraChangeCooldown: TimeInterval = 3.0
         
         // Overlay state tracking to avoid redundant remove/add cycles
         private var lastRoutePolylineCount: Int = 0
