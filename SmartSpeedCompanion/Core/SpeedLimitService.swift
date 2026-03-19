@@ -4,7 +4,7 @@ import CoreLocation
 import Combine
 
 public protocol SpeedLimitProviding {
-    func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int
+    func updateSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int
 }
 
 @MainActor
@@ -25,7 +25,7 @@ public class SmartSpeedLimitService: ObservableObject {
     public func updateSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double?, currentSpeedMph: Double) async -> Int {
         do {
             // Updated to pass heading: filters out cross-streets and prevents accidental snapping
-            let localLimit = try await ArizonaSpeedLimitService.shared.updateSpeedLimit(at: coordinate, heading: heading, currentSpeedMph: currentSpeedMph)
+            let localLimit = await ArizonaSpeedLimitService.shared.updateSpeedLimit(at: coordinate, heading: heading, currentSpeedMph: currentSpeedMph)
             
             self.lastValidLimit = localLimit
             self.currentLimit = localLimit
@@ -37,7 +37,7 @@ public class SmartSpeedLimitService: ObservableObject {
             consecutiveMissCount += 1
             
             // Recovery search also uses heading
-            if let recoveryLimit = try? await ArizonaSpeedLimitService.shared.updateSpeedLimit(at: coordinate, heading: heading, currentSpeedMph: currentSpeedMph, expandedSearch: true) {
+            if let recoveryLimit = await ArizonaSpeedLimitService.shared.updateSpeedLimit(at: coordinate, heading: heading, currentSpeedMph: currentSpeedMph, expandedSearch: true) {
                 self.lastValidLimit = recoveryLimit
                 self.currentLimit = recoveryLimit
                 self.consecutiveMissCount = 0

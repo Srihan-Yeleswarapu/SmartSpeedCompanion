@@ -63,23 +63,15 @@ public final class SpeedEngine: ObservableObject {
             let currentMph = isMetric ? currentSpeed * 0.621371 : currentSpeed
 
             // 3. The Corrected Call
-            do {
-                // No 'try' needed because the service doesn't throw
-                let currentLimit = await speedLimitService.updateSpeedLimit(
-                    at: location.coordinate,
-                    heading: carHeading,
-                    currentSpeedMph: currentMph
-                )
-                self.limit = currentLimit
-                updateStatus(speed: currentSpeed, limit: Double(currentLimit))
-            } catch {
-                // If no road is found, we set limit to 0 to show "???" 
-                // or keep the last known limit depending on your preference.
-                self.limit = 0 
-                DebugLogger.shared.log("SpeedEngine: No limit found for this coordinate.")
-            }
+            // No 'try' or 'do-catch' needed anymore
+            let currentLimit = await speedLimitService.updateSpeedLimit(
+                at: location.coordinate,
+                heading: carHeading,
+                currentSpeedMph: currentMph
+            )
             
-            updateStatus(speed: currentSpeed, limit: Double(self.limit))
+            self.limit = currentLimit
+            updateStatus(speed: currentSpeed, limit: Double(currentLimit))
         }
     }
     
