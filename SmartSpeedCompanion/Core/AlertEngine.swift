@@ -98,3 +98,4 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             DebugLogger.shared.log("AlertEngine: Audio session error: \(error.localizedDescription)")
         }
     }
+}

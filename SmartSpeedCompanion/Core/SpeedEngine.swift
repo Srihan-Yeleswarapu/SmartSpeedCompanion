@@ -47,10 +47,10 @@ public final class SpeedEngine: ObservableObject {
         updateStatus(speed: currentSpeed, limit: Double(self.limit))
         
         Task { @MainActor in
-            // Accept fixes up to 10m accuracy (matches what LocationManager already publishes).
+            // Accept fixes up to 15m accuracy (matches what LocationManager already publishes).
             // The old 3m gate was so tight that limit fetches were silently skipped on almost
             // every update, causing the "very slow refresh" symptom.
-            guard location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 10 else {
+            guard location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 15 else {
                 DebugLogger.shared.log("SpeedEngine: GPS too inaccurate (\(Int(location.horizontalAccuracy))m), skipping limit update.")
                 return
             }
