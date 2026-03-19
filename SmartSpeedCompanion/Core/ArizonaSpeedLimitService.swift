@@ -5,7 +5,8 @@ import SQLite3
 /// A thread-safe actor service that queries Arizona speed limit data.
 /// Updated for Swift 6 Concurrency and Xcode 16 compatibility.
 public actor ArizonaSpeedLimitService {
-       
+    public static let shared = ArizonaSpeedLimitService()
+    
     private var db: OpaquePointer?
     private var isLoaded = false
 
