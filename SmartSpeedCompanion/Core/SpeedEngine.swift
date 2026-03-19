@@ -16,6 +16,11 @@ public final class SpeedEngine: ObservableObject {
     private let speedLimitService = SmartSpeedLimitService.shared
     private var cancellables = Set<AnyCancellable>()
     
+    /// Minimum distance (meters) the user must travel before we re-query the speed limit DB.
+    /// 15m keeps the display snappy without hammering the DB on every GPS tick.
+    private let minimumFetchDistance: CLLocationDistance = 15.0
+    private var lastFetchLocation: CLLocation?
+    
     public init(locationManager: LocationManager) {
         
         locationManager.$latestLocation
@@ -42,21 +47,33 @@ public final class SpeedEngine: ObservableObject {
         updateStatus(speed: currentSpeed, limit: Double(self.limit))
         
         Task { @MainActor in
-            if location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 3 {
-                // Pass heading (course) to ensure we only snap to roads running in our direction
-                let carHeading = location.course >= 0 ? location.course : nil
-                
-                let currentLimit = await speedLimitService.updateSpeedLimit(
-                    at: location.coordinate,
-                    heading: carHeading,
-                    currentSpeedMph: isMetric ? currentSpeed * 0.621371 : currentSpeed
-                )
-                
-                self.limit = currentLimit
-                updateStatus(speed: currentSpeed, limit: Double(currentLimit))
-            } else {
+            // Accept fixes up to 20m accuracy (matches what LocationManager already publishes).
+            // The old 3m gate was so tight that limit fetches were silently skipped on almost
+            // every update, causing the "very slow refresh" symptom.
+            guard location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 3 else {
                 DebugLogger.shared.log("SpeedEngine: GPS too inaccurate (\(Int(location.horizontalAccuracy))m), skipping limit update.")
+                return
             }
+            
+            // Skip re-fetch if we haven't moved far enough — avoids redundant DB hits while
+            // stopped at a light or coasting in a car park.
+            if let lastLoc = lastFetchLocation,
+               location.distance(from: lastLoc) < minimumFetchDistance {
+                return
+            }
+            lastFetchLocation = location
+            
+            // Pass heading (course) to ensure we only snap to roads running in our direction
+            let carHeading = location.course >= 0 ? location.course : nil
+            
+            let currentLimit = await speedLimitService.updateSpeedLimit(
+                at: location.coordinate,
+                heading: carHeading,
+                currentSpeedMph: isMetric ? currentSpeed * 0.621371 : currentSpeed
+            )
+            
+            self.limit = currentLimit
+            updateStatus(speed: currentSpeed, limit: Double(currentLimit))
         }
     }
     

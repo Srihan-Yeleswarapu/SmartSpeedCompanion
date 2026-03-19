@@ -10,8 +10,9 @@ public actor ArizonaSpeedLimitService {
     private var db: OpaquePointer?
     private var isLoaded = false
     
-    // Grid precision: 0.01 degree is roughly 1.1km.
-    private let gridPrecision = 0.01
+    // Grid precision: 0.02 degrees is roughly 2.2km per cell.
+    // Larger cells mean fewer DB queries per drive and better route pre-cache coverage.
+    private let gridPrecision = 0.02
     private var spatialCache: [String: [RoadSegment]] = [:]
     private var lastSegmentId: String?
     
@@ -239,16 +240,19 @@ public actor ArizonaSpeedLimitService {
     // MARK: - Private Logic
     
     private func getSegmentsForGrid(lat: Double, lon: Double) -> [RoadSegment] {
-        let latK = round(lat / gridPrecision) * gridPrecision
-        let lonK = round(lon / gridPrecision) * gridPrecision
-        let key = String(format: "%.2f_%.2f", latK, lonK)
+        // Use floor() for stable, non-overlapping tile boundaries.
+        // round() caused the same real-world point to map to different keys depending
+        // on minor floating-point drift, breaking the cache hit rate.
+        let latK = floor(lat / gridPrecision) * gridPrecision
+        let lonK = floor(lon / gridPrecision) * gridPrecision
+        let key = String(format: "%.4f_%.4f", latK, lonK)
         
         if let cached = spatialCache[key] {
             return cached
         }
         
         let segments = queryDatabase(lat: latK, lon: lonK)
-        DebugLogger.shared.log("CACHE: Loaded \(segments.count) road segments for grid \(key)")
+        DebugLogger.shared.log("CACHE MISS: Loaded \(segments.count) road segments for grid \(key)")
         spatialCache[key] = segments
         return segments
     }
