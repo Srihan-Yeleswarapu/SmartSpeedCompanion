@@ -47,33 +47,37 @@ public final class SpeedEngine: ObservableObject {
         updateStatus(speed: currentSpeed, limit: Double(self.limit))
         
         Task { @MainActor in
-            // Accept fixes up to 15m accuracy (matches what LocationManager already publishes).
-            // The old 3m gate was so tight that limit fetches were silently skipped on almost
-            // every update, causing the "very slow refresh" symptom.
+            // 1. Accurate GPS check
             guard location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 15 else {
-                DebugLogger.shared.log("SpeedEngine: GPS too inaccurate (\(Int(location.horizontalAccuracy))m), skipping limit update.")
                 return
             }
             
-            // Skip re-fetch if we haven't moved far enough — avoids redundant DB hits while
-            // stopped at a light or coasting in a car park.
+            // 2. Movement check
             if let lastLoc = lastFetchLocation,
-               location.distance(from: lastLoc) < minimumFetchDistance {
+            location.distance(from: lastLoc) < minimumFetchDistance {
                 return
             }
             lastFetchLocation = location
             
-            // Pass heading (course) to ensure we only snap to roads running in our direction
             let carHeading = location.course >= 0 ? location.course : nil
+            let currentMph = isMetric ? currentSpeed * 0.621371 : currentSpeed
+
+            // 3. The Corrected Call
+            do {
+                let currentLimit = try await speedLimitService.updateSpeedLimit(
+                    at: location.coordinate,
+                    heading: carHeading,
+                    currentSpeedMph: currentMph
+                )
+                self.limit = currentLimit
+            } catch {
+                // If no road is found, we set limit to 0 to show "???" 
+                // or keep the last known limit depending on your preference.
+                self.limit = 0 
+                DebugLogger.shared.log("SpeedEngine: No limit found for this coordinate.")
+            }
             
-            let currentLimit = await speedLimitService.updateSpeedLimit(
-                at: location.coordinate,
-                heading: carHeading,
-                currentSpeedMph: isMetric ? currentSpeed * 0.621371 : currentSpeed
-            )
-            
-            self.limit = currentLimit
-            updateStatus(speed: currentSpeed, limit: Double(currentLimit))
+            updateStatus(speed: currentSpeed, limit: Double(self.limit))
         }
     }
     

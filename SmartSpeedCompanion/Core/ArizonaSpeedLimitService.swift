@@ -9,6 +9,11 @@ public actor ArizonaSpeedLimitService {
     
     private var db: OpaquePointer?
     private var isLoaded = false
+
+    private var circularCache: [RoadSegment] = []
+    private var lastCacheCenter: CLLocationCoordinate2D?
+    private let cacheRadiusDegrees = 0.03 // Approx 2 miles
+    private let triggerDistanceMeters = 1609.0 // 1 mile
     
     // Grid precision: 0.02 degrees is roughly 2.2km per cell.
     // Larger cells mean fewer DB queries per drive and better route pre-cache coverage.
@@ -151,7 +156,7 @@ public actor ArizonaSpeedLimitService {
 
     /// Finds the legal speed limit for a given coordinate.
     /// Added heading awareness to prevent snapping to cross-streets or nearby parallel roads.
-    public func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double? = nil, currentSpeedMph: Double? = nil, expandedSearch: Bool = false) async throws -> Int {
+    public func updateSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double? = nil, currentSpeedMph: Double? = nil, expandedSearch: Bool = false) async throws -> Int {
         if !isLoaded {
             loadDataIfNeeded()
         }
@@ -159,7 +164,15 @@ public actor ArizonaSpeedLimitService {
             throw URLError(.resourceUnavailable)
         }
 
-        let segments = getSegmentsForGrid(lat: coordinate.latitude, lon: coordinate.longitude)
+        // Trigger recache if first run or if moved > 1 mile from previous cache center
+        let shouldRefresh = lastCacheCenter == nil || 
+                           coordinate.distance(from: lastCacheCenter!) > triggerDistanceMeters
+        
+        if shouldRefresh {
+            refreshCircularCache(at: coordinate)
+        }
+
+        let segments = circularCache // Use the high-speed memory cache
         
         var closestLimit: Int?
         var closestRouteId: String?
@@ -303,6 +316,60 @@ public actor ArizonaSpeedLimitService {
         }
         
         return segments
+    }
+
+    // MARK : Circular Cache
+
+    private func refreshCircularCache(at center: CLLocationCoordinate2D) {
+        guard let db = db else { return }
+        var segments: [RoadSegment] = []
+        
+        let sql = """
+            SELECT a.SpeedLimit, b.minx, b.maxx, b.miny, b.maxy, a.RouteId
+            FROM SpeedLimit_2024 a
+            JOIN st_spindex__SpeedLimit_2024_SHAPE b ON a.OBJECTID = b.pkid
+            WHERE ? <= b.maxx AND ? >= b.minx
+              AND ? <= b.maxy AND ? >= b.miny
+        """
+        
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            // Bind a box covering the 2-mile radius
+            sqlite3_bind_double(stmt, 1, center.longitude - cacheRadiusDegrees)
+            sqlite3_bind_double(stmt, 2, center.longitude + cacheRadiusDegrees)
+            sqlite3_bind_double(stmt, 3, center.latitude - cacheRadiusDegrees)
+            sqlite3_bind_double(stmt, 4, center.latitude + cacheRadiusDegrees)
+            
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                segments.append(RoadSegment(
+                    minx: sqlite3_column_double(stmt, 1),
+                    maxx: sqlite3_column_double(stmt, 2),
+                    miny: sqlite3_column_double(stmt, 3),
+                    maxy: sqlite3_column_double(stmt, 4),
+                    limit: Int(sqlite3_column_int(stmt, 0)),
+                    routeId: sqlite3_column_text(stmt, 5).map { String(cString: $0) }
+                ))
+            }
+            sqlite3_finalize(stmt)
+        }
+        
+        self.circularCache = segments
+        self.lastCacheCenter = center
+        DebugLogger.shared.log("Cache: Refreshed 2-mile radius with \(segments.count) segments.")
+    }
+
+    private func boundingBox(for center: CLLocationCoordinate2D, radius: Double) -> (minx: Double, maxx: Double, miny: Double, maxy: Double) {
+        return (
+            center.longitude - radius,
+            center.longitude + radius,
+            center.latitude - radius,
+            center.latitude + radius
+        )
+    }
+
+    private func intersects(_ segment: RoadSegment, _ bounds: (minx: Double, maxx: Double, miny: Double, maxy: Double)) -> Bool {
+        return segment.maxx >= bounds.minx && segment.minx <= bounds.maxx &&
+               segment.maxy >= bounds.miny && segment.miny <= bounds.maxy
     }
 
     // Distance logic moved into RoadSegment struct.
