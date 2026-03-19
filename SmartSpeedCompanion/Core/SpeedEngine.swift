@@ -64,14 +64,12 @@ public final class SpeedEngine: ObservableObject {
 
             // 3. The Corrected Call
             do {
-                // No 'try' needed because the service doesn't throw
-                let currentLimit = await speedLimitService.updateSpeedLimit(
+                let currentLimit = try await speedLimitService.updateSpeedLimit(
                     at: location.coordinate,
                     heading: carHeading,
                     currentSpeedMph: currentMph
                 )
                 self.limit = currentLimit
-                updateStatus(speed: currentSpeed, limit: Double(currentLimit))
             } catch {
                 // If no road is found, we set limit to 0 to show "???" 
                 // or keep the last known limit depending on your preference.
