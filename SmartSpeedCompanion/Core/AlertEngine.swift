@@ -84,17 +84,17 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     
     private func playBeep() {
-        // Must activate an audio session BEFORE playing a system sound so that
-        // the sound routes through CarPlay and isn't silenced by the ringer switch.
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP])
+            // Change category to .playback so it ignores the silent switch
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .interruptSpokenAudioAndMixWithOthers])
             try session.setActive(true)
+            
+            // 1052 = "Tock". We use PlaySystemSound instead of PlayAlertSound 
+            // to ensure it respects the session category we just set.
+            AudioServicesPlaySystemSound(1052)
+            DebugLogger.shared.log("AlertEngine: BEEP played successfully.")
         } catch {
             DebugLogger.shared.log("AlertEngine: Audio session error: \(error.localizedDescription)")
         }
-        // 1052 = "Tock" — a short, piercing alert that cuts through car noise
-        AudioServicesPlayAlertSound(1052)
-        DebugLogger.shared.log("AlertEngine: BEEP played.")
     }
-}

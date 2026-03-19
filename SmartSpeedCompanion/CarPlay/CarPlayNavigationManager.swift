@@ -283,10 +283,10 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         // Basic mapping of instructions to SF Symbols
         // U-turn MUST be checked before left/right
         let inst = step.instructions.lowercased()
-        if inst.contains("u-turn") || inst.contains("uturn") || inst.contains("u turn") { return "arrow.uturn.left" }
+        if inst.contains("u-turn") || inst.contains("u turn") || inst.contains("uturn") { return "arrow.uturn.left" }
         if inst.contains("left") { return "arrow.turn.up.left" }
         if inst.contains("right") { return "arrow.turn.up.right" }
-        if inst.contains("exit") { return "arrow.up.right.circle" }
+        if inst.contains("exit") || inst.contains("take ramp") { return "arrow.up.right.circle" }
         if inst.contains("roundabout") { return "arrow.counterclockwise" }
         if inst.contains("destination") { return "mappin.and.ellipse" }
         return "arrow.up"
