@@ -117,26 +117,26 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - Audio Session
     private func setupAudioSession() {
-        do {
-            let session = AVAudioSession.sharedInstance()
-            
-            try session.setCategory(
-                .playback,
-                mode: .default,
-                options: [
-                    .mixWithOthers,
-                    .interruptSpokenAudioAndMixWithOthers,
-                    .defaultToSpeaker
-                ]
-            )
-            
-            try session.setActive(true)
-            try session.overrideOutputAudioPort(.speaker)
-            
-        } catch {
-            DebugLogger.shared.log("Audio session error: \(error.localizedDescription)")
-        }
+    do {
+        let session = AVAudioSession.sharedInstance()
+        
+        try session.setCategory(
+            .playback,
+            mode: .default,
+            options: [
+                .mixWithOthers,
+                .interruptSpokenAudioAndMixWithOthers
+            ]
+        )
+        
+        try session.setActive(true)
+        
+        DebugLogger.shared.log("Audio session configured OK")
+        
+    } catch {
+        DebugLogger.shared.log("Audio session error: \(error.localizedDescription)")
     }
+}
     
     // MARK: - Tone Engine
     private func setupToneEngine() {
@@ -167,15 +167,31 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         } catch {
             DebugLogger.shared.log("Tone engine error: \(error.localizedDescription)")
         }
+        playerNode.play()
     }
     
     private func playTone() {
-        guard let buffer = toneBuffer else { return }
-        
-        playerNode.stop()
-        playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts)
+    guard let buffer = toneBuffer else { return }
+    
+    // Ensure engine is running
+    if !audioEngine.isRunning {
+        do {
+            try audioEngine.start()
+            DebugLogger.shared.log("Audio engine restarted")
+        } catch {
+            DebugLogger.shared.log("Audio engine restart failed: \(error.localizedDescription)")
+            return
+        }
+    }
+    
+    if !playerNode.isPlaying {
         playerNode.play()
     }
+    
+    playerNode.stop()
+    playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts)
+    playerNode.play()
+}
     
     // MARK: - HAPTICS SETUP
     private func setupHaptics() {
