@@ -20,6 +20,14 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     private var timerCancellable: AnyCancellable?
     private var statusCancellable: AnyCancellable?
+    private let audioAlertsKey = "audioAlertsEnabled"
+    private var isAudioAlertsEnabled: Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: audioAlertsKey) == nil {
+            defaults.set(true, forKey: audioAlertsKey)
+        }
+        return defaults.bool(forKey: audioAlertsKey)
+    }
     
     // Cooldown
     private var lastBeepTime: Date = .distantPast
@@ -47,7 +55,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - Status Handling
     private func handleStatusChange(_ status: SpeedStatus) {
-        let alertsEnabled = UserDefaults.standard.bool(forKey: "audioAlertsEnabled")
+        let alertsEnabled = isAudioAlertsEnabled
         
         if status == .over && alertsEnabled {
             if timerCancellable == nil {
@@ -71,7 +79,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 
-                guard UserDefaults.standard.bool(forKey: "audioAlertsEnabled") else {
+                guard self.isAudioAlertsEnabled else {
                     self.stopMonitoringState()
                     return
                 }
