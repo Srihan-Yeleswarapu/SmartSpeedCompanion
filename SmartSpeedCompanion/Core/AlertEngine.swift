@@ -111,9 +111,14 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - ALERT
     private func triggerAlert() {
-        playTone()
-        hapticSpeedingAlert()
-    }
+    playTone()
+    
+    // Always guarantee at least one vibration
+    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+    
+    // Then try advanced haptics
+    hapticSpeedingAlert()
+}
     
     // MARK: - Audio Session
     private func setupAudioSession() {
@@ -195,19 +200,40 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - HAPTICS SETUP
     private func setupHaptics() {
-        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
-        
-        do {
-            hapticEngine = try CHHapticEngine()
-            try hapticEngine?.start()
-        } catch {
-            DebugLogger.shared.log("Haptics error: \(error.localizedDescription)")
-        }
+    guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else {
+        DebugLogger.shared.log("No advanced haptics support")
+        return
     }
+    
+    do {
+        hapticEngine = try CHHapticEngine()
+        
+        // Restart if engine stops
+        hapticEngine?.stoppedHandler = { reason in
+            DebugLogger.shared.log("Haptics stopped: \(reason.rawValue)")
+        }
+        
+        // Reset handler (CRITICAL)
+        hapticEngine?.resetHandler = { [weak self] in
+            DebugLogger.shared.log("Haptics reset → restarting engine")
+            do {
+                try self?.hapticEngine?.start()
+            } catch {
+                DebugLogger.shared.log("Haptics restart failed: \(error.localizedDescription)")
+            }
+        }
+        
+        try hapticEngine?.start()
+        DebugLogger.shared.log("Haptic engine started OK")
+        
+    } catch {
+        DebugLogger.shared.log("Haptics setup error: \(error.localizedDescription)")
+    }
+}
     
     // MARK: - HAPTIC PATTERNS
     
-    // 🚨 SPEEDING: aggressive, spammy, impossible to ignore
+    // SPEEDING: aggressive, spammy, impossible to ignore
     private func hapticSpeedingAlert() {
         guard let _ = hapticEngine else { return }
         
@@ -228,7 +254,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         playHaptic(events)
     }
     
-    // 💥 Explosion / cloud feel
+    // Explosion / cloud feel
     public func hapticExplosion() {
         guard let _ = hapticEngine else { return }
         
@@ -255,7 +281,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         playHaptic(events)
     }
     
-    // ↩️ LEFT
+    // LEFT
     public func hapticLeft() {
         playHaptic([
             .init(eventType: .hapticTransient,
@@ -267,7 +293,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         ])
     }
     
-    // ↪️ RIGHT
+    // RIGHT
     public func hapticRight() {
         playHaptic([
             .init(eventType: .hapticTransient,
@@ -281,12 +307,26 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - Haptic Player
     private func playHaptic(_ events: [CHHapticEvent]) {
-        do {
-            let pattern = try CHHapticPattern(events: events, parameters: [])
-            let player = try hapticEngine?.makePlayer(with: pattern)
-            try player?.start(atTime: 0)
-        } catch {
-            DebugLogger.shared.log("Haptic playback error: \(error.localizedDescription)")
-        }
+    guard let engine = hapticEngine else {
+        // FALLBACK (guaranteed vibration)
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+        return
     }
+    
+    do {
+        if engine.isRunning == false {
+            try engine.start()
+        }
+        
+        let pattern = try CHHapticPattern(events: events, parameters: [])
+        let player = try engine.makePlayer(with: pattern)
+        try player.start(atTime: 0)
+        
+    } catch {
+        DebugLogger.shared.log("Haptic playback error: \(error.localizedDescription)")
+        
+        // FALLBACK again if anything fails
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+    }
+}
 }
