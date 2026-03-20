@@ -24,8 +24,12 @@ public class SmartSpeedLimitService: ObservableObject {
     
     public func updateSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double?, currentSpeedMph: Double) async -> Int {
         do {
-            // Updated to pass heading: filters out cross-streets and prevents accidental snapping
-            let localLimit = await ArizonaSpeedLimitService.shared.updateSpeedLimit(at: coordinate, heading: heading, currentSpeedMph: currentSpeedMph)
+            // 1. Added 'try' back because the actor method 'throws'
+            let localLimit = try await ArizonaSpeedLimitService.shared.updateSpeedLimit(
+                at: coordinate, 
+                heading: heading, 
+                currentSpeedMph: currentSpeedMph
+            )
             
             self.lastValidLimit = localLimit
             self.currentLimit = localLimit
@@ -36,8 +40,13 @@ public class SmartSpeedLimitService: ObservableObject {
         } catch {
             consecutiveMissCount += 1
             
-            // Recovery search also uses heading
-            if if let recoveryLimit = await ArizonaSpeedLimitService.shared.updateSpeedLimit(at: coordinate, heading: heading, currentSpeedMph: currentSpeedMph, expandedSearch: true) {
+            // 2. Fixed the "if if let" typo and added 'try?' 
+            if let recoveryLimit = try? await ArizonaSpeedLimitService.shared.updateSpeedLimit(
+                at: coordinate, 
+                heading: heading, 
+                currentSpeedMph: currentSpeedMph, 
+                expandedSearch: true
+            ) {
                 self.lastValidLimit = recoveryLimit
                 self.currentLimit = recoveryLimit
                 self.consecutiveMissCount = 0
@@ -49,8 +58,6 @@ public class SmartSpeedLimitService: ObservableObject {
                 self.currentLimit = lastValidLimit
                 return lastValidLimit
             } else if consecutiveMissCount >= missThresholdBeforeClear {
-                // Bust the spatial cache so we get fresh data on the next update.
-                // This auto-fixes the "stuck speed limit" issue without a manual trigger.
                 await ArizonaSpeedLimitService.shared.clearCache()
                 self.lastValidLimit = 0
                 self.currentLimit = 0
