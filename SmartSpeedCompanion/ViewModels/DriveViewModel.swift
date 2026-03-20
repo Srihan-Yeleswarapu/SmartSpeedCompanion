@@ -132,6 +132,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.recentSearches = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
 
         super.init()
+        #if DEBUG || DEVELOPER_BUILD
+        SimulationManager.shared.dataSource = self
+        #endif
+        
         self.speechSynthesizer.delegate = self
         setupAudioSession() // Prepare the singleton AVAudioSession
         
@@ -1025,3 +1029,48 @@ extension CLLocation {
         return max(0, speed * 2.23694)
     }
 }
+
+#if DEBUG || DEVELOPER_BUILD
+extension DriveViewModel: SimulationDataSource {
+    public func getNearestPointOnRoute(to coordinate: CLLocationCoordinate2D) -> (coordinate: CLLocationCoordinate2D, heading: Double?) {
+        guard let route = self.currentRoute else { return (coordinate, nil) }
+        
+        let polyPoints = route.polyline.points()
+        let count = route.polyline.pointCount
+        if count < 2 { return (coordinate, nil) }
+        
+        var minDistance = CLLocationDistance.infinity
+        var closest = polyPoints[0].coordinate
+        var bestHeading: Double? = nil
+        
+        // Find nearest segment
+        for i in 0..<count - 1 {
+            let p1 = polyPoints[i].coordinate
+            let p2 = polyPoints[i+1].coordinate
+            
+            let nearestOnSegment = nearestPointOnSegment(p: coordinate, v: p1, w: p2)
+            let dist = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                .distance(from: CLLocation(latitude: nearestOnSegment.latitude, longitude: nearestOnSegment.longitude))
+            
+            if dist < minDistance {
+                minDistance = dist
+                closest = nearestOnSegment
+                
+                // Calculate heading of this segment
+                let deltaY = p2.latitude - p1.latitude
+                let deltaX = (p2.longitude - p1.longitude) * cos(p1.latitude * .pi / 180.0)
+                var angle = atan2(deltaX, deltaY) * 180 / .pi
+                if angle < 0 { angle += 360 }
+                bestHeading = angle
+            }
+        }
+        
+        // Only snap if we are reasonably close to the route
+        if minDistance < 100 {
+            return (closest, bestHeading)
+        }
+        
+        return (coordinate, nil)
+    }
+}
+#endif

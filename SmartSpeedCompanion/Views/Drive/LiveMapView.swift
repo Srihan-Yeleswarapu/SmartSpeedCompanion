@@ -22,7 +22,16 @@ public struct LiveMapView: UIViewRepresentable {
             map.mapType = .mutedStandard
         }
         
+        #if DEBUG || DEVELOPER_BUILD
+        if viewModel.locationManager.isMockMode {
+            map.showsUserLocation = false
+        } else {
+            map.showsUserLocation = true
+        }
+        #else
         map.showsUserLocation = true
+        #endif
+        
         map.showsCompass = false // We'll add custom components or use native elsewhere
         map.showsScale = false // We'll use MKScaleView
         
@@ -98,8 +107,21 @@ public struct LiveMapView: UIViewRepresentable {
         
         // Re-engage native tracking if it was released
         if uiView.userTrackingMode == .none {
+            #if DEBUG || DEVELOPER_BUILD
+            if !viewModel.locationManager.isMockMode {
+                uiView.setUserTrackingMode(.followWithHeading, animated: true)
+            }
+            #else
             uiView.setUserTrackingMode(.followWithHeading, animated: true)
+            #endif
         }
+        
+        #if DEBUG || DEVELOPER_BUILD
+        if viewModel.locationManager.isMockMode {
+            // Update Simulated Car position and camera manually
+            context.coordinator.updateSimulatedCar(uiView, viewModel: viewModel)
+        }
+        #endif
         
         // Adjust camera altitude (pitch + zoom) without breaking tracking mode
         updateSmartAltitude(uiView, context: context)
@@ -249,6 +271,10 @@ public struct LiveMapView: UIViewRepresentable {
         private var lastRouteDistance: Double = 0
         private var lastSessionReadingCount: Int = 0
         
+        #if DEBUG || DEVELOPER_BUILD
+        private var simulatedCarAnnotation: MKPointAnnotation?
+        #endif
+        
         init(_ parent: LiveMapView) {
             self.parent = parent
         }
@@ -286,6 +312,34 @@ public struct LiveMapView: UIViewRepresentable {
                 }
             }
         }
+        
+        #if DEBUG || DEVELOPER_BUILD
+        // MARK: - Simulation Management
+        func updateSimulatedCar(_ mapView: MKMapView, viewModel: DriveViewModel) {
+            guard let mockLocation = viewModel.locationManager.latestLocation else { return }
+            
+            // Rebuild annotation if missing
+            if simulatedCarAnnotation == nil {
+                let ann = MKPointAnnotation()
+                ann.title = "SIMULATED_CAR"
+                mapView.addAnnotation(ann)
+                simulatedCarAnnotation = ann
+            }
+            
+            // Update coordinate
+            simulatedCarAnnotation?.coordinate = mockLocation.coordinate
+            
+            // Sync map showsUserLocation state
+            if mapView.showsUserLocation != false {
+                mapView.showsUserLocation = false
+            }
+            
+            // If following, re-center map manually
+            if !viewModel.isMapDetached {
+                mapView.setCenter(mockLocation.coordinate, animated: true)
+            }
+        }
+        #endif
         
         // MARK: - Smart Overlay Management
         // Only rebuild overlays when the underlying data actually changes.
@@ -415,6 +469,19 @@ public struct LiveMapView: UIViewRepresentable {
         
         public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation is MKUserLocation { return nil }
+            
+            #if DEBUG || DEVELOPER_BUILD
+            if annotation.title == "SIMULATED_CAR" {
+                let id = "SimCar"
+                var view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKUserLocationView
+                if view == nil {
+                    view = MKUserLocationView(annotation: annotation, reuseIdentifier: id)
+                } else {
+                    view?.annotation = annotation
+                }
+                return view
+            }
+            #endif
             
             let identifier = "Destination"
             var view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
