@@ -307,26 +307,26 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - Haptic Player
     private func playHaptic(_ events: [CHHapticEvent]) {
-    guard let engine = hapticEngine else {
-        // FALLBACK (guaranteed vibration)
-        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
-        return
-    }
-    
-    do {
-        if engine.isRunning == false {
-            try engine.start()
+        guard let engine = hapticEngine else {
+            // FALLBACK (guaranteed vibration)
+            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+            return
         }
         
-        let pattern = try CHHapticPattern(events: events, parameters: [])
-        let player = try engine.makePlayer(with: pattern)
-        try player.start(atTime: 0)
-        
-    } catch {
-        DebugLogger.shared.log("Haptic playback error: \(error.localizedDescription)")
-        
-        // FALLBACK again if anything fails
-        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+        do {
+            // Fix: Start the engine directly. If it's already started, 
+            // this call is essentially a no-op or resumes it.
+            try engine.start()
+            
+            let pattern = try CHHapticPattern(events: events, parameters: [])
+            let player = try engine.makePlayer(with: pattern)
+            try player.start(atTime: 0)
+            
+        } catch {
+            DebugLogger.shared.log("AlertEngine: Haptic Error: \(error.localizedDescription)")
+            // Fallback to basic vibration if the complex pattern fails
+            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+        }
     }
 }
 }
