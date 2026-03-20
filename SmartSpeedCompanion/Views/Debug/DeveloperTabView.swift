@@ -10,6 +10,14 @@ public struct DeveloperTabView: View {
     public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                // DRIVER SIMULATOR REGION
+                DeveloperSimulatorView(locationManager: AppDelegate.sharedDriveViewModel.locationManager)
+                    .padding()
+                    .background(DesignSystem.bgDeep)
+                
+                Divider()
+                    .overlay(DesignSystem.cyan.opacity(0.1))
+                
                 ScrollViewReader { proxy in
                     List(logger.logs) { entry in
                         VStack(alignment: .leading, spacing: 4) {

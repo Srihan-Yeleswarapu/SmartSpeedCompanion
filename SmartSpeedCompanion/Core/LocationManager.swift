@@ -10,6 +10,11 @@ public final class LocationManager: NSObject, ObservableObject {
     @Published public var latestHeading: CLHeading?
     @Published public var authorizationStatus: CLAuthorizationStatus = .notDetermined
     
+    #if DEBUG || DEVELOPER_BUILD
+    @Published public var isMockMode: Bool = false
+    private var mockCancellable: AnyCancellable?
+    #endif
+    
     public override init() {
         super.init()
         manager.delegate = self
@@ -22,8 +27,26 @@ public final class LocationManager: NSObject, ObservableObject {
         
         // Apply user-selected GPS accuracy (set before starting updates)
         applyAccuracyMode()
+        
+        #if DEBUG || DEVELOPER_BUILD
+        setupMockSubscription()
+        #endif
+        
         DebugLogger.shared.log("LocationManager initialized.")
     }
+    
+    #if DEBUG || DEVELOPER_BUILD
+    private func setupMockSubscription() {
+        mockCancellable = NotificationCenter.default.publisher(for: .didUpdateMockLocation)
+            .compactMap { $0.object as? CLLocation }
+            .sink { [weak self] location in
+                guard let self = self, self.isMockMode else { return }
+                DispatchQueue.main.async {
+                    self.latestLocation = location
+                }
+            }
+    }
+    #endif
     
     /// Applies the current gpsAccuracyMode preference from UserDefaults.
     /// Call this any time the user changes the accuracy setting.
@@ -67,6 +90,10 @@ extension LocationManager: CLLocationManagerDelegate {
     }
     
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        #if DEBUG || DEVELOPER_BUILD
+        if isMockMode { return }
+        #endif
+        
         guard let location = locations.last else { return }
         // Filter out stale or wildly inaccurate fixes to prevent map-going-bonkers
         guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 200 else { return }
