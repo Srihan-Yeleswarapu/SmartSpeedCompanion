@@ -1,4 +1,5 @@
 // Path: Core/AlertEngine.swift
+
 import Foundation
 import Combine
 import AudioToolbox
@@ -12,13 +13,26 @@ public protocol AlertEngineProtocol {
 
 @MainActor
 public final class AlertEngine: ObservableObject, AlertEngineProtocol {
+    
     @Published public var consecutiveSeconds: Int = 0
     @Published public var audioAlertActive: Bool = false
     
     private var timerCancellable: AnyCancellable?
     private var statusCancellable: AnyCancellable?
     
+    // Cooldown tracking
+    private var lastBeepTime: Date = .distantPast
+    
+    // Tone generation
+    private let audioEngine = AVAudioEngine()
+    private let playerNode = AVAudioPlayerNode()
+    private var toneBuffer: AVAudioPCMBuffer?
+    
+    // MARK: - Init
     public init(speedEngine: SpeedEngine) {
+        setupAudioSession()
+        setupToneEngine()
+        
         statusCancellable = speedEngine.$status
             .receive(on: RunLoop.main)
             .sink { [weak self] newStatus in
@@ -26,6 +40,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             }
     }
     
+    // MARK: - Status Handling
     private func handleStatusChange(_ status: SpeedStatus) {
         let alertsEnabled = UserDefaults.standard.bool(forKey: "audioAlertsEnabled")
         
@@ -42,30 +57,31 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         }
     }
     
-    // Track the last time a beep was played to enforce a 5-second cooldown
-    private var lastBeepTime: Date = .distantPast
-
+    // MARK: - Monitoring
     private func startMonitoring() {
         consecutiveSeconds = 0
+        
         timerCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 
-                // Re-check setting in case it changed mid-drive
+                // Re-check setting mid-drive
                 guard UserDefaults.standard.bool(forKey: "audioAlertsEnabled") else {
                     self.stopMonitoringState()
                     return
                 }
                 
                 self.consecutiveSeconds += 1
-                // Trigger after 3s, then every 2s to avoid spam
+                
+                // Trigger after 3s, then every 2s
                 if self.consecutiveSeconds >= 3 {
                     self.audioAlertActive = true
+                    
                     let now = Date()
                     if now.timeIntervalSince(self.lastBeepTime) >= 2.0 {
                         self.lastBeepTime = now
-                        self.playBeep()
+                        self.playAlert()
                     }
                 }
             }
@@ -73,29 +89,87 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     private func stopMonitoringState() {
         cancelTimer()
-        self.consecutiveSeconds = 0
-        self.audioAlertActive = false
-        self.timerCancellable = nil
+        consecutiveSeconds = 0
+        audioAlertActive = false
+        timerCancellable = nil
     }
     
     private func cancelTimer() {
         timerCancellable?.cancel()
     }
     
+    // MARK: - Alert (Sound + Vibration)
+    private func playAlert() {
+        playTone()
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+    }
     
-    private func playBeep() {
+    // MARK: - Audio Session
+    private func setupAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            // Change category to .playback so it ignores the silent switch
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .interruptSpokenAudioAndMixWithOthers])
+            
+            try session.setCategory(
+                .playback,
+                mode: .default,
+                options: [
+                    .mixWithOthers,
+                    .interruptSpokenAudioAndMixWithOthers,
+                    .defaultToSpeaker
+                ]
+            )
+            
             try session.setActive(true)
             
-            // 1052 = "Tock". We use PlaySystemSound instead of PlayAlertSound 
-            // to ensure it respects the session category we just set.
-            AudioServicesPlaySystemSound(1052)
-            DebugLogger.shared.log("AlertEngine: BEEP played successfully.")
+            // Force speaker (helps in car scenarios)
+            try session.overrideOutputAudioPort(.speaker)
+            
+            DebugLogger.shared.log("AlertEngine: Audio session configured.")
         } catch {
             DebugLogger.shared.log("AlertEngine: Audio session error: \(error.localizedDescription)")
         }
+    }
+    
+    // MARK: - Tone Engine
+    private func setupToneEngine() {
+        let sampleRate: Double = 44100
+        let duration: Double = 0.25
+        let frequency: Double = 1052.0
+        
+        let frameCount = AVAudioFrameCount(sampleRate * duration)
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+        
+        toneBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)
+        toneBuffer?.frameLength = frameCount
+        
+        let theta = 2.0 * Double.pi * frequency / sampleRate
+        
+        if let buffer = toneBuffer?.floatChannelData?[0] {
+            for frame in 0..<Int(frameCount) {
+                // Square wave = sharper alert sound
+                let value = sin(theta * Double(frame))
+                buffer[frame] = value >= 0 ? 1.0 : -1.0
+            }
+        }
+        
+        audioEngine.attach(playerNode)
+        audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
+        
+        do {
+            try audioEngine.start()
+            DebugLogger.shared.log("AlertEngine: Tone engine started.")
+        } catch {
+            DebugLogger.shared.log("AlertEngine: Tone engine error: \(error.localizedDescription)")
+        }
+    }
+    
+    private func playTone() {
+        guard let buffer = toneBuffer else { return }
+        
+        playerNode.stop()
+        playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
+        playerNode.play()
+        
+        DebugLogger.shared.log("AlertEngine: Tone played (1052 Hz).")
     }
 }
