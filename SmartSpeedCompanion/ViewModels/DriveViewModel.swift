@@ -651,10 +651,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         if activeInstruction.isEmpty { return }
 
         // Immediate announcement threshold based on speed (higher speed = more warning)
-        // Highway speed: ~400m (1/4 mile), City speed: ~80m (250ft)
-        let immediateThreshold = speed > 20.0 ? 400.0 : 80.0 
+        // Adjusting downwards to prevent "too early" announcements reported by user.
+        // Highway (~50mph+): 220m (720ft / 0.15 mile) for the final "Turn" prompt.
+        // City: 60m (~200ft) for the final prompt.
+        let immediateThreshold = speed > 22.0 ? 220.0 : 60.0 
         
-        // 1. Initial Advance Warning (Right after previous turn)
+        // 1. Initial Advance Warning (Right after previous turn or start)
         if !flags.contains("initial") {
             flags.insert("initial")
             

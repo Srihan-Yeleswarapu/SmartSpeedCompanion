@@ -178,8 +178,10 @@ public actor ArizonaSpeedLimitService {
         var closestRouteId: String?
         var minScore: Double = Double.infinity 
         
-        // Extremely tight snapping radius for high precision, expanding only if lost
-        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 60.0 : 25.0 
+        // --- PRECISION SNAPPING ---
+        // Tightening snapping radius significantly to prevent jumping to nearby overpasses.
+        // Surface streets are rarely more than 15-20m from the center line.
+        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 60.0 : 20.0 
         
         for segment in segments {
             guard segment.limit > 0 else { continue }
@@ -214,24 +216,27 @@ public actor ArizonaSpeedLimitService {
             }
 
             // --- VELOCITY MATCHING (EXIT RAMP PROTECTION) ---
-            // If we are driving 65mph, and one segment says 65 and another says 35,
-            // we strongly prefer the 65 even if the 35 is slightly closer (like a ramp).
-            if let currentSpdMph = currentSpeedMph, currentSpdMph > 30 {
+            // Increase penalty for velocity mismatch to avoid jumping to highway from surface road or vice-versa.
+            if let currentSpdMph = currentSpeedMph {
                 let speedDiff = abs(Double(segment.limit) - currentSpdMph)
-                if speedDiff > 25 {
-                    scoreMultiplier *= 3.0 // Road limit is very different from current speed
+                if speedDiff > 30 {
+                    scoreMultiplier *= 25.0 // Brutally penalize huge mismatches (surface vs freeway)
+                } else if speedDiff > 15 {
+                    scoreMultiplier *= 6.0  // Significant penalty for plausible ramp mismatches
+                } else if speedDiff < 5 {
+                    scoreMultiplier *= 0.7  // Bonus for roads where we are matched to the expected flow
                 }
             }
             
             // Score = Distance * Multiplier
             var score = distance * scoreMultiplier
             if let lastId = self.lastSegmentId, segment.routeId == lastId {
-                score *= 0.40 // 60% bias towards staying on the same road segment
+                score *= 0.15 // Aggressive 85% bias towards sticking to the same road (hysteresis)
             }
             
             // TIE-BREAKER: If multiple bounding boxes contain the user (distance == 0),
             // prefer the one with the smaller area (e.g., a specific exit ramp vs a huge highway).
-            score += (segment.area * 1000.0) // small enough not to override real distance, big enough to break ties
+            score += (segment.area * 5000.0) // Boost area weight slightly to prefer smaller road segments
             
             if score < minScore {
                 minScore = score
