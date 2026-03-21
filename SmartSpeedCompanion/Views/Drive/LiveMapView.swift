@@ -135,6 +135,7 @@ public struct LiveMapView: UIViewRepresentable {
     // Native followWithHeading handles re-centering perfectly.
     private func updateSmartAltitude(_ uiView: MKMapView, context: Context) {
         let speed = viewModel.speed
+        let limit = viewModel.limit
         let distanceToTurn = viewModel.distanceToNextTurn
         let isNavigating = viewModel.isNavigating
         let isRecording = viewModel.isRecording
@@ -144,9 +145,7 @@ public struct LiveMapView: UIViewRepresentable {
         
         // ─── STATIONARY GUARD ──────────────────────────────────────────────────
         // If the device is not moving, never change the zoom level.
-        // This prevents the most common jitter: GPS noise causing speed to bounce
-        // between 0 and a small value, triggering continuous zoom transitions.
-        if speed < 2.0 {
+        if speed < 3.0 { // Approx 6 mph
             return
         }
         
@@ -154,79 +153,83 @@ public struct LiveMapView: UIViewRepresentable {
         var targetPitch: Double = 0
         var zoomReason = "unk"
         
+        // ─── LOGICAL ZOOM STATE (Hysteresis-ready) ──────────────────────────────
+        // We use speed + limit to determine a "Base Level" then apply overrides.
         if isNavigating {
             targetPitch = 45
             
-            switch speed {
-            case 2..<5:
-                targetAltitude = 350
-                zoomReason = "nav-slow"
-            case 5..<20:
-                targetAltitude = 500
-                zoomReason = "city"
-            case 20..<40:
-                targetAltitude = 900
-                zoomReason = "suburban"
-            case 40..<60:
-                targetAltitude = 1400
+            // Determine base altitude based on speed AND limit for stability
+            // If the road is a high-speed road (limit > 55), we stay zoomed out even if slowing down slightly.
+            if limit > 55 || speed > 55 {
+                targetAltitude = 1800
                 zoomReason = "highway"
-            default:
-                targetAltitude = 2000
-                zoomReason = "fast"
+            } else if limit > 35 || speed > 35 {
+                targetAltitude = 1200
+                zoomReason = "suburban"
+            } else if speed < 18 {
+                targetAltitude = 500
+                zoomReason = "city-slow"
+            } else {
+                targetAltitude = 800
+                zoomReason = "city"
             }
             
-            // Turn proximity override
-            if distanceToTurn < 100 {
-                targetAltitude = min(targetAltitude, 350)
-                zoomReason += "+turn100"
-            } else if distanceToTurn < 250 {
-                targetAltitude = min(targetAltitude, 500)
-                zoomReason += "+turn250"
-            } else if distanceToTurn < 500 {
-                targetAltitude = min(targetAltitude, 800)
-                zoomReason += "+turn500"
+            // ─── OVERRIDES ──────────────────────────────────────────────────────
+            
+            // Turn proximity override (OVERRIDES speed-based zoom)
+            // We use a slight overlap to prevent bouncing exactly at the threshold
+            if distanceToTurn < 125 {
+                targetAltitude = 380
+                zoomReason = "turn-near"
+            } else if distanceToTurn < 400 {
+                // Smoothly bring the altitude down as we approach the turn
+                let minTurnAlt = 550.0
+                targetAltitude = min(targetAltitude, minTurnAlt)
+                zoomReason += "+turn-appr"
             }
             
-            // Destination approach
+            // Destination approach (closer = lower and more top-down)
             if let dest = viewModel.destination {
                 let destLoc = dest.placemark.location ?? CLLocation()
                 let userLoc = uiView.userLocation.location ?? viewModel.locationManager.latestLocation
                 if let userLoc = userLoc {
                     let distToDest = userLoc.distance(from: destLoc)
                     if distToDest < 150 {
-                        targetAltitude = 200
+                        targetAltitude = 280
                         targetPitch = 30
                         zoomReason = "arrival"
-                    } else if distToDest < 400 {
-                        targetAltitude = min(targetAltitude, 350)
+                    } else if distToDest < 600 {
+                        targetAltitude = min(targetAltitude, 450)
                         targetPitch = 35
-                        zoomReason += "+dest400"
+                        zoomReason += "+dest-near"
                     }
                 }
             }
             
-            // Interchange override
+            // Interchange/Ramp override (Needs more context of path)
             let instruction = viewModel.nextManeuverInstruction.lowercased()
             if instruction.contains("exit") || instruction.contains("merge") ||
                instruction.contains("ramp") || instruction.contains("fork") {
-                targetAltitude = max(targetAltitude, 600)
+                // Zoom out slightly on ramps to see context
+                targetAltitude = max(targetAltitude, 800)
                 zoomReason += "+ramp"
             }
             
-            // Long straight
-            if distanceToTurn > 2000 && speed > 50 {
-                targetAltitude = max(targetAltitude, 3000)
+            // Long straight (zoom out to see more road ahead)
+            if distanceToTurn > 3000 && speed > 50 {
+                targetAltitude = max(targetAltitude, 2500)
                 zoomReason += "+straight"
             }
             
         } else if isRecording {
-            targetPitch = 35
-            if speed > 60 {
-                targetAltitude = 3000; zoomReason = "rec-fast"
+            targetPitch = 30
+            // Simplified levels for free-driving (recording)
+            if speed > 55 {
+                targetAltitude = 2200; zoomReason = "rec-fast"
             } else if speed > 30 {
-                targetAltitude = 1600; zoomReason = "rec-mid"
+                targetAltitude = 1400; zoomReason = "rec-mid"
             } else {
-                targetAltitude = 900; zoomReason = "rec-slow"
+                targetAltitude = 850; zoomReason = "rec-slow"
             }
         } else {
             targetPitch = 0
@@ -234,15 +237,22 @@ public struct LiveMapView: UIViewRepresentable {
             zoomReason = "idle"
         }
         
-        // ─── DEAD-BAND + TIME DEBOUNCE ───────────────────────────────────────────
-        // Both the altitude/pitch difference AND a minimum cooldown period must pass
-        // before we apply a camera change. This eliminates rapid zoom-in/zoom-out jitter.
+        // ─── STABILITY ENGINE (Threshold + Cooldown) ─────────────────────────────
+        // We use a MUCH tighter altitude threshold (300m instead of 800m)
+        // to make the steps actually work, but a LONGER cooldown (4s)
+        // to ensure it doesn't feel frantic.
+        
         let altDiff = abs(currentAltitude - targetAltitude)
         let pitchDiff = abs(currentPitch - targetPitch)
         let timeSinceLastChange = Date().timeIntervalSince(context.coordinator.lastCameraChangeTime)
         
-        if (altDiff > 800 || pitchDiff > 15) && timeSinceLastChange >= context.coordinator.cameraChangeCooldown {
-            DebugLogger.shared.log("CAM [\(zoomReason)]: \(Int(currentAltitude))m -> \(Int(targetAltitude))m | spd=\(Int(speed)) dist=\(Int(distanceToTurn))m")
+        // Special case: If we are very close to a turn (<120m), we ignore the cooldown 
+        // to ensure we zoom in for the turn exactly when needed.
+        let isCriticalZoom = (distanceToTurn < 120 && isNavigating && targetAltitude < 400)
+        let cooldown = isCriticalZoom ? 1.0 : context.coordinator.cameraChangeCooldown
+        
+        if (altDiff > 300 || pitchDiff > 12) && timeSinceLastChange >= cooldown {
+            DebugLogger.shared.log("CAM [\(zoomReason)]: \(Int(currentAltitude))m -> \(Int(targetAltitude))m | spd=\(Int(speed))")
             context.coordinator.lastCameraChangeTime = Date()
             
             let newCamera = uiView.camera.copy() as! MKMapCamera
@@ -262,7 +272,7 @@ public struct LiveMapView: UIViewRepresentable {
         // Minimum seconds between camera altitude/pitch adjustments to suppress jitter
         // Variables must be internal (not private) so the View can access them
         var lastCameraChangeTime: Date = .distantPast
-        let cameraChangeCooldown: TimeInterval = 3.0
+        let cameraChangeCooldown: TimeInterval = 4.0
         
         // Overlay state tracking to avoid redundant remove/add cycles
         private var lastRoutePolylineCount: Int = 0
