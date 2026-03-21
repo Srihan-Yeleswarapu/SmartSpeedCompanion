@@ -12,6 +12,8 @@ public struct TutorialView: View {
     }
     
     private let pages = [
+        TutorialPage(title: "Welcome", description: "SpeedSense is proudly built by Srihan Yeleswarapu.", iconName: "person.circle.fill"),
+        TutorialPage(title: "Support", description: "Report issues via the 'Report Issue' button in Settings to reach us at speedsenseapp@gmail.com.", iconName: "exclamationmark.bubble.fill"),
         TutorialPage(title: "Current Speed", description: "Shows your real-time driving speed.", iconName: "speedometer"),
         TutorialPage(title: "Speed Limit", description: "Displays the current road speed limit.", iconName: "signpost.right"),
         TutorialPage(title: "Search Bar", description: "Allows searching for locations.", iconName: "magnifyingglass"),

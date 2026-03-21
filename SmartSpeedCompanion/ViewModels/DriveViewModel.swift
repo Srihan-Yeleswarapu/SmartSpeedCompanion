@@ -269,6 +269,13 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         sessionStartTime = nil
         self.sessionDuration = 0
         
+        // Requirement 4: If we stop session, we also end the directions.
+        if isNavigating {
+            Task { @MainActor in
+                await endNavigation()
+            }
+        }
+        
         // Only stop Live Activity if navigation isn't using it too.
         if !isNavigating {
             LiveActivityManager.shared.endActivity()
@@ -436,6 +443,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         rerouteTimer = nil
         self.stepStageFlags.removeAll()
         await navigationDelegate?.endNavigationTrigger()
+        
+        // Requirement 4: If we end directions, we end the session (recording).
+        if isRecording {
+            endSession()
+        }
         
         if !isRecording {
             LiveActivityManager.shared.endActivity()

@@ -5,6 +5,8 @@ public class AppState: ObservableObject {
     @AppStorage("hasCompletedOnboarding") public var hasCompletedOnboarding: Bool = false
     @AppStorage("hasCompletedTutorial") public var hasCompletedTutorial: Bool = false
     @AppStorage("hasSeenTutorialTransition") public var hasSeenTutorialTransition = false
+    @AppStorage("hasSelectedState") public var hasSelectedState: Bool = false
+    @AppStorage("userState") public var userState: String = ""
     
     @Published public var authManager = AuthenticationManager.shared
     

@@ -74,6 +74,17 @@ public struct SettingsView: View {
                 
                 Section(header: Text("ACCOUNT").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
                     Button(action: {
+                        let email = "speedsenseapp@gmail.com"
+                        let urlStr = "mailto:\(email)?subject=SpeedSense%20Issue%20Report"
+                        if let url = URL(string: urlStr) {
+                             UIApplication.shared.open(url)
+                        }
+                    }) {
+                        Text("Report Issue")
+                            .foregroundColor(.white)
+                    }
+                    
+                    Button(action: {
                         showingTutorial = true
                     }) {
                         Text("Replay Tutorial")

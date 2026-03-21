@@ -31,6 +31,8 @@ public struct AppRootView: View {
                 }
             } else if !appState.authManager.isAuthenticated {
                 AuthView()
+            } else if !appState.hasSelectedState {
+                StateSelectionView()
             } else if !appState.hasCompletedOnboarding {
                 OnboardingView()
             } else if !appState.hasSeenTutorialTransition {
