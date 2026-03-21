@@ -202,16 +202,24 @@ public actor ArizonaSpeedLimitService {
             var scoreMultiplier: Double = 1.0
             
             if let carHeading = heading {
-                let isNorthSouth = dy > dx
-                let simplifiedRoadHeading = isNorthSouth ? 0.0 : 90.0
+                // A segment is vertically oriented if it is significantly taller than it is wide
+                let isNorthSouth = dy > (dx * 1.5)
+                let isEastWest = dx > (dy * 1.5)
                 
-                let diff = abs(carHeading.truncatingRemainder(dividingBy: 180) - simplifiedRoadHeading)
-                let normalizedDiff = min(diff, 180 - diff)
+                // If the bounding box is nearly square, it's a local/small intersection segment 
+                // and we should be very cautious about using its simplified heading.
+                let isHighlyDirectional = isNorthSouth || isEastWest
                 
-                if normalizedDiff > 40 {
-                    scoreMultiplier *= 8.0 // Heavy penalty for cross-streets
-                } else if normalizedDiff > 20 {
-                    scoreMultiplier *= 2.5 // Moderate penalty for diagonal misalignment
+                if isHighlyDirectional {
+                    let roadHeading = isNorthSouth ? 0.0 : 90.0
+                    let diff = abs(carHeading.truncatingRemainder(dividingBy: 180) - roadHeading)
+                    let normalizedDiff = min(diff, 180 - diff)
+                    
+                    if normalizedDiff > 40 {
+                        scoreMultiplier *= 40.0 // Massive penalty for cross-streets
+                    } else if normalizedDiff > 20 {
+                        scoreMultiplier *= 5.0  // Significant penalty for general misalignment
+                    }
                 }
             }
 
@@ -228,15 +236,20 @@ public actor ArizonaSpeedLimitService {
                 }
             }
             
-            // Score = Distance * Multiplier
-            var score = distance * scoreMultiplier
+            // Score Calculation
+            // We use a base distance offset of 1.0m to ensure heading/velocity 
+            // multipliers still work effectively when distance is 0 (directly on the road).
+            var score = (distance + 1.0) * scoreMultiplier
+            
+            // Apply current road bias AFTER multipliers to make it very hard to switch 
+            // away from the road we are already on while crossing intersections.
             if let lastId = self.lastSegmentId, segment.routeId == lastId {
                 score *= 0.15 // Aggressive 85% bias towards sticking to the same road (hysteresis)
             }
             
-            // TIE-BREAKER: If multiple bounding boxes contain the user (distance == 0),
-            // prefer the one with the smaller area (e.g., a specific exit ramp vs a huge highway).
-            score += (segment.area * 5000.0) // Boost area weight slightly to prefer smaller road segments
+            // TIE-BREAKER: Tiny area weight to prefer more specific segments 
+            // ONLY when distance and heading are nearly identical.
+            score += (segment.area * 50.0) 
             
             if score < minScore {
                 minScore = score
