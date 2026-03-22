@@ -39,7 +39,7 @@ jobs:
           echo "${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}" | base64 -D -o ~/Library/MobileDevice/Provisioning\ Profiles/SpeedSense.mobileprovision
           ls -la ~/Library/MobileDevice/Provisioning\ Profiles/
 
-      - name: Build App Store Archive (Auto-Signing)
+      - name: Build App Store Archive (Manual Signing)
         run: |
           xcodebuild \
             -project SmartSpeedCompanion.xcodeproj \
@@ -47,8 +47,8 @@ jobs:
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath ./SmartSpeedCompanion.xcarchive \
-            -allowProvisioningUpdates \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="SpeedSense App Store" \
             DEVELOPMENT_TEAM="VCNBBG32P6" \
             clean archive
 
@@ -62,7 +62,9 @@ jobs:
               <key>method</key>
               <string>app-store</string>
               <key>signingStyle</key>
-              <string>automatic</string>
+              <string>manual</string>
+              <key>provisioningProfileSpecifier</key>
+              <string>SpeedSense App Store</string>
               <key>stripSwiftSymbols</key>
               <true/>
               <key>teamID</key>
