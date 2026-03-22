@@ -27,18 +27,39 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Create Provisioning Profiles directory
+        run: mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+
+      - name: Setup Apple Certificate and Provisioning Profile
+        env:
+          P12_BASE64: ${{ secrets.APPSTORE_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
+          PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: "build_keychain_pass"
+        run: |
+          CERT_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_PATH=~/Library/MobileDevice/Provisioning\ Profiles/SpeedSense.mobileprovision
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # 1. Decode & Install cert/profile
+          echo -n "$P12_BASE64" | base64 -D -o "$CERT_PATH"
+          echo -n "$PP_BASE64" | base64 -D -o "$PP_PATH"
+
+          # 2. Configure Keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # 3. Import P12 and Grant Access
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Verify identity
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
       - name: Generate Xcode project
         run: xcodegen generate
-
-      - name: Verify project exists
-        run: ls -la *.xcodeproj
-
-      - name: Setup provisioning profile only
-        run: |
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}" | base64 -D -o ~/Library/MobileDevice/Provisioning\ Profiles/SpeedSense.mobileprovision
-          echo "Provisioning profile installed:"
-          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: Build App Store Archive
         run: |
@@ -49,21 +70,9 @@ jobs:
             -destination "generic/platform=iOS" \
             -archivePath ./SmartSpeedCompanion.xcarchive \
             -allowProvisioningUpdates \
-            PROVISIONING_PROFILE_SPECIFIER="SpeedSense App Store" \
             DEVELOPMENT_TEAM="VCNBBG32P6" \
             CODE_SIGN_STYLE=Manual \
-            clean archive 2>&1 | tee build.log
-
-      - name: Check build result
-        run: |
-          if [ -d "SmartSpeedCompanion.xcarchive" ]; then
-            echo "✅ Archive created successfully"
-            du -sh SmartSpeedCompanion.xcarchive
-          else
-            echo "❌ Archive failed"
-            tail -50 build.log
-            exit 1
-          fi
+            clean archive
 
       - name: Create Export Options Plist
         run: |
@@ -77,11 +86,13 @@ jobs:
               <key>signingStyle</key>
               <string>manual</string>
               <key>provisioningProfileSpecifier</key>
-              <string>SpeedSense App Store</string>
+              <string>SpeedSense_App_Store</string>
               <key>stripSwiftSymbols</key>
               <true/>
               <key>teamID</key>
               <string>VCNBBG32P6</string>
+              <key>uploadSymbols</key>
+              <true/>
           </dict>
           </plist>
           EOF
