@@ -8,7 +8,7 @@ import FirebaseCore
 struct SpeedSenseApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
-    // Create shared container so background and app intents work smoothly
+    // Create shared container so background and app intents work properly
     let container: ModelContainer?
     
     init() {
