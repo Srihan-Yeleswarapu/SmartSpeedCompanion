@@ -34,8 +34,8 @@ jobs:
 
       - name: Setup Apple Certificate and Provisioning Profile
         env:
-          P12_BASE64: ${{ secrets.APPSTORE_CERT_BASE64 }}
-          P12_PASSWORD: ${{ secrets.APPSTORE_CERT_PASSWORD }}
+          P12_BASE64: ${{ secrets.APPSTORE_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
           PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
