@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build App Store IPA
+    name: Build App Store Archive
     runs-on: macos-14
     timeout-minutes: 60
 
@@ -27,15 +27,6 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Setup Apple ID in Xcode
-        run: |
-          xcrun xcode-select --print-path
-          # Create a temporary keychain for CI
-          security create-keychain -p "" ci.keychain || true
-          security unlock-keychain -p "" ci.keychain || true
-          security set-keychain-settings -lut 3600 ci.keychain || true
-          security list-keychain -d user -s ci.keychain || true
-
       - name: Build App Store Archive
         run: |
           xcodebuild \
@@ -44,54 +35,14 @@ jobs:
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath ./SmartSpeedCompanion.xcarchive \
-            -allowProvisioningUpdates \
-            CODE_SIGN_STYLE=Automatic \
-            DEVELOPMENT_TEAM="VCNBBG32P6" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
             clean archive
 
-      - name: Create Export Options
-        run: |
-          cat > exportOptions.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store</string>
-              <key>signingStyle</key>
-              <string>automatic</string>
-              <key>stripSwiftSymbols</key>
-              <true/>
-              <key>teamID</key>
-              <string>VCNBBG32P6</string>
-          </dict>
-          </plist>
-          EOF
-
-      - name: Export IPA
-        run: |
-          xcodebuild \
-            -exportArchive \
-            -archivePath ./SmartSpeedCompanion.xcarchive \
-            -exportOptionsPlist exportOptions.plist \
-            -exportPath ./Export
-
-      - name: Upload to App Store
-        run: |
-          xcrun altool \
-            --upload-app \
-            --file "./Export/SmartSpeedCompanion.ipa" \
-            --type ios \
-            --username "${{ secrets.APPLE_ID }}" \
-            --password "${{ secrets.APPLE_ID_PASSWORD }}" \
-            --show-progress
-
-      - name: Upload Artifacts
+      - name: Upload Archive
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: SmartSpeedCompanion-Build-${{ github.run_number }}
-          path: |
-            SmartSpeedCompanion.xcarchive
-            Export/SmartSpeedCompanion.ipa
+          name: SmartSpeedCompanion-Archive-${{ github.run_number }}
+          path: SmartSpeedCompanion.xcarchive
           retention-days: 30
