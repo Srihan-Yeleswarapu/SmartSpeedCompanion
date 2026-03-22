@@ -27,10 +27,16 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Setup Apple ID in Xcode
+        run: |
+          xcrun xcode-select --print-path
+          # Create a temporary keychain for CI
+          security create-keychain -p "" ci.keychain || true
+          security unlock-keychain -p "" ci.keychain || true
+          security set-keychain-settings -lut 3600 ci.keychain || true
+          security list-keychain -d user -s ci.keychain || true
+
       - name: Build App Store Archive
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
           xcodebuild \
             -project SmartSpeedCompanion.xcodeproj \
