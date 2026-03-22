@@ -28,6 +28,9 @@ jobs:
         run: xcodegen generate
 
       - name: Build App Store Archive
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
           xcodebuild \
             -project SmartSpeedCompanion.xcodeproj \
@@ -73,8 +76,8 @@ jobs:
             --upload-app \
             --file "./Export/SmartSpeedCompanion.ipa" \
             --type ios \
-            --username "${{ secrets.APPSTORE_CONNECT_USERNAME }}" \
-            --password "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" \
+            --username "${{ secrets.APPLE_ID }}" \
+            --password "${{ secrets.APPLE_ID_PASSWORD }}" \
             --show-progress
 
       - name: Upload Artifacts
