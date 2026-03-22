@@ -37,7 +37,7 @@ jobs:
         env:
           P12_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
         run: |
-          CERT_PATH=.github/certs/Apple_Distribution.p12
+          CERT_PATH=.github/certs/Apple_Distribution_NEW.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
           KEYCHAIN_PASSWORD="temp"
           
