@@ -44,23 +44,23 @@ jobs:
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
           # 1. Import Cert & Profile from Secrets
-          echo -n "$P12_BASE64" | base64 --decode --output $CERT_PATH
-          echo -n "$PP_BASE64" | base64 --decode --output $PP_PATH
+          echo -n "$P12_BASE64" | base64 -D -o "$CERT_PATH"
+          echo -n "$PP_BASE64" | base64 -D -o "$PP_PATH"
 
           # 2. Setup Keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           # 3. Import P12 into Keychain
           # -A: allow all applications (like codesign) to use this keychain without user interaction prompt
           # -T /usr/bin/codesign: grant access to codesign binary explicitly
-          security import $CERT_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           # Verify it's there
-          security find-identity -v -p codesigning $KEYCHAIN_PATH
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Generate Xcode project (XcodeGen)
         run: xcodegen generate
