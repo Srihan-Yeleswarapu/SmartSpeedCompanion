@@ -33,82 +33,76 @@ jobs:
       - name: Verify project exists
         run: ls -la *.xcodeproj
 
-      - name: Setup signing certificates
+      - name: Install Fastlane
         run: |
-          # Create a keychain for signing
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
-          KEYCHAIN_PASSWORD="temp_password"
-          
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security default-keychain -s "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          
-          # Decode and import certificate
-          echo "${{ secrets.APPSTORE_CERTIFICATE_P12_BASE64 }}" | base64 -D -o certificate.p12
-          security import certificate.p12 -k "$KEYCHAIN_PATH" -P "${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
-          
-          # Setup provisioning profile
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}" | base64 -D -o ~/Library/MobileDevice/Provisioning\ Profiles/SpeedSense.mobileprovision
-          
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          
-          rm certificate.p12
+          sudo gem install fastlane -NV
 
-      - name: Build App Store Archive
-        run: |
-          xcodebuild \
-            -project SmartSpeedCompanion.xcodeproj \
-            -scheme SmartSpeedCompanion \
-            -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath ./SmartSpeedCompanion.xcarchive \
-            -allowProvisioningUpdates \
-            CODE_SIGN_STYLE=Automatic \
-            PROVISIONING_PROFILE_SPECIFIER="SpeedSense App Store" \
-            DEVELOPMENT_TEAM="VCNBBG32P6" \
-            clean archive
+      - name: Create Fastlane directory
+        run: mkdir -p fastlane
 
-      - name: Create Export Options
+      - name: Create Fastfile
         run: |
-          cat > exportOptions.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store</string>
-              <key>signingStyle</key>
-              <string>automatic</string>
-              <key>stripSwiftSymbols</key>
-              <true/>
-              <key>teamID</key>
-              <string>VCNBBG32P6</string>
-          </dict>
-          </plist>
+          cat > fastlane/Fastfile << 'EOF'
+          default_platform(:ios)
+
+          platform :ios do
+            desc "Build and upload to App Store"
+            lane :release do
+              setup_ci
+              
+              match(
+                type: "appstore",
+                readonly: true,
+                app_identifier: "com.speedsense.app",
+                team_id: "VCNBBG32P6",
+                skip_provisioning_certs: false,
+                skip_certificate_matching: false,
+                force_for_new_devices: false,
+                verbose: true
+              )
+
+              build_app(
+                project: "SmartSpeedCompanion.xcodeproj",
+                scheme: "SmartSpeedCompanion",
+                configuration: "Release",
+                destination: "generic/platform=iOS",
+                archive_path: "SmartSpeedCompanion.xcarchive",
+                export_method: "app-store",
+                skip_package_ipa: false,
+                skip_package_pkg: true,
+                output_directory: "Export",
+                output_name: "SmartSpeedCompanion.ipa",
+                derived_data_path: "build",
+                destination_generic_platform_destination: true,
+                build_for_testing: false
+              )
+
+              upload_to_app_store(
+                app_identifier: "com.speedsense.app",
+                team_id: "VCNBBG32P6",
+                ipa: "Export/SmartSpeedCompanion.ipa",
+                skip_screenshots: true,
+                skip_metadata: true,
+                skip_app_version_update: true,
+                force: false,
+                username: ENV["APPSTORE_CONNECT_USERNAME"],
+                password: ENV["APPSTORE_CONNECT_PASSWORD"]
+              )
+            end
+          end
           EOF
 
-      - name: Export IPA from Archive
+      - name: Build and Upload to App Store
+        env:
+          APPSTORE_CONNECT_USERNAME: ${{ secrets.APPSTORE_CONNECT_USERNAME }}
+          APPSTORE_CONNECT_PASSWORD: ${{ secrets.APPSTORE_CONNECT_PASSWORD }}
+          FASTLANE_USER: ${{ secrets.APPSTORE_CONNECT_USERNAME }}
+          FASTLANE_PASSWORD: ${{ secrets.APPSTORE_CONNECT_PASSWORD }}
+          FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD: ${{ secrets.APPSTORE_CONNECT_PASSWORD }}
+          CI: true
         run: |
-          xcodebuild \
-            -exportArchive \
-            -archivePath ./SmartSpeedCompanion.xcarchive \
-            -exportOptionsPlist exportOptions.plist \
-            -exportPath ./Export
-
-      - name: Upload to App Store Connect (Transporter)
-        run: |
-          # Download Transporter
-          curl -O https://appstoreconnect.apple.com/itc/static/Transporter.zip
-          unzip -q Transporter.zip
-          
-          # Use Transporter to upload
-          ./Transporter/Contents/MacOS/Transporter \
-            -m upload \
-            -f ./Export/SmartSpeedCompanion.ipa \
-            -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" \
-            -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" \
-            -v on
+          cd fastlane
+          fastlane ios release
 
       - name: Upload Archive as Artifact
         uses: actions/upload-artifact@v4
