@@ -1,4 +1,4 @@
-name: Build SmartSpeedCompanion (Unsigned)
+name: Build SmartSpeedCompanion (App Store)
 
 on:
   push:
@@ -7,79 +7,115 @@ on:
 
 jobs:
   build:
-    name: Build Unsigned IPA
+    name: Build App Store IPA
     runs-on: macos-14
     timeout-minutes: 60
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Find and select latest Xcode
+        run: |
+          echo "Available Xcode versions:"
+          ls /Applications | grep Xcode
+          XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          echo "Selecting: $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
 
-    - name: Find and select latest Xcode
-      run: |
-        echo "Available Xcode versions:"
-        ls /Applications | grep Xcode
-        XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-        echo "Selecting: $XCODE_PATH"
-        sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
-        xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
-    - name: Install XcodeGen
-      run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
 
-    - name: Generate Xcode project
-      run: xcodegen generate
+      - name: Verify project exists
+        run: ls -la *.xcodeproj
 
-    - name: Verify project exists
-      run: ls -la *.xcodeproj
+      - name: Setup signing certificates
+        run: |
+          # Create a keychain for signing
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
+          KEYCHAIN_PASSWORD="temp_password"
+          
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          
+          # Decode and import certificate
+          echo "${{ secrets.APPSTORE_CERTIFICATE_P12_BASE64 }}" | base64 -D -o certificate.p12
+          security import certificate.p12 -k "$KEYCHAIN_PATH" -P "${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
+          
+          # Setup provisioning profile
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}" | base64 -D -o ~/Library/MobileDevice/Provisioning\ Profiles/SpeedSense.mobileprovision
+          
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          
+          rm certificate.p12
 
-    - name: Build Production app
-      run: |
-        xcodebuild \
-          -project SmartSpeedCompanion.xcodeproj \
-          -scheme SmartSpeedCompanion \
-          -configuration Release \
-          -destination "generic/platform=iOS" \
-          -archivePath ./SmartSpeedCompanion.xcarchive \
-          CODE_SIGN_IDENTITY="" \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGNING_ALLOWED=NO \
-          clean archive
+      - name: Build App Store Archive
+        run: |
+          xcodebuild \
+            -project SmartSpeedCompanion.xcodeproj \
+            -scheme SmartSpeedCompanion \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath ./SmartSpeedCompanion.xcarchive \
+            -allowProvisioningUpdates \
+            CODE_SIGN_STYLE=Automatic \
+            PROVISIONING_PROFILE_SPECIFIER="SpeedSense App Store" \
+            DEVELOPMENT_TEAM="VCNBBG32P6" \
+            clean archive
 
-    - name: Build Developer app
-      run: |
-        xcodebuild \
-          -project SmartSpeedCompanion.xcodeproj \
-          -scheme SmartSpeedCompanion \
-          -configuration Release \
-          -destination "generic/platform=iOS" \
-          -archivePath ./SmartSpeedCompanion-Developer.xcarchive \
-          CODE_SIGN_IDENTITY="" \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGNING_ALLOWED=NO \
-          OTHER_SWIFT_FLAGS="-D DEVELOPER_BUILD" \
-          clean archive
+      - name: Create Export Options
+        run: |
+          cat > exportOptions.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store</string>
+              <key>signingStyle</key>
+              <string>automatic</string>
+              <key>stripSwiftSymbols</key>
+              <true/>
+              <key>teamID</key>
+              <string>VCNBBG32P6</string>
+          </dict>
+          </plist>
+          EOF
 
-    - name: Package unsigned IPAs
-      run: |
-        mkdir -p ./Payload
-        # Production
-        cp -r ./SmartSpeedCompanion.xcarchive/Products/Applications/SmartSpeedCompanion.app ./Payload/
-        zip -r SmartSpeedCompanion.ipa Payload
-        rm -rf ./Payload/*
-        
-        # Developer
-        cp -r ./SmartSpeedCompanion-Developer.xcarchive/Products/Applications/SmartSpeedCompanion.app ./Payload/
-        zip -r SmartSpeedCompanion-Developer.ipa Payload
-        
-        ls -lh *.ipa
+      - name: Export IPA from Archive
+        run: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath ./SmartSpeedCompanion.xcarchive \
+            -exportOptionsPlist exportOptions.plist \
+            -exportPath ./Export
 
-    - name: Upload IPAs
-      uses: actions/upload-artifact@v4
-      with:
-        name: SmartSpeedCompanion-Builds-${{ github.run_number }}
-        path: |
-          SmartSpeedCompanion.ipa
-          SmartSpeedCompanion-Developer.ipa
-        retention-days: 7
+      - name: Upload to App Store Connect (Transporter)
+        run: |
+          # Download Transporter
+          curl -O https://appstoreconnect.apple.com/itc/static/Transporter.zip
+          unzip -q Transporter.zip
+          
+          # Use Transporter to upload
+          ./Transporter/Contents/MacOS/Transporter \
+            -m upload \
+            -f ./Export/SmartSpeedCompanion.ipa \
+            -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" \
+            -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" \
+            -v on
+
+      - name: Upload Archive as Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SmartSpeedCompanion-Archive-${{ github.run_number }}
+          path: |
+            SmartSpeedCompanion.xcarchive
+            Export/SmartSpeedCompanion.ipa
+          retention-days: 7
