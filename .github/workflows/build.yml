@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build and Release App Store IPA
+    name: Build App Store IPA
     runs-on: macos-14
     timeout-minutes: 60
 
@@ -17,53 +17,28 @@ jobs:
 
       - name: Find and select latest Xcode
         run: |
-          echo "Selecting Xcode 16.0 or latest..."
-          XCODE_PATH=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_PATH" ]; then
-            XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          fi
-          echo "Selected: $XCODE_PATH"
+          echo "Available Xcode versions:"
+          ls /Applications | grep Xcode
+          XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          echo "Selecting: $XCODE_PATH"
           sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Create Provisioning Profiles directory
-        run: mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-
-      - name: Setup Apple Certificate and Provisioning Profile
-        env:
-          P12_BASE64: ${{ secrets.APPSTORE_CERTIFICATE_P12_BASE64 }}
-          P12_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
-          PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD: "build_keychain_pass"
-        run: |
-          CERT_PATH=$RUNNER_TEMP/build_certificate.p12
-          PP_PATH=~/Library/MobileDevice/Provisioning\ Profiles/SpeedSense.mobileprovision
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-
-          # 1. Import Cert & Profile from Secrets
-          echo -n "$P12_BASE64" | base64 -D -o "$CERT_PATH"
-          echo -n "$PP_BASE64" | base64 -D -o "$PP_PATH"
-
-          # 2. Setup Keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # 3. Import P12 into Keychain
-          # -A: allow all applications (like codesign) to use this keychain without user interaction prompt
-          # -T /usr/bin/codesign: grant access to codesign binary explicitly
-          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Verify it's there
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-
-      - name: Generate Xcode project (XcodeGen)
+      - name: Generate Xcode project
         run: xcodegen generate
+
+      - name: Verify project exists
+        run: ls -la *.xcodeproj
+
+      - name: Setup provisioning profile only
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}" | base64 -D -o ~/Library/MobileDevice/Provisioning\ Profiles/SpeedSense.mobileprovision
+          echo "Provisioning profile installed:"
+          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: Build App Store Archive
         run: |
@@ -73,7 +48,22 @@ jobs:
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath ./SmartSpeedCompanion.xcarchive \
-            clean archive
+            -allowProvisioningUpdates \
+            PROVISIONING_PROFILE_SPECIFIER="SpeedSense App Store" \
+            DEVELOPMENT_TEAM="VCNBBG32P6" \
+            CODE_SIGN_STYLE=Manual \
+            clean archive 2>&1 | tee build.log
+
+      - name: Check build result
+        run: |
+          if [ -d "SmartSpeedCompanion.xcarchive" ]; then
+            echo "✅ Archive created successfully"
+            du -sh SmartSpeedCompanion.xcarchive
+          else
+            echo "❌ Archive failed"
+            tail -50 build.log
+            exit 1
+          fi
 
       - name: Create Export Options Plist
         run: |
@@ -92,13 +82,11 @@ jobs:
               <true/>
               <key>teamID</key>
               <string>VCNBBG32P6</string>
-              <key>uploadSymbols</key>
-              <true/>
           </dict>
           </plist>
           EOF
 
-      - name: Export IPA
+      - name: Export IPA from Archive
         run: |
           xcodebuild \
             -exportArchive \
@@ -106,7 +94,17 @@ jobs:
             -exportOptionsPlist exportOptions.plist \
             -exportPath ./Export
 
-      - name: Upload to App Store Connect
+      - name: Verify IPA was created
+        run: |
+          if [ -f "Export/SmartSpeedCompanion.ipa" ]; then
+            echo "✅ IPA created successfully"
+            ls -lh Export/SmartSpeedCompanion.ipa
+          else
+            echo "❌ IPA creation failed"
+            exit 1
+          fi
+
+      - name: Upload IPA to App Store Connect
         run: |
           xcrun altool \
             --upload-app \
@@ -116,12 +114,12 @@ jobs:
             --password "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" \
             --show-progress
 
-      - name: Upload Artifacts (Fail-safe)
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SmartSpeedCompanion-Artifacts-${{ github.run_number }}
+          name: SmartSpeedCompanion-Build-${{ github.run_number }}
           path: |
-            Export/*.ipa
             SmartSpeedCompanion.xcarchive
-          retention-days: 14
+            Export/SmartSpeedCompanion.ipa
+          retention-days: 30
