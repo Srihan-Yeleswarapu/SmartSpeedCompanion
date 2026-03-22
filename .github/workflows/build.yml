@@ -27,33 +27,6 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Setup provisioning profile
-        run: |
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp .github/certs/SpeedSense_App_Store.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
-          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/
-
-      - name: Setup signing certificate
-        env:
-          P12_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
-        run: |
-          CERT_PATH=.github/certs/Apple_Distribution_NEW.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-          KEYCHAIN_PASSWORD="temp"
-          
-          # Create keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          
-          # Import certificate
-          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          
-          # Verify
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-
       - name: Build App Store Archive
         run: |
           xcodebuild \
@@ -62,8 +35,8 @@ jobs:
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath ./SmartSpeedCompanion.xcarchive \
-            CODE_SIGN_STYLE=Manual \
-            PROVISIONING_PROFILE_SPECIFIER="SpeedSense_App_Store" \
+            -allowProvisioningUpdates \
+            CODE_SIGN_STYLE=Automatic \
             DEVELOPMENT_TEAM="VCNBBG32P6" \
             clean archive
 
@@ -77,9 +50,7 @@ jobs:
               <key>method</key>
               <string>app-store</string>
               <key>signingStyle</key>
-              <string>manual</string>
-              <key>provisioningProfileSpecifier</key>
-              <string>SpeedSense_App_Store</string>
+              <string>automatic</string>
               <key>stripSwiftSymbols</key>
               <true/>
               <key>teamID</key>
