@@ -426,13 +426,22 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     /// Persianality: Track recently searched locations to show in search history.
     public func saveRecentSearch(_ title: String) {
-        if !recentSearches.contains(title) {
-            recentSearches.insert(title, at: 0)
-            if recentSearches.count > 10 {
-                recentSearches.removeLast()
-            }
-            UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        // Remove if already exists so we can move it to the top
+        if let index = recentSearches.firstIndex(of: trimmed) {
+            recentSearches.remove(at: index)
         }
+        
+        // Insert at the beginning
+        recentSearches.insert(trimmed, at: 0)
+        
+        // Cap at 10 items
+        if recentSearches.count > 10 {
+            recentSearches.removeLast()
+        }
+        UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
     }
 
     /// Terminates the current navigation session.
