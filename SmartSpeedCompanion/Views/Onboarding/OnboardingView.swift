@@ -7,13 +7,13 @@ public struct OnboardingView: View {
     public init() {}
     
     private let questions = [
-        Question(title: "How did you hear about SpeedSense?", options: ["Friend", "Social media", "App Store", "Internet search", "Other"]),
-        Question(title: "What interests you most about SpeedSense?", options: ["Avoiding speeding tickets", "Driving more safely", "Tracking my driving habits", "Curiosity"]),
+        Question(title: "How did you hear about Speedio?", options: ["Friend", "Social media", "App Store", "Internet search", "Other"]),
+        Question(title: "What interests you most about Speedio?", options: ["Avoiding speeding tickets", "Driving more safely", "Tracking my driving habits", "Curiosity"]),
         Question(title: "What type of driver are you?", options: ["Daily commuter", "Student driver", "Frequent road trip driver", "Delivery / work driver"]),
         Question(title: "Do you want to get a speeding ticket?", options: ["No"]),
         Question(title: "Do you want to drive out of control and crash?", options: ["No"]),
         Question(title: "Do you want to drive safely?", options: ["Yes"]),
-        Question(title: "Are you ready for SpeedSense to improve your driving?", options: ["Yes"])
+        Question(title: "Are you ready for Speedio to improve your driving?", options: ["Yes"])
     ]
     
     public var body: some View {
@@ -62,7 +62,7 @@ public struct OnboardingView: View {
                 Spacer()
                 
                 // DRIVING DISCLAIMER (Requirement 8)
-                Text("Do not interact with SpeedSense while driving.\nAlways prioritize road safety.")
+                Text("Do not interact with Speedio while driving.\nAlways prioritize road safety.")
                     .font(.caption)
                     .foregroundColor(.gray)
                     .multilineTextAlignment(.center)

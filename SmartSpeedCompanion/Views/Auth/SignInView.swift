@@ -23,7 +23,7 @@ public struct SignInView: View {
                     Image(systemName: "speedometer")
                         .font(.system(size: 60))
                         .foregroundColor(DesignSystem.cyan)
-                    Text("SpeedSense")
+                    Text("Speedio")
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                     Text("Sign in to continue")

@@ -16,7 +16,7 @@ public struct AppRootView: View {
                             .font(.system(size: 60))
                             .foregroundColor(DesignSystem.cyan)
                         
-                        Text("SpeedSense")
+                        Text("Speedio")
                             .font(.system(size: 32, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                         

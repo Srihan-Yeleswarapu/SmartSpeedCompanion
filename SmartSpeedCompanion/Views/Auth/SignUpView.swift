@@ -26,7 +26,7 @@ public struct SignUpView: View {
                     Text("Create Account")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
-                    Text("Join SpeedSense to track your habits")
+                    Text("Join Speedio to track your habits")
                         .foregroundColor(.gray)
                 }
                 

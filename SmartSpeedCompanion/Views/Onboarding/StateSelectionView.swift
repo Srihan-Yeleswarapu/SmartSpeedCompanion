@@ -48,7 +48,7 @@ public struct StateSelectionView: View {
                 
                 if showError {
                     VStack(spacing: 12) {
-                        Text("I deeply apologize for the inconvenience, but SpeedSense is only available in Arizona at this moment.")
+                        Text("I deeply apologize for the inconvenience, but Speedio is only available in Arizona at this moment.")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(DesignSystem.alertRed)
                             .multilineTextAlignment(.center)

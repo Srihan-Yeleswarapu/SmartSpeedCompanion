@@ -27,7 +27,7 @@ public struct TutorialTransitionView: View {
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                         
-                        Text("SpeedSense uses your location to determine your speed and the speed limit of the road you are on.\n\nYour data is never sold or shared.")
+                        Text("Speedio uses your location to determine your speed and the speed limit of the road you are on.\n\nYour data is never sold or shared.")
                             .font(.headline)
                             .foregroundColor(.gray)
                             .multilineTextAlignment(.center)
