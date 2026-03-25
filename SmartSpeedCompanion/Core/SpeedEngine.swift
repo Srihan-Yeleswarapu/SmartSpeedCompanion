@@ -16,13 +16,14 @@ public final class SpeedEngine: ObservableObject {
     private let speedLimitService = SmartSpeedLimitService.shared
     private var cancellables = Set<AnyCancellable>()
     
+    private var smoothedSpeed: Double = 0.0
+    private let smoothingFactor: Double = 0.4 
+    
     /// Minimum distance (meters) the user must travel before we re-query the speed limit DB.
-    /// 15m keeps the display snappy without hammering the DB on every GPS tick.
     private let minimumFetchDistance: CLLocationDistance = 15.0
     private var lastFetchLocation: CLLocation?
     
     public init(locationManager: LocationManager) {
-        
         locationManager.$latestLocation
             .compactMap { $0 }
             .receive(on: RunLoop.main)
@@ -34,17 +35,38 @@ public final class SpeedEngine: ObservableObject {
     
     private func processLocation(_ location: CLLocation) {
         let isMetric = measurementSystem == "Metric"
-        let conversionFactor = isMetric ? 3.6 : 2.23694 // m/s to km/h or mph
+        
+        // 1. Validation & Quality Filtering
+        // If GPS returns -1 speed (invalid) or accuracy is extremely poor (>10m/s), 
+        // we skip the update to prevent beeping from jitter.
+        guard location.speed >= 0 else { return }
+        
+        // Use speedAccuracy if available
+        if location.speedAccuracy >= 0 && location.speedAccuracy > 5.0 {
+            // If GPS is reporting +/- 11 mph of uncertainty, it's too noisy for live display
+            return
+        }
 
-        // Use raw GPS speed directly — do not add a manual offset.
-        // GPS chips already account for Doppler shift and the offset caused discrepancies.
-        let rawSpeed = location.speed * conversionFactor
-        let currentSpeed = max(0, rawSpeed)
+        // 2. Conversion and Smoothing
+        // Use m/s to mph as the base internal unit for smoothing
+        let rawSpeedMph = location.speed * 2.23694 
         
-        self.speed = currentSpeed
+        // Apply EMA filter: Smoothed = (New * Alpha) + (Old * (1 - Alpha))
+        // This eliminates the jitter users see during steady cruising.
+        if smoothedSpeed == 0 && rawSpeedMph > 0 {
+            smoothedSpeed = rawSpeedMph
+        } else {
+            smoothedSpeed = (rawSpeedMph * smoothingFactor) + (smoothedSpeed * (1.0 - smoothingFactor))
+        }
         
-        // Update status immediately with cache
-        updateStatus(speed: currentSpeed, limit: Double(self.limit))
+        // 3. Status Update and Display
+        let displaySpeed = isMetric ? smoothedSpeed * 1.60934 : smoothedSpeed
+        let finalSpeed = max(0, displaySpeed)
+        
+        self.speed = finalSpeed
+        
+        // Update status immediately
+        updateStatus(speed: finalSpeed, limit: Double(self.limit))
         
         Task { @MainActor in
             // 1. Accurate GPS check
@@ -60,7 +82,7 @@ public final class SpeedEngine: ObservableObject {
             lastFetchLocation = location
             
             let carHeading = location.course >= 0 ? location.course : nil
-            let currentMph = isMetric ? currentSpeed * 0.621371 : currentSpeed
+            let currentMph = isMetric ? self.speed * 0.621371 : self.speed
 
             // 3. The Corrected Call
             // No 'try' or 'do-catch' needed anymore
@@ -71,7 +93,7 @@ public final class SpeedEngine: ObservableObject {
             )
             
             self.limit = currentLimit
-            updateStatus(speed: currentSpeed, limit: Double(currentLimit))
+            updateStatus(speed: self.speed, limit: Double(currentLimit))
         }
     }
     

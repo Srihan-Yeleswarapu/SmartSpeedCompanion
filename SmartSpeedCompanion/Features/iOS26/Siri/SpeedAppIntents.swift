@@ -4,7 +4,7 @@ import Foundation
 
 struct StartDriveSessionIntent: AppIntent {
     static var title: LocalizedStringResource = "Start Drive Session"
-    static var description = IntentDescription("Begin recording a new drive session in Speed Sense")
+    static var description = IntentDescription("Begin recording a new drive session in Speedio")
     
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {

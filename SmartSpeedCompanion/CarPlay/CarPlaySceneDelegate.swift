@@ -1,5 +1,5 @@
 // CarPlaySceneDelegate.swift
-// CarPlay is the PRIMARY interface for Speed Sense.
+// CarPlay is the PRIMARY interface for Speedio.
 // The entire driving experience lives here.
 
 import CarPlay
