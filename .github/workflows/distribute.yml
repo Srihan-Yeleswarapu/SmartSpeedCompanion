@@ -1,0 +1,125 @@
+name: Build Speedio (App Store Distribution)
+
+on:
+  workflow_dispatch: # Only manual for now to avoid clogging runners with failed signing
+  # push:
+  #   branches: [ version2 ]
+
+jobs:
+  distribute:
+    name: Build and Release Signed IPA
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and select latest Xcode
+        run: |
+          XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          echo "Selecting: $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Setup Apple Certificate and Provisioning Profile
+        env:
+          P12_BASE64: ${{ secrets.APPSTORE_CERT_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPSTORE_CERT_PASSWORD }}
+          PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: "build_keychain_pass"
+        run: |
+          CERT_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_DIR=~/Library/MobileDevice/Provisioning\ Profiles
+          mkdir -p "$PP_DIR"
+          PP_PATH="$PP_DIR/Speedio.mobileprovision"
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # 1. Import Cert & Profile from Secrets (with whitespace removal)
+          echo "$P12_BASE64" | tr -d '[:space:]' | base64 -D > "$CERT_PATH"
+          echo "$PP_BASE64" | tr -d '[:space:]' | base64 -D > "$PP_PATH"
+
+          # Validate decoding (fail-fast if secrets are missing)
+          if [ ! -s "$CERT_PATH" ]; then 
+            echo "FAILED: P12 decoding resulted in empty file. Check your 'APPSTORE_CERT_BASE64' secret."
+            exit 1
+          fi
+
+          # 2. Setup Keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # 3. Import P12 into Keychain
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Verify
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build App Store Archive (Signed)
+        run: |
+          xcodebuild \
+            -project SmartSpeedCompanion.xcodeproj \
+            -scheme SmartSpeedCompanion \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath ./SmartSpeedCompanion.xcarchive \
+            clean archive
+
+      - name: Create Export Options Plist
+        run: |
+          cat > exportOptions.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>provisioningProfileSpecifier</key>
+              <string>SpeedSense App Store</string>
+              <key>stripSwiftSymbols</key>
+              <true/>
+              <key>teamID</key>
+              <string>VCNBBG32P6</string>
+              <key>uploadSymbols</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Export Signed Production IPA
+        run: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath ./SmartSpeedCompanion.xcarchive \
+            -exportOptionsPlist exportOptions.plist \
+            -exportPath ./Export
+
+      - name: Upload to App Store Connect
+        run: |
+          xcrun altool \
+            --upload-app \
+            --file "./Export/SmartSpeedCompanion.ipa" \
+            --type ios \
+            --username "${{ secrets.APPSTORE_CONNECT_USERNAME }}" \
+            --password "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" \
+            --show-progress
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Speedio-Distribution-${{ github.run_number }}
+          path: |
+            Export/*.ipa
+            SmartSpeedCompanion.xcarchive
+          retention-days: 7
