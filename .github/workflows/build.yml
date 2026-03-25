@@ -41,8 +41,12 @@ jobs:
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
           # 1. Import Cert & Profile from Secrets
-          echo -n "$P12_BASE64" | base64 --decode --output "$CERT_PATH"
-          echo -n "$PP_BASE64" | base64 --decode --output "$PP_PATH"
+          echo "$P12_BASE64" | tr -d '[:space:]' | base64 -D > "$CERT_PATH"
+          echo "$PP_BASE64" | tr -d '[:space:]' | base64 -D > "$PP_PATH"
+
+          # Validate decoding
+          if [ ! -s "$CERT_PATH" ]; then echo "FAILED: P12 decoding resulted in empty file"; exit 1; fi
+          if [ ! -s "$PP_PATH" ]; then echo "FAILED: Provisioning profile decoding resulted in empty file"; exit 1; fi
 
           # 2. Setup Keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -50,7 +54,8 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           # 3. Import P12 into Keychain
-          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          # Removed -t cert and -f pkcs12 as they can sometimes cause "Invalid Parameter" if the p12 has multiple blobs
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
