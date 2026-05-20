@@ -1,28 +1,32 @@
-name: Build Speedio (Unsigned)
+name: 📦 SmartSpeed Companion – Signed Build & TestFlight
 
 on:
   push:
-    branches: [ version2 ]
+    branches: [ main, version2 ]
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build Unsigned Apps
+  build-and-testflight:
     runs-on: macos-14
     timeout-minutes: 60
+
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.app/Contents/Developer
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and select latest Xcode
+      - name: Decode Firebase plist (if secret provided)
+        env:
+          FIREBASE_PLIST_B64: ${{ secrets.FIREBASE_PLIST_B64 }}
         run: |
-          echo "Available Xcode versions:"
-          ls /Applications | grep Xcode
-          XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          echo "Selecting: $XCODE_PATH"
-          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
-          xcodebuild -version
+          if [ -n "$FIREBASE_PLIST_B64" ]; then
+            echo "$FIREBASE_PLIST_B64" | base64 --decode > SmartSpeedCompanion/Configuration/GoogleService-Info.plist
+            echo "✅ Firebase plist restored"
+          else
+            echo "⚠️ No Firebase secret set; proceeding without GoogleService-Info.plist"
+          fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -30,62 +34,89 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Verify project exists
-        run: ls -la *.xcodeproj
+      - name: Set up keychain & import signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          security import /tmp/cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
 
-      - name: Build Production Archive (Unsigned)
+      - name: Install provisioning profile
+        env:
+          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+        run: |
+          echo "$PROVISIONING_PROFILE" | base64 --decode > /tmp/profile.mobileprovision
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      - name: Increment build number
+        run: |
+          agvtool next-version -all
+          BUILD_NUMBER=$(xcodebuild -showBuildSettings -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release | awk '/CURRENT_PROJECT_VERSION/ {print $3}')
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+
+      - name: Archive (Signed) Production Build
         run: |
           xcodebuild \
             -project SmartSpeedCompanion.xcodeproj \
             -scheme SmartSpeedCompanion \
             -configuration Release \
             -destination "generic/platform=iOS" \
-            -archivePath ./SmartSpeedCompanion.xcarchive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
+            -archivePath $PWD/SmartSpeedCompanion.xcarchive \
             clean archive
 
-      - name: Build Developer Archive (Unsigned)
+      - name: Export IPA (App Store)
         run: |
-          xcodebuild \
-            -project SmartSpeedCompanion.xcodeproj \
-            -scheme SmartSpeedCompanion \
-            -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath ./SmartSpeedCompanion-Developer.xcarchive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            OTHER_SWIFT_FLAGS="-D DEVELOPER_BUILD" \
-            clean archive
+          cat <<EOF > ExportOptions.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.speedsense.app</key><string>SpeedSense App Store</string>
+            </dict>
+            <key>teamID</key><string>VCNBBG32P6</string>
+            <key>compileBitcode</key><false/>
+            <key>stripSwiftSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath $PWD/SmartSpeedCompanion.xcarchive \
+            -exportPath $PWD/Exported \
+            -exportOptionsPlist ExportOptions.plist
 
-      - name: Package Unsigned IPAs
+      - name: Upload IPA to TestFlight (Fastlane)
+        env:
+          FASTLANE_USER: ${{ secrets.APPLE_DEV_USER }}
+          FASTLANE_PASSWORD: ${{ secrets.APPLE_DEV_PASSWORD }}
+          FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
         run: |
-          mkdir -p ./Payload
-          # Production
-          cp -r ./SmartSpeedCompanion.xcarchive/Products/Applications/SmartSpeedCompanion.app ./Payload/
-          zip -r SmartSpeedCompanion.ipa Payload
-          rm -rf ./Payload/*
-          
-          # Developer
-          cp -r ./SmartSpeedCompanion-Developer.xcarchive/Products/Applications/SmartSpeedCompanion.app ./Payload/
-          zip -r SmartSpeedCompanion-Developer.ipa Payload
-          
-          ls -lh *.ipa
+          gem install fastlane -NV
+          fastlane pilot upload \
+            --ipa Exported/SmartSpeedCompanion.ipa \
+            --skip_waiting_for_build_processing
 
-      - name: Upload IPAs
+      - name: Upload artifacts for debugging
         uses: actions/upload-artifact@v4
         with:
-          name: Speedio-IPAs-${{ github.run_number }}
-          path: |
-            SmartSpeedCompanion.ipa
-            SmartSpeedCompanion-Developer.ipa
-          retention-days: 7
-
-      - name: Upload Production Archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: Speedio-Archive-${{ github.run_number }}
-          path: SmartSpeedCompanion.xcarchive
+          name: Signed-IPA-${{ github.run_number }}
+          path: Exported/SmartSpeedCompanion.ipa
           retention-days: 30
+
+      - name: Slack notification (optional)
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          fields: repo,commit,author,action
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}

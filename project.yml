@@ -64,8 +64,6 @@ targets:
         CFBundleName: Speedio
         CFBundleDisplayName: Speedio
         CFBundleIdentifier: com.speedsense.app
-        CFBundleVersion: "1"
-        CFBundleShortVersionString: "1.0.0"
         UILaunchScreen:
           UIColorName: LaunchBackground
         UIApplicationSceneManifest:

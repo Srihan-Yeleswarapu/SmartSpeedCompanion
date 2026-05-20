@@ -1,9 +1,10 @@
-name: Build Speedio (App Store Distribution)
+name: 🚀 Speedio Release (Signed)
 
 on:
-  workflow_dispatch: # Only manual for now to avoid clogging runners with failed signing
-  # push:
-  #   branches: [ version2 ]
+  push:
+    branches: [ version2 ]
+  workflow_dispatch: 
+
 
 jobs:
   distribute:
