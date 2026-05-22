@@ -3,8 +3,7 @@ name: 🚀 Speedio Release (Signed)
 on:
   push:
     branches: [ version2 ]
-  workflow_dispatch: 
-
+  workflow_dispatch:
 
 jobs:
   distribute:
@@ -28,8 +27,8 @@ jobs:
 
       - name: Setup Apple Certificate and Provisioning Profile
         env:
-          P12_BASE64: ${{ secrets.APPSTORE_CERT_BASE64 }}
-          P12_PASSWORD: ${{ secrets.APPSTORE_CERT_PASSWORD }}
+          P12_BASE64: ${{ secrets.APPSTORE_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
           PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
@@ -44,8 +43,8 @@ jobs:
           echo "$PP_BASE64" | tr -d '[:space:]' | base64 -D > "$PP_PATH"
 
           # Validate decoding (fail-fast if secrets are missing)
-          if [ ! -s "$CERT_PATH" ]; then 
-            echo "FAILED: P12 decoding resulted in empty file. Check your 'APPSTORE_CERT_BASE64' secret."
+          if [ ! -s "$CERT_PATH" ]; then
+            echo "FAILED: P12 decoding resulted in empty file. Check your 'APPSTORE_CERTIFICATE_P12_BASE64' secret."
             exit 1
           fi
 
@@ -87,7 +86,7 @@ jobs:
               <key>signingStyle</key>
               <string>manual</string>
               <key>provisioningProfileSpecifier</key>
-              <string>SpeedSense App Store</string>
+              <string>Speedio App Store</string>
               <key>stripSwiftSymbols</key>
               <true/>
               <key>teamID</key>
