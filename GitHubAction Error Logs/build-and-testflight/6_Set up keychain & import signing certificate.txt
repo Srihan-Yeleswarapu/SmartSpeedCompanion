@@ -1,0 +1,15 @@
+﻿2026-05-22T19:48:00.6542640Z ##[group]Run security create-keychain -p "" build.keychain
+2026-05-22T19:48:00.6543120Z [36;1msecurity create-keychain -p "" build.keychain[0m
+2026-05-22T19:48:00.6543580Z [36;1msecurity default-keychain -s build.keychain[0m
+2026-05-22T19:48:00.6544220Z [36;1msecurity unlock-keychain -p "" build.keychain[0m
+2026-05-22T19:48:00.6544750Z [36;1mecho "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12[0m
+2026-05-22T19:48:00.6545280Z [36;1msecurity import /tmp/cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign[0m
+2026-05-22T19:48:00.6545940Z [36;1msecurity set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain[0m
+2026-05-22T19:48:00.6625970Z shell: /bin/bash -e {0}
+2026-05-22T19:48:00.6626160Z env:
+2026-05-22T19:48:00.6626410Z   DEVELOPER_DIR: /Applications/Xcode_16.app/Contents/Developer
+2026-05-22T19:48:00.6626690Z   APPLE_CERTIFICATE: 
+2026-05-22T19:48:00.6626850Z   APPLE_CERT_PASSWORD: 
+2026-05-22T19:48:00.6627040Z ##[endgroup]
+2026-05-22T19:48:00.7506420Z security: SecKeychainItemImport: One or more parameters passed to a function were not valid.
+2026-05-22T19:48:00.7523620Z ##[error]Process completed with exit code 1.

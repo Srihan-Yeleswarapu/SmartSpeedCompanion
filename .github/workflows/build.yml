@@ -36,8 +36,8 @@ jobs:
 
       - name: Set up keychain & import signing certificate
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPSTORE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
         run: |
           security create-keychain -p "" build.keychain
           security default-keychain -s build.keychain
@@ -48,7 +48,7 @@ jobs:
 
       - name: Install provisioning profile
         env:
-          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+          PROVISIONING_PROFILE: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
         run: |
           echo "$PROVISIONING_PROFILE" | base64 --decode > /tmp/profile.mobileprovision
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
@@ -100,9 +100,8 @@ jobs:
 
       - name: Upload IPA to TestFlight (Fastlane)
         env:
-          FASTLANE_USER: ${{ secrets.APPLE_DEV_USER }}
-          FASTLANE_PASSWORD: ${{ secrets.APPLE_DEV_PASSWORD }}
-          FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          FASTLANE_USER: ${{ secrets.APPLE_ID }}
+          FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
           gem install fastlane -NV
 

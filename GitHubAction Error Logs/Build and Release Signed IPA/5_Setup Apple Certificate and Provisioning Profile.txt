@@ -1,0 +1,38 @@
+﻿2026-05-22T19:48:05.2843180Z ##[group]Run CERT_PATH=$RUNNER_TEMP/build_certificate.p12
+2026-05-22T19:48:05.2844600Z [36;1mCERT_PATH=$RUNNER_TEMP/build_certificate.p12[0m
+2026-05-22T19:48:05.2844970Z [36;1mPP_DIR=~/Library/MobileDevice/Provisioning\ Profiles[0m
+2026-05-22T19:48:05.2846240Z [36;1mmkdir -p "$PP_DIR"[0m
+2026-05-22T19:48:05.2846500Z [36;1mPP_PATH="$PP_DIR/Speedio.mobileprovision"[0m
+2026-05-22T19:48:05.2846920Z [36;1mKEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db[0m
+2026-05-22T19:48:05.2847210Z [36;1m[0m
+2026-05-22T19:48:05.2848060Z [36;1m# 1. Import Cert & Profile from Secrets (with whitespace removal)[0m
+2026-05-22T19:48:05.2848990Z [36;1mecho "$P12_BASE64" | tr -d '[:space:]' | base64 -D > "$CERT_PATH"[0m
+2026-05-22T19:48:05.2850700Z [36;1mecho "$PP_BASE64" | tr -d '[:space:]' | base64 -D > "$PP_PATH"[0m
+2026-05-22T19:48:05.2852470Z [36;1m[0m
+2026-05-22T19:48:05.2852750Z [36;1m# Validate decoding (fail-fast if secrets are missing)[0m
+2026-05-22T19:48:05.2853620Z [36;1mif [ ! -s "$CERT_PATH" ]; then [0m
+2026-05-22T19:48:05.2855150Z [36;1m  echo "FAILED: P12 decoding resulted in empty file. Check your 'APPSTORE_CERT_BASE64' secret."[0m
+2026-05-22T19:48:05.2855600Z [36;1m  exit 1[0m
+2026-05-22T19:48:05.2856140Z [36;1mfi[0m
+2026-05-22T19:48:05.2856320Z [36;1m[0m
+2026-05-22T19:48:05.2857570Z [36;1m# 2. Setup Keychain[0m
+2026-05-22T19:48:05.2857970Z [36;1msecurity create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"[0m
+2026-05-22T19:48:05.2858350Z [36;1msecurity set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"[0m
+2026-05-22T19:48:05.2858700Z [36;1msecurity unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"[0m
+2026-05-22T19:48:05.2859290Z [36;1m[0m
+2026-05-22T19:48:05.2859770Z [36;1m# 3. Import P12 into Keychain[0m
+2026-05-22T19:48:05.2860250Z [36;1msecurity import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security[0m
+2026-05-22T19:48:05.2860840Z [36;1msecurity list-keychains -d user -s "$KEYCHAIN_PATH"[0m
+2026-05-22T19:48:05.2862810Z [36;1msecurity set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"[0m
+2026-05-22T19:48:05.2863910Z [36;1m[0m
+2026-05-22T19:48:05.2864050Z [36;1m# Verify[0m
+2026-05-22T19:48:05.2866100Z [36;1msecurity find-identity -v -p codesigning "$KEYCHAIN_PATH"[0m
+2026-05-22T19:48:05.2947010Z shell: /bin/bash -e {0}
+2026-05-22T19:48:05.2947800Z env:
+2026-05-22T19:48:05.2948100Z   P12_BASE64: 
+2026-05-22T19:48:05.2948300Z   P12_PASSWORD: 
+2026-05-22T19:48:05.3774440Z   PP_BASE64: ***
+2026-05-22T19:48:05.3774840Z   KEYCHAIN_PASSWORD: build_keychain_pass
+2026-05-22T19:48:05.3775220Z ##[endgroup]
+2026-05-22T19:48:05.4332630Z FAILED: P12 decoding resulted in empty file. Check your 'APPSTORE_CERT_BASE64' secret.
+2026-05-22T19:48:05.4353460Z ##[error]Process completed with exit code 1.

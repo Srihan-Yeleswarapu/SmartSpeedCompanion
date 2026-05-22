@@ -1,0 +1,10 @@
+﻿2026-05-22T19:48:00.5569410Z ##[group]Run xcodegen generate
+2026-05-22T19:48:00.5569670Z [36;1mxcodegen generate[0m
+2026-05-22T19:48:00.5650870Z shell: /bin/bash -e {0}
+2026-05-22T19:48:00.5651050Z env:
+2026-05-22T19:48:00.5651250Z   DEVELOPER_DIR: /Applications/Xcode_16.app/Contents/Developer
+2026-05-22T19:48:00.5651550Z ##[endgroup]
+2026-05-22T19:48:00.6284760Z ⚙️  Generating plists...
+2026-05-22T19:48:00.6299540Z ⚙️  Generating project...
+2026-05-22T19:48:00.6436390Z ⚙️  Writing project...
+2026-05-22T19:48:00.6503830Z Created project at /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcodeproj

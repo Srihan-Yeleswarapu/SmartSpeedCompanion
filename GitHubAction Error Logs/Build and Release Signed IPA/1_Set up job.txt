@@ -1,0 +1,32 @@
+﻿2026-05-22T19:47:50.9712050Z Current runner version: '2.334.0'
+2026-05-22T19:47:50.9736840Z ##[group]Runner Image Provisioner
+2026-05-22T19:47:50.9737440Z Hosted Compute Agent
+2026-05-22T19:47:50.9737810Z Version: 20260213.493
+2026-05-22T19:47:50.9738210Z Commit: 5c115507f6dd24b8de37d8bbe0bb4509d0cc0fa3
+2026-05-22T19:47:50.9738890Z Build Date: 2026-02-13T00:28:41Z
+2026-05-22T19:47:50.9739340Z Worker ID: {fe405479-1669-4cee-b1f9-8f3da2e82cde}
+2026-05-22T19:47:50.9739790Z Azure Region: westus
+2026-05-22T19:47:50.9740110Z ##[endgroup]
+2026-05-22T19:47:50.9741240Z ##[group]Operating System
+2026-05-22T19:47:50.9741610Z macOS
+2026-05-22T19:47:50.9741900Z 14.8.7
+2026-05-22T19:47:50.9742190Z 23J520
+2026-05-22T19:47:50.9742470Z ##[endgroup]
+2026-05-22T19:47:50.9742790Z ##[group]Runner Image
+2026-05-22T19:47:50.9743140Z Image: macos-14-arm64
+2026-05-22T19:47:50.9743460Z Version: 20260520.0082.1
+2026-05-22T19:47:50.9744150Z Included Software: https://github.com/actions/runner-images/blob/macos-14-arm64/20260520.0082/images/macos/macos-14-arm64-Readme.md
+2026-05-22T19:47:50.9745280Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-14-arm64%2F20260520.0082
+2026-05-22T19:47:50.9745900Z ##[endgroup]
+2026-05-22T19:47:50.9746710Z ##[group]GITHUB_TOKEN Permissions
+2026-05-22T19:47:50.9747940Z Contents: read
+2026-05-22T19:47:50.9748270Z Metadata: read
+2026-05-22T19:47:50.9748600Z Packages: read
+2026-05-22T19:47:50.9748930Z ##[endgroup]
+2026-05-22T19:47:50.9750340Z Secret source: Actions
+2026-05-22T19:47:50.9750790Z Prepare workflow directory
+2026-05-22T19:47:51.0100520Z Prepare all required actions
+2026-05-22T19:47:51.0137900Z Getting action download info
+2026-05-22T19:47:51.3458480Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+2026-05-22T19:47:51.6588720Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-05-22T19:47:51.8607770Z Complete job name: Build and Release Signed IPA

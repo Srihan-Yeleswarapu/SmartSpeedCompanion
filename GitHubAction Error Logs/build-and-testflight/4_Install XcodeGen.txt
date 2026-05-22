@@ -1,0 +1,14 @@
+﻿2026-05-22T19:47:54.7568950Z ##[group]Run brew install xcodegen
+2026-05-22T19:47:54.7569270Z [36;1mbrew install xcodegen[0m
+2026-05-22T19:47:54.7625590Z shell: /bin/bash -e {0}
+2026-05-22T19:47:54.7625840Z env:
+2026-05-22T19:47:54.7626080Z   DEVELOPER_DIR: /Applications/Xcode_16.app/Contents/Developer
+2026-05-22T19:47:54.7626370Z ##[endgroup]
+2026-05-22T19:47:57.1467920Z Inspect the formula dependency plan before installing with `brew install --ask`.
+2026-05-22T19:47:57.1468750Z Enable ask mode by setting `HOMEBREW_ASK=1`.
+2026-05-22T19:47:57.1469040Z Hide these hints with `HOMEBREW_NO_ENV_HINTS=1` (see `man brew`).
+2026-05-22T19:47:57.1469680Z [32m==>[0m [1mFetching downloads for: [32mxcodegen[39m[0m
+2026-05-22T19:47:57.8134760Z ✔︎ Bottle Manifest xcodegen (2.45.4)
+2026-05-22T19:47:58.7727670Z ✔︎ Bottle xcodegen (2.45.4)
+2026-05-22T19:47:58.8923130Z [34m==>[0m [1mPouring xcodegen--2.45.4.arm64_sonoma.bottle.tar.gz[0m
+2026-05-22T19:48:00.5128080Z 🍺  /opt/homebrew/Cellar/xcodegen/2.45.4: 38 files, 7.6MB

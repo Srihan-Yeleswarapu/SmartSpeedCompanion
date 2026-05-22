@@ -1,0 +1,17 @@
+﻿2026-05-22T19:48:00.7644600Z ##[group]Run 8398a7/action-slack@v3
+2026-05-22T19:48:00.7646420Z with:
+2026-05-22T19:48:00.7646580Z   status: failure
+2026-05-22T19:48:00.7646740Z   fields: repo,commit,author,action
+2026-05-22T19:48:00.7646940Z   author_name: 8398a7@action-slack
+2026-05-22T19:48:00.7647200Z   success_message: :white_check_mark: Succeeded GitHub Actions
+
+2026-05-22T19:48:00.7647500Z   cancelled_message: :warning: Cancelled GitHub Actions
+
+2026-05-22T19:48:00.7647770Z   failure_message: :no_entry: Failed GitHub Actions
+
+2026-05-22T19:48:00.7648120Z   github_token: ***
+2026-05-22T19:48:00.7648250Z env:
+2026-05-22T19:48:00.7648430Z   DEVELOPER_DIR: /Applications/Xcode_16.app/Contents/Developer
+2026-05-22T19:48:00.7648690Z   SLACK_WEBHOOK_URL: 
+2026-05-22T19:48:00.7648840Z ##[endgroup]
+2026-05-22T19:48:00.8593660Z ##[error]Specify secrets.SLACK_WEBHOOK_URL

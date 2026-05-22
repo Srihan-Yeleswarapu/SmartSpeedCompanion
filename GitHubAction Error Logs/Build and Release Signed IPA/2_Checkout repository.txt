@@ -1,0 +1,73 @@
+﻿2026-05-22T19:47:51.9104630Z ##[group]Run actions/checkout@v4
+2026-05-22T19:47:51.9105430Z with:
+2026-05-22T19:47:51.9105860Z   repository: Srihan-Yeleswarapu/SmartSpeedCompanion
+2026-05-22T19:47:51.9106600Z   token: ***
+2026-05-22T19:47:51.9106930Z   ssh-strict: true
+2026-05-22T19:47:51.9107510Z   ssh-user: git
+2026-05-22T19:47:51.9107910Z   persist-credentials: true
+2026-05-22T19:47:51.9108300Z   clean: true
+2026-05-22T19:47:51.9108680Z   sparse-checkout-cone-mode: true
+2026-05-22T19:47:51.9109090Z   fetch-depth: 1
+2026-05-22T19:47:51.9109430Z   fetch-tags: false
+2026-05-22T19:47:51.9109790Z   show-progress: true
+2026-05-22T19:47:51.9110130Z   lfs: false
+2026-05-22T19:47:51.9110480Z   submodules: false
+2026-05-22T19:47:51.9110830Z   set-safe-directory: true
+2026-05-22T19:47:51.9111540Z ##[endgroup]
+2026-05-22T19:47:52.0485720Z Syncing repository: Srihan-Yeleswarapu/SmartSpeedCompanion
+2026-05-22T19:47:52.0487530Z ##[group]Getting Git version info
+2026-05-22T19:47:52.0488190Z Working directory is '/Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion'
+2026-05-22T19:47:52.0522320Z [command]/opt/homebrew/bin/git version
+2026-05-22T19:47:52.0922180Z git version 2.54.0
+2026-05-22T19:47:52.0953470Z ##[endgroup]
+2026-05-22T19:47:52.0970500Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/e0388924-9a71-4c72-87ae-a1ca18de90fc/.gitconfig'
+2026-05-22T19:47:52.0980740Z Temporarily overriding HOME='/Users/runner/work/_temp/e0388924-9a71-4c72-87ae-a1ca18de90fc' before making global git config changes
+2026-05-22T19:47:52.0985100Z Adding repository directory to the temporary git global config as a safe directory
+2026-05-22T19:47:52.0987000Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+2026-05-22T19:47:52.1090180Z Deleting the contents of '/Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion'
+2026-05-22T19:47:52.1093970Z ##[group]Initializing the repository
+2026-05-22T19:47:52.1098080Z [command]/opt/homebrew/bin/git init /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+2026-05-22T19:47:52.1419400Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-05-22T19:47:52.1423710Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-05-22T19:47:52.1426350Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-05-22T19:47:52.1428890Z hint: call:
+2026-05-22T19:47:52.1430830Z hint:
+2026-05-22T19:47:52.1432490Z hint: 	git config --global init.defaultBranch <name>
+2026-05-22T19:47:52.1433930Z hint:
+2026-05-22T19:47:52.1435320Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-05-22T19:47:52.1437460Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-05-22T19:47:52.1440690Z hint:
+2026-05-22T19:47:52.1441360Z hint: 	git branch -m <name>
+2026-05-22T19:47:52.1441780Z hint:
+2026-05-22T19:47:52.1442280Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-05-22T19:47:52.1443180Z Initialized empty Git repository in /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/.git/
+2026-05-22T19:47:52.1445270Z [command]/opt/homebrew/bin/git remote add origin https://github.com/Srihan-Yeleswarapu/SmartSpeedCompanion
+2026-05-22T19:47:52.1543520Z ##[endgroup]
+2026-05-22T19:47:52.1545580Z ##[group]Disabling automatic garbage collection
+2026-05-22T19:47:52.1548900Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+2026-05-22T19:47:52.1636140Z ##[endgroup]
+2026-05-22T19:47:52.1638450Z ##[group]Setting up auth
+2026-05-22T19:47:52.1640740Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-05-22T19:47:52.1696930Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-05-22T19:47:52.2455970Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-05-22T19:47:52.2504060Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-05-22T19:47:52.3342030Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-05-22T19:47:52.3403070Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-05-22T19:47:52.4140590Z [command]/opt/homebrew/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-05-22T19:47:52.4205120Z ##[endgroup]
+2026-05-22T19:47:52.4207170Z ##[group]Fetching the repository
+2026-05-22T19:47:52.4215600Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +31d8790bcfc3e5a3dfa6cd8167d8f6bbc7abeee8:refs/remotes/origin/version2
+2026-05-22T19:47:53.6960860Z From https://github.com/Srihan-Yeleswarapu/SmartSpeedCompanion
+2026-05-22T19:47:53.6965020Z  * [new ref]         31d8790bcfc3e5a3dfa6cd8167d8f6bbc7abeee8 -> origin/version2
+2026-05-22T19:47:53.7096410Z ##[endgroup]
+2026-05-22T19:47:53.7098780Z ##[group]Determining the checkout info
+2026-05-22T19:47:53.7101310Z ##[endgroup]
+2026-05-22T19:47:53.7103300Z [command]/opt/homebrew/bin/git sparse-checkout disable
+2026-05-22T19:47:53.7213670Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+2026-05-22T19:47:53.7284490Z ##[group]Checking out the ref
+2026-05-22T19:47:53.7288510Z [command]/opt/homebrew/bin/git checkout --progress --force -B version2 refs/remotes/origin/version2
+2026-05-22T19:47:54.0037110Z Switched to a new branch 'version2'
+2026-05-22T19:47:54.0049090Z branch 'version2' set up to track 'origin/version2'.
+2026-05-22T19:47:54.1169800Z ##[endgroup]
+2026-05-22T19:47:54.1267950Z [command]/opt/homebrew/bin/git log -1 --format=%H
+2026-05-22T19:47:54.1329160Z 31d8790bcfc3e5a3dfa6cd8167d8f6bbc7abeee8

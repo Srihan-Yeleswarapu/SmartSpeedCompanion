@@ -1,0 +1,10 @@
+﻿2026-05-22T19:47:54.1498380Z ##[group]Run XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+2026-05-22T19:47:54.1499310Z [36;1mXCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)[0m
+2026-05-22T19:47:54.1499810Z [36;1mecho "Selecting: $XCODE_PATH"[0m
+2026-05-22T19:47:54.1500210Z [36;1msudo xcode-select -s "$XCODE_PATH/Contents/Developer"[0m
+2026-05-22T19:47:54.1500600Z [36;1mxcodebuild -version[0m
+2026-05-22T19:47:54.1569040Z shell: /bin/bash -e {0}
+2026-05-22T19:47:54.1569490Z ##[endgroup]
+2026-05-22T19:47:54.2149290Z Selecting: /Applications/Xcode_16.2.0.app
+2026-05-22T19:47:56.7822490Z Xcode 16.2
+2026-05-22T19:47:56.7824380Z Build version 16C5032a
