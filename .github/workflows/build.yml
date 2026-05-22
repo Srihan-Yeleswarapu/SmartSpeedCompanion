@@ -81,18 +81,22 @@ jobs:
             <key>signingStyle</key><string>manual</string>
             <key>provisioningProfiles</key>
             <dict>
-              <key>com.speedsense.app</key><string>SpeedSense App Store</string>
+              <key>com.speedsense.app</key><string>Speedio App Store</string>
             </dict>
             <key>teamID</key><string>VCNBBG32P6</string>
             <key>compileBitcode</key><false/>
             <key>stripSwiftSymbols</key><true/>
           </dict>
           </plist>
-          EOF
+          </EOF>
+
           xcodebuild -exportArchive \
             -archivePath $PWD/SmartSpeedCompanion.xcarchive \
             -exportPath $PWD/Exported \
             -exportOptionsPlist ExportOptions.plist
+
+          echo "Exported files:"
+          ls -la Exported || true
 
       - name: Upload IPA to TestFlight (Fastlane)
         env:
@@ -101,15 +105,29 @@ jobs:
           FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
         run: |
           gem install fastlane -NV
+
+          echo "Contents of Exported directory:"
+          ls -la Exported
+
+          IPA_PATH=$(find Exported -name "*.ipa" | head -n 1)
+
+          if [ -z "$IPA_PATH" ]; then
+            echo "❌ No IPA found in Exported directory"
+            exit 1
+          fi
+
+          echo "Using IPA:"
+          echo "$IPA_PATH"
+
           fastlane pilot upload \
-            --ipa Exported/SmartSpeedCompanion.ipa \
+            --ipa "$IPA_PATH" \
             --skip_waiting_for_build_processing
 
       - name: Upload artifacts for debugging
         uses: actions/upload-artifact@v4
         with:
           name: Signed-IPA-${{ github.run_number }}
-          path: Exported/SmartSpeedCompanion.ipa
+          path: Exported
           retention-days: 30
 
       - name: Slack notification (optional)
