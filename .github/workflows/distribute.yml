@@ -50,12 +50,23 @@ jobs:
           # Debug: list repository signing assets
           echo "🔎 Repository signing assets:" ; ls -lah SmartSpeedCompanion
 
-          # Generate a temporary PKCS#12 bundle from the cert and key
+          # Convert Apple DER certificate to PEM first
+          echo "🔧 Converting DER certificate to PEM..."
+          openssl x509 \
+            -inform DER \
+            -in SmartSpeedCompanion/distribution.cer \
+            -out /tmp/distribution.pem
+
+          # Verify PEM conversion worked
+          if [ ! -s /tmp/distribution.pem ]; then
+            echo "❌ PEM conversion failed"
+            exit 1
+          fi
+
           echo "🔧 Generating temporary P12 using OpenSSL..."
           openssl pkcs12 -export \
             -inkey SmartSpeedCompanion/SmartSpeedCompanion.key \
-            -in SmartSpeedCompanion/distribution.cer \
-            -inform DER \
+            -in /tmp/distribution.pem \
             -out "$CERT_PATH" \
             -passout pass:speedio123
 

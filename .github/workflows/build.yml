@@ -56,12 +56,23 @@ jobs:
           # Debug: list repository files relevant to signing
           echo "🔎 Repository signing assets:" && ls -lah SmartSpeedCompanion
 
-          # Generate a temporary PKCS#12 bundle from the cert and key
+          # Convert Apple DER certificate to PEM first
+          echo "🔧 Converting DER certificate to PEM..."
+          openssl x509 \
+            -inform DER \
+            -in SmartSpeedCompanion/distribution.cer \
+            -out /tmp/distribution.pem
+
+          # Verify PEM conversion worked
+          if [ ! -s /tmp/distribution.pem ]; then
+            echo "❌ PEM conversion failed"
+            exit 1
+          fi
+
           echo "🔧 Generating temporary P12 using OpenSSL..."
           openssl pkcs12 -export \
             -inkey SmartSpeedCompanion/SmartSpeedCompanion.key \
-            -in SmartSpeedCompanion/distribution.cer \
-            -inform DER \
+            -in /tmp/distribution.pem \
             -out /tmp/cert.p12 \
             -passout pass:speedio123
 
@@ -178,5 +189,3 @@ jobs:
           name: Signed-IPA-${{ github.run_number }}
           path: Exported
           retention-days: 30
-
-      
