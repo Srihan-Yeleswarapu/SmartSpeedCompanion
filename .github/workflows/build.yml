@@ -42,17 +42,31 @@ jobs:
           security create-keychain -p "" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "" build.keychain
-          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          # Decode the base64-encoded P12 certificate (strip whitespace for macOS compatibility)
+          echo "$APPLE_CERTIFICATE" | tr -d '[:space:]' | base64 -D > /tmp/cert.p12
+          # Ensure the certificate file is not empty after decoding
+          if [ ! -s /tmp/cert.p12 ]; then
+            echo "❌ Decoded certificate is empty. Check APPSTORE_CERTIFICATE_P12_BASE64 secret."
+            exit 1
+          fi
+          # Verify the P12 password before importing (helps surface MAC verification errors early)
+          echo "🔍 Verifying P12 password..."
+          if ! openssl pkcs12 -info -noout -in /tmp/cert.p12 -passin pass:"$APPLE_CERT_PASSWORD" > /dev/null 2>&1; then
+            echo "❌ P12 password verification failed. Check APPSTORE_CERTIFICATE_PASSWORD secret."
+            exit 1
+          fi
           security import /tmp/cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          # Allow codesign and security tools to access the keychain during the build
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
 
       - name: Install provisioning profile
         env:
           PROVISIONING_PROFILE: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
         run: |
-          echo "$PROVISIONING_PROFILE" | base64 --decode > /tmp/profile.mobileprovision
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+            # Decode provisioning profile (strip whitespace for macOS compatibility)
+            echo "$PROVISIONING_PROFILE" | tr -d '[:space:]' | base64 -D > /tmp/profile.mobileprovision
+            mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+            cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: Increment build number
         run: |

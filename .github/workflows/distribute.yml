@@ -38,13 +38,24 @@ jobs:
           PP_PATH="$PP_DIR/Speedio.mobileprovision"
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
-          # 1. Import Cert & Profile from Secrets (with whitespace removal)
+          # 1. Decode certificate and provisioning profile (strip whitespace for macOS compatibility)
           echo "$P12_BASE64" | tr -d '[:space:]' | base64 -D > "$CERT_PATH"
           echo "$PP_BASE64" | tr -d '[:space:]' | base64 -D > "$PP_PATH"
 
-          # Validate decoding (fail-fast if secrets are missing)
+          # Validate decoding (fail-fast if secrets are missing or corrupted)
           if [ ! -s "$CERT_PATH" ]; then
-            echo "FAILED: P12 decoding resulted in empty file. Check your 'APPSTORE_CERTIFICATE_P12_BASE64' secret."
+            echo "❌ Decoded certificate is empty. Verify APPSTORE_CERTIFICATE_P12_BASE64 secret."
+            exit 1
+          fi
+          if [ ! -s "$PP_PATH" ]; then
+            echo "❌ Decoded provisioning profile is empty. Verify APPSTORE_PROVISIONING_PROFILE_BASE64 secret."
+            exit 1
+          fi
+
+          # Optional: verify the P12 password before importing (helps surface MAC verification errors early)
+          echo "🔍 Verifying P12 password..."
+          if ! openssl pkcs12 -info -noout -in "$CERT_PATH" -passin pass:"$P12_PASSWORD" > /dev/null 2>&1; then
+            echo "❌ P12 password verification failed. Check APPSTORE_CERTIFICATE_PASSWORD secret."
             exit 1
           fi
 
@@ -58,7 +69,7 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Verify
+          # Verify import succeeded
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Generate Xcode project
