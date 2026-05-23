@@ -61,8 +61,9 @@ jobs:
           openssl pkcs12 -export \
             -inkey SmartSpeedCompanion/SmartSpeedCompanion.key \
             -in SmartSpeedCompanion/distribution.cer \
+            -inform DER \
             -out /tmp/cert.p12 \
-            -passout pass:temp123
+            -passout pass:speedio123
 
           # Fail fast if the generated P12 is missing or empty
           if [ ! -s /tmp/cert.p12 ]; then
@@ -76,13 +77,13 @@ jobs:
 
           # Inspect the generated P12 (no private keys) for verification
           echo "🔍 Inspecting generated P12..."
-          openssl pkcs12 -info -in /tmp/cert.p12 -nokeys -passin pass:temp123 || {
+          openssl pkcs12 -info -in /tmp/cert.p12 -nokeys -passin pass:speedio123 || {
             echo "❌ OpenSSL inspection of generated P12 failed"
             exit 1
           }
 
           # Import the generated P12 into the keychain
-          security import /tmp/cert.p12 -k build.keychain -P "temp123" -T /usr/bin/codesign
+          security import /tmp/cert.p12 -k build.keychain -P "speedio123" -T /usr/bin/codesign
 
           # Allow codesign and security tools to access the keychain during the build
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
