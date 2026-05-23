@@ -42,24 +42,35 @@ jobs:
           echo "$P12_BASE64" | tr -d '[:space:]' | base64 -D > "$CERT_PATH"
           echo "$PP_BASE64" | tr -d '[:space:]' | base64 -D > "$PP_PATH"
 
-          # Validate decoding (fail-fast if secrets are missing or corrupted)
+          # Fail-fast checks for decoded assets
           if [ ! -s "$CERT_PATH" ]; then
             echo "❌ Decoded certificate is empty. Verify APPSTORE_CERTIFICATE_P12_BASE64 secret."
+            echo "P12 decode failed before import"
             exit 1
           fi
           if [ ! -s "$PP_PATH" ]; then
             echo "❌ Decoded provisioning profile is empty. Verify APPSTORE_PROVISIONING_PROFILE_BASE64 secret."
+            echo "Provisioning profile decode failed before import"
             exit 1
           fi
 
-          # Optional: verify the P12 password before importing (helps surface MAC verification errors early)
-          echo "🔍 Verifying P12 password..."
-          if ! openssl pkcs12 -info -noout -in "$CERT_PATH" -passin pass:"$P12_PASSWORD" > /dev/null 2>&1; then
-            echo "❌ P12 password verification failed. Check APPSTORE_CERTIFICATE_PASSWORD secret."
+          # Debug: print file size and SHA‑256 hash of the decoded P12
+          echo "🔎 Decoded P12 file size (bytes): $(stat -f %z "$CERT_PATH")"
+          echo "🔎 Decoded P12 SHA256: $(shasum -a 256 "$CERT_PATH" | awk '{print $1}')"
+
+          # Verify the P12 password and extract certificate info (no private keys)
+          echo "🔍 Verifying P12 password and extracting cert info..."
+          if openssl pkcs12 -info -in "$CERT_PATH" -passin pass:"$P12_PASSWORD" -nokeys > /tmp/cert_info.txt 2>/dev/null; then
+            echo "✅ Decoded P12 successfully"
+            echo "🔎 Certificate subject:"
+            cat /tmp/cert_info.txt
+          else
+            echo "❌ OpenSSL failed to read P12 (wrong password or corrupted file)"
+            echo "P12 decode failed before import"
             exit 1
           fi
 
-          # 2. Setup Keychain
+          # 2. Setup Keychain with a non‑empty password
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"

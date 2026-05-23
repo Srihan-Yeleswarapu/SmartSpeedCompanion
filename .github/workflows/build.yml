@@ -36,28 +36,45 @@ jobs:
 
       - name: Set up keychain & import signing certificate
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPSTORE_CERTIFICATE_P12_BASE64 }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
+          P12_BASE64: ${{ secrets.APPSTORE_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
-          security create-keychain -p "" build.keychain
+          # Create and unlock a dedicated keychain with a non‑empty password
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          # Decode the base64-encoded P12 certificate (strip whitespace for macOS compatibility)
-          echo "$APPLE_CERTIFICATE" | tr -d '[:space:]' | base64 -D > /tmp/cert.p12
-          # Ensure the certificate file is not empty after decoding
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+
+          # Decode the base64‑encoded P12 certificate (strip whitespace for macOS compatibility)
+          echo "$P12_BASE64" | tr -d '[:space:]' | base64 -D > /tmp/cert.p12
+
+          # Fail fast if the decoded file is missing or empty
           if [ ! -s /tmp/cert.p12 ]; then
             echo "❌ Decoded certificate is empty. Check APPSTORE_CERTIFICATE_P12_BASE64 secret."
+            echo "P12 decode failed before import"
             exit 1
           fi
-          # Verify the P12 password before importing (helps surface MAC verification errors early)
-          echo "🔍 Verifying P12 password..."
-          if ! openssl pkcs12 -info -noout -in /tmp/cert.p12 -passin pass:"$APPLE_CERT_PASSWORD" > /dev/null 2>&1; then
-            echo "❌ P12 password verification failed. Check APPSTORE_CERTIFICATE_PASSWORD secret."
+
+          # Debug: print file size and SHA‑256 hash
+          echo "🔎 Decoded P12 file size (bytes): $(stat -f %z /tmp/cert.p12)"
+          echo "🔎 Decoded P12 SHA256: $(shasum -a 256 /tmp/cert.p12 | awk '{print $1}')"
+
+          # Verify the P12 password and display certificate info (no private keys)
+          echo "🔍 Verifying P12 password and extracting cert info..."
+          if openssl pkcs12 -info -in /tmp/cert.p12 -passin pass:"$P12_PASSWORD" -nokeys > /tmp/cert_info.txt 2>/dev/null; then
+            echo "✅ Decoded P12 successfully"
+            echo "🔎 Certificate subject:"
+            cat /tmp/cert_info.txt
+          else
+            echo "❌ OpenSSL failed to read P12 (wrong password or corrupted file)"
+            echo "P12 decode failed before import"
             exit 1
           fi
-          security import /tmp/cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+
+          # Import the certificate into the keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
           # Allow codesign and security tools to access the keychain during the build
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
 
       - name: Install provisioning profile
         env:
