@@ -74,7 +74,7 @@ public final class SessionRecorder: ObservableObject {
         
         // Ensure ModelContext operations happen on MainActor (SwiftData requirement)
         // Using [context] capture list to bind the validated context value
-        Task { [context] @MainActor in
+        Task { @MainActor [context] in
             context.insert(session)
             do {
                 try context.save()

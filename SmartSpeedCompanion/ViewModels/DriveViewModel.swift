@@ -847,7 +847,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Only activate audio session if other audio is playing and we aren't already active
         // This prevents redundant setActive calls when announce() is called multiple times rapidly
         let audioSession = AVAudioSession.sharedInstance()
-        let shouldActivate = audioSession.isOtherAudioPlaying && !audioSession.isActive
+        // Only activate audio session if other audio is playing
+        // This prevents redundant setActive calls when announce() is called multiple times rapidly
+        let shouldActivate = audioSession.isOtherAudioPlaying
         if shouldActivate {
             do {
                 // Activate session so ducking (lowering music volume) kicks in
