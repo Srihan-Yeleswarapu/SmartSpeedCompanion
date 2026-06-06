@@ -32,8 +32,9 @@ jobs:
         env:
           DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
         run: |
-          # Try to download iOS platform files
-          sudo xcodebuild -downloadPlatform iOS || echo "Platform download may have failed, continuing..."
+          # For device builds (iphoneos SDK), we don't need simulator platform
+          # Skip the downloadPlatform command as it tries to download simulator runtime
+          # which requires CoreSimulator service that may not be available in CI
           
           xcodebuild \
             -project SmartSpeedCompanion.xcodeproj \
