@@ -77,8 +77,6 @@ jobs:
             -scheme SmartSpeedCompanion \
             -configuration Release \
             -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -skipUnavailableActions \
             CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
             CODE_SIGNING_REQUIRED="$CODE_SIGNING_REQUIRED" \
             CODE_SIGNING_ALLOWED="$CODE_SIGNING_ALLOWED" \
