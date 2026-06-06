@@ -1,4 +1,4 @@
-name: 📦 SmartSpeed Companion – Signed Build & TestFlight
+name: "[Package] SmartSpeed Companion - Signed Build & TestFlight"
 
 on:
   push:
@@ -20,9 +20,9 @@ jobs:
         run: |
           if [ -n "$FIREBASE_PLIST_B64" ]; then
             echo "$FIREBASE_PLIST_B64" | base64 --decode > SmartSpeedCompanion/Configuration/GoogleService-Info.plist
-            echo "✅ Firebase plist restored"
+            echo "[OK] Firebase plist restored"
           else
-            echo "⚠️ No Firebase secret set; proceeding without GoogleService-Info.plist"
+            echo "[WARN] No Firebase secret set; proceeding without GoogleService-Info.plist"
           fi
 
       - name: Select Xcode
@@ -48,11 +48,11 @@ jobs:
           KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
           if [ ! -f SmartSpeedCompanion/distribution.cer ]; then
-            echo "❌ distribution.cer not found"
+            echo "[ERROR] distribution.cer not found"
             exit 1
           fi
           if [ ! -f SmartSpeedCompanion/SmartSpeedCompanion.key ]; then
-            echo "❌ SmartSpeedCompanion.key not found"
+            echo "[ERROR] SmartSpeedCompanion.key not found"
             exit 1
           fi
 
@@ -85,16 +85,13 @@ jobs:
           echo "=== Decoding provisioning profile ==="
           echo "$PROVISIONING_PROFILE" | tr -d '[:space:]' | base64 -D > /tmp/profile.mobileprovision
 
-          # Verify it's a valid mobileprovision file
           if ! grep -q "<!DOCTYPE plist" /tmp/profile.mobileprovision && ! grep -q "<?xml" /tmp/profile.mobileprovision; then
-            echo "⚠️ Raw decode failed, trying alternative..."
+            echo "[WARN] Raw decode failed, trying alternative..."
             echo "$PROVISIONING_PROFILE" | base64 -d > /tmp/profile.mobileprovision
           fi
 
-          # Show profile info
           echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes"
 
-          # Extract profile name for verification
           PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
           PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
           TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
@@ -108,10 +105,9 @@ jobs:
           # Extract entitlements from provisioning profile for codesign
           /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.mobileprovision > /tmp/entitlements.plist 2>/dev/null
           if [ -s /tmp/entitlements.plist ]; then
-            echo "✅ Extracted entitlements from provisioning profile"
-            cat /tmp/entitlements.plist
+            echo "[OK] Extracted entitlements from provisioning profile"
           else
-            echo "⚠️ Could not extract entitlements from profile"
+            echo "[WARN] Could not extract entitlements from profile"
           fi
 
           # Install to correct location
@@ -125,7 +121,6 @@ jobs:
         env:
           KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
-          # Unlock keychain so Xcode can access signing assets for export
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
 
           echo "=== Available signing identities ==="
@@ -141,10 +136,10 @@ jobs:
       - name: Verify archive exists
         run: |
           if [ -d "./SmartSpeedCompanion.xcarchive" ]; then
-            echo "✅ Archive created successfully"
+            echo "[OK] Archive created successfully"
             ls -la ./SmartSpeedCompanion.xcarchive/
           else
-            echo "❌ Archive not found!"
+            echo "[ERROR] Archive not found!"
             exit 1
           fi
 
@@ -164,41 +159,28 @@ jobs:
           mkdir -p "$PWD/IPAWork"
 
           echo "=== Exporting IPA with manual signing ==="
-          cat > "$PWD/exportOptions.plist" << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>method</key><string>app-store-connect</string>
-    <key>signingStyle</key><string>manual</string>
-    <key>signingIdentity</key><string>Apple Distribution</string>
-    <key>provisioningProfileSpecifier</key><string>Speedio App Store</string>
-    <key>teamID</key><string>VCNBBG32P6</string>
-    <key>uploadBitcode</key><false/>
-    <key>uploadSymbols</key><true/>
-</dict>
-</plist>
-EOF
+          python3 -c "import plistlib; plistlib.dump({'method': 'app-store-connect', 'signingStyle': 'manual', 'signingIdentity': 'Apple Distribution', 'provisioningProfileSpecifier': 'Speedio App Store', 'teamID': 'VCNBBG32P6', 'uploadBitcode': False, 'uploadSymbols': True}, open('$PWD/exportOptions.plist', 'wb'))"
+          echo "exportOptions.plist created"
 
           xcodebuild -exportArchive -archivePath "$PWD/SmartSpeedCompanion.xcarchive" -exportOptionsPlist "$PWD/exportOptions.plist" -exportPath "$PWD/Export" 2>&1 | tail -50
 
           echo "=== Locating IPA ==="
           IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
           if [ -z "$IPA_PATH" ]; then
-            echo "❌ No IPA file found"
+            echo "[ERROR] No IPA file found"
             exit 1
           fi
-          echo "✅ IPA found: $IPA_PATH"
+          echo "[OK] IPA found: $IPA_PATH"
           echo "IPA size: $(wc -c < "$IPA_PATH") bytes"
 
           echo "=== Checking for embedded.mobileprovision ==="
           if unzip -l "$IPA_PATH" | grep -q "embedded.mobileprovision"; then
-            echo "✅ embedded.mobileprovision already present in IPA"
+            echo "[OK] embedded.mobileprovision already present in IPA"
           else
-            echo "⚠️ embedded.mobileprovision NOT found — manually embedding..."
+            echo "[WARN] embedded.mobileprovision NOT found -- manually embedding..."
 
             if [ ! -f /tmp/profile.mobileprovision ]; then
-              echo "❌ /tmp/profile.mobileprovision not found!"
+              echo "[ERROR] /tmp/profile.mobileprovision not found!"
               exit 1
             fi
 
@@ -207,37 +189,37 @@ EOF
 
             APP_BUNDLE=$(find . -name "*.app" -type d | head -1)
             if [ -z "$APP_BUNDLE" ]; then
-              echo "❌ No .app bundle found in IPA"
+              echo "[ERROR] No .app bundle found in IPA"
               exit 1
             fi
             echo "Found app bundle: $APP_BUNDLE"
 
             # Copy provisioning profile into the app bundle
             cp /tmp/profile.mobileprovision "$APP_BUNDLE/embedded.mobileprovision"
-            echo "✅ Embedded provisioning profile into: $APP_BUNDLE/embedded.mobileprovision"
+            echo "[OK] Embedded provisioning profile into: $APP_BUNDLE/embedded.mobileprovision"
 
             # Re-sign with entitlements from provisioning profile
             security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
             if [ -f /tmp/entitlements.plist ]; then
               codesign --force --sign "Apple Distribution" --entitlements /tmp/entitlements.plist "$APP_BUNDLE"
-              echo "✅ Re-signed app bundle with entitlements"
+              echo "[OK] Re-signed app bundle with entitlements"
             else
               codesign --force --sign "Apple Distribution" "$APP_BUNDLE"
-              echo "⚠️ Re-signed without entitlements (not found in profile)"
+              echo "[WARN] Re-signed without entitlements (not found in profile)"
             fi
 
             rm -f "$IPA_PATH"
             zip -rq "$IPA_PATH" Payload/
-            echo "✅ Repackaged IPA with embedded.mobileprovision"
+            echo "[OK] Repackaged IPA with embedded.mobileprovision"
 
             cd "$PWD"
           fi
 
           echo "=== Final IPA verification ==="
           if unzip -l "$IPA_PATH" | grep -q "embedded.mobileprovision"; then
-            echo "✅ embedded.mobileprovision CONFIRMED in final IPA"
+            echo "[OK] embedded.mobileprovision CONFIRMED in final IPA"
           else
-            echo "❌ STILL missing embedded.mobileprovision!"
+            echo "[ERROR] STILL missing embedded.mobileprovision!"
             exit 1
           fi
 
