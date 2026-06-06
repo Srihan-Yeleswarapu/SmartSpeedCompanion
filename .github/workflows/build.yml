@@ -105,6 +105,15 @@ jobs:
           echo "Team ID: $TEAM_ID"
           echo "App ID: $APPID"
 
+          # Extract entitlements from provisioning profile for codesign
+          /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.mobileprovision > /tmp/entitlements.plist 2>/dev/null
+          if [ -s /tmp/entitlements.plist ]; then
+            echo "✅ Extracted entitlements from provisioning profile"
+            cat /tmp/entitlements.plist
+          else
+            echo "⚠️ Could not extract entitlements from profile"
+          fi
+
           # Install to correct location
           PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PP_DIR"
@@ -126,8 +135,6 @@ jobs:
           ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
 
           # Build unsigned archive to avoid SPM dependency signing issues
-          # CODE_SIGNING_REQUIRED=NO and CODE_SIGNING_ALLOWED=NO prevent xcodebuild from
-          # trying to sign SPM targets (Firebase, leveldb, etc.) which have no development team
           xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" -archivePath ./SmartSpeedCompanion.xcarchive 2>&1 | tail -100
         timeout-minutes: 30
 
@@ -157,23 +164,23 @@ jobs:
           mkdir -p "$PWD/IPAWork"
 
           echo "=== Exporting IPA with manual signing ==="
-          cat > exportOptions.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key><string>app-store-connect</string>
-              <key>signingStyle</key><string>manual</string>
-              <key>signingIdentity</key><string>Apple Distribution</string>
-              <key>provisioningProfileSpecifier</key><string>Speedio App Store</string>
-              <key>teamID</key><string>VCNBBG32P6</key>
-              <key>uploadBitcode</key><false/>
-              <key>uploadSymbols</key><true/>
-          </dict>
-          </plist>
-          EOF
+          cat > "$PWD/exportOptions.plist" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key><string>app-store-connect</string>
+    <key>signingStyle</key><string>manual</string>
+    <key>signingIdentity</key><string>Apple Distribution</string>
+    <key>provisioningProfileSpecifier</key><string>Speedio App Store</string>
+    <key>teamID</key><string>VCNBBG32P6</string>
+    <key>uploadBitcode</key><false/>
+    <key>uploadSymbols</key><true/>
+</dict>
+</plist>
+EOF
 
-          xcodebuild -exportArchive -archivePath "$PWD/SmartSpeedCompanion.xcarchive" -exportOptionsPlist exportOptions.plist -exportPath "$PWD/Export" 2>&1 | tail -50
+          xcodebuild -exportArchive -archivePath "$PWD/SmartSpeedCompanion.xcarchive" -exportOptionsPlist "$PWD/exportOptions.plist" -exportPath "$PWD/Export" 2>&1 | tail -50
 
           echo "=== Locating IPA ==="
           IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
@@ -205,12 +212,19 @@ jobs:
             fi
             echo "Found app bundle: $APP_BUNDLE"
 
+            # Copy provisioning profile into the app bundle
             cp /tmp/profile.mobileprovision "$APP_BUNDLE/embedded.mobileprovision"
             echo "✅ Embedded provisioning profile into: $APP_BUNDLE/embedded.mobileprovision"
 
+            # Re-sign with entitlements from provisioning profile
             security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-            codesign --force --sign "Apple Distribution" "$APP_BUNDLE"
-            echo "✅ Re-signed app bundle after embedding profile"
+            if [ -f /tmp/entitlements.plist ]; then
+              codesign --force --sign "Apple Distribution" --entitlements /tmp/entitlements.plist "$APP_BUNDLE"
+              echo "✅ Re-signed app bundle with entitlements"
+            else
+              codesign --force --sign "Apple Distribution" "$APP_BUNDLE"
+              echo "⚠️ Re-signed without entitlements (not found in profile)"
+            fi
 
             rm -f "$IPA_PATH"
             zip -rq "$IPA_PATH" Payload/
