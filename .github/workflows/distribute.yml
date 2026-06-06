@@ -77,6 +77,18 @@ jobs:
 
           echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes"
 
+          # DIAGNOSTIC: Show first 200 bytes of the decoded file in hex to identify what it actually is
+          echo "=== First 200 bytes (hex dump) ==="
+          head -c 200 /tmp/profile.mobileprovision | xxd | head -20
+
+          # DIAGNOSTIC: Show first 200 bytes as ASCII (replacing non-printable)
+          echo "=== First 200 bytes (ASCII) ==="
+          head -c 200 /tmp/profile.mobileprovision | tr -d '\0' | cat -v | head -5
+
+          # Try to detect what type of file this actually is
+          FILE_TYPE=$(file -b /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
+          echo "File type: $FILE_TYPE"
+
           PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
           PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
           TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
