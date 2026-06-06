@@ -1,14 +1,23 @@
 import UIKit
 import CarPlay
 import FirebaseCore
+import SwiftData
 
 class AppDelegate: UIResponder, UIApplicationDelegate {
     
+    // Shared ModelContainer for SwiftData - initialized early so CarPlay can access it
+    // This must be created before any scene (including CarPlay) connects
+    static let sharedModelContainer: ModelContainer = {
+        do {
+            return try ModelContainer(for: DriveSession.self, SpeedReading.self)
+        } catch {
+            fatalError("Failed to create shared ModelContainer: \(error)")
+        }
+    }()
+    
     // Shared ViewModel instance to pass to CarPlay
-    // In a real app, this should be injected or handled via a shared container.
-    // We expose it here for simplicity of connecting CPSceneDelegate to the same State.
-    // Shared instance for phone + CarPlay
-    static let sharedDriveViewModel = DriveViewModel()
+    // Uses the shared ModelContainer to ensure SessionRecorder has a valid context
+    static let sharedDriveViewModel = DriveViewModel(modelContext: sharedModelContainer.mainContext)
     static let sharedAppState = AppState()
     
     func application(

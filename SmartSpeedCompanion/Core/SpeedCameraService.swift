@@ -31,7 +31,11 @@ public class SpeedCameraService: ObservableObject {
     
     @Published public var cameras: [SpeedCamera] = []
     
-    private let apiKey = "329a6edfe2f7439f9dd57dcf69c6d872"
+    private var apiKey: String {
+        // Read API key from GoogleService-Info.plist to avoid hardcoding
+        Bundle.main.object(forInfoDictionaryKey: "SPEED_CAMERA_API_KEY") as? String
+            ?? ""
+    }
     private let baseURL = "https://az511.com/api/v2/get/cameras"
     
     private init() {}

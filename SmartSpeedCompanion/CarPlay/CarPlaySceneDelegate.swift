@@ -28,7 +28,9 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         // Configure Primary Root Layout
         navigationRoot = CarPlayNavigationRootTemplate(interfaceController: interfaceController, viewModel: vm)
         
-        guard let speedMapTemplate = navigationRoot?.mapTemplate else { return }
+        // Explicit check before accessing mapTemplate to avoid potential race condition
+        guard let root = navigationRoot else { return }
+        let speedMapTemplate = root.mapTemplate
         
         // Establish as primary
         interfaceController.setRootTemplate(speedMapTemplate, animated: true, completion: nil)
@@ -74,7 +76,9 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         // Configure Primary Root Layout
         navigationRoot = CarPlayNavigationRootTemplate(interfaceController: interfaceController, viewModel: vm)
         
-        guard let speedMapTemplate = navigationRoot?.mapTemplate else { return }
+        // Explicit check before accessing mapTemplate to avoid potential race condition
+        guard let root = navigationRoot else { return }
+        let speedMapTemplate = root.mapTemplate
         interfaceController.setRootTemplate(speedMapTemplate, animated: true, completion: nil)
     }
     

@@ -4,6 +4,8 @@
 <dict>
 	<key>API_KEY</key>
 	<string>AIzaSyBrhJMI6sHbelRaAdHaQc6GgDOOWoCSqRM</string>
+	<key>SPEED_CAMERA_API_KEY</key>
+	<string>329a6edfe2f7439f9dd57dcf69c6d872</string>
 	<key>GCM_SENDER_ID</key>
 	<string>193879746182</string>
 	<key>PLIST_VERSION</key>

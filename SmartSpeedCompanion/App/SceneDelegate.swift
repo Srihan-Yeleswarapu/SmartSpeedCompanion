@@ -15,22 +15,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         
         let window = UIWindow(windowScene: windowScene)
         
-        if let container = try? ModelContainer(for: DriveSession.self, SpeedReading.self) {
-            AppDelegate.sharedDriveViewModel.sessionRecorder.setModelContext(container.mainContext)
-            
-            let rootView = AppRootView()
-                .environmentObject(AppDelegate.sharedAppState)
-                .environmentObject(AppDelegate.sharedDriveViewModel)
-                .modelContainer(container)
-                .preferredColorScheme(.dark)
-            window.rootViewController = UIHostingController(rootView: rootView)
-        } else {
-            // Fallback to simple root view if SwiftData fails (allows app to at least open)
-            let rootView = Text("Database Error. Please reinstall the app.")
-                .foregroundColor(.white)
-                .preferredColorScheme(.dark)
-            window.rootViewController = UIHostingController(rootView: rootView)
-        }
+        // Use the shared ModelContainer from AppDelegate - it's already initialized
+        // before this scene connects, ensuring CarPlay and the app share the same context
+        let rootView = AppRootView()
+            .environmentObject(AppDelegate.sharedAppState)
+            .environmentObject(AppDelegate.sharedDriveViewModel)
+            .modelContainer(AppDelegate.sharedModelContainer)
+            .preferredColorScheme(.dark)
+        window.rootViewController = UIHostingController(rootView: rootView)
         self.window = window
         window.makeKeyAndVisible()
     }

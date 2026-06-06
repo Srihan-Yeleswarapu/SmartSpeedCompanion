@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Collections
 
 public struct LogEntry: Identifiable, Sendable {
     public let id = UUID()
@@ -16,7 +17,8 @@ public struct LogEntry: Identifiable, Sendable {
 public final class DebugLogger: ObservableObject {
     public static let shared = DebugLogger()
     
-    @Published public private(set) var logs: [LogEntry] = []
+    // Using Deque<LogEntry> for O(1) removal from front instead of O(n) with Array.removeFirst()
+    @Published public private(set) var logs: Deque<LogEntry> = []
     private let maxLogs = 1500
     private let queue = DispatchQueue(label: "com.speedsense.debuglogger", qos: .utility)
     
@@ -32,6 +34,7 @@ public final class DebugLogger: ObservableObject {
             DispatchQueue.main.async {
                 self.logs.append(entry)
                 if self.logs.count > self.maxLogs {
+                    // Deque.removeFirst() is O(1), not O(n) like Array.removeFirst()
                     self.logs.removeFirst()
                 }
             }

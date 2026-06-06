@@ -826,15 +826,13 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         } catch {
             DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
         }
-    }
-
-    /// Triggers speech synthesis for a given string.
+    }    /// Triggers speech synthesis for a given string.
     func announce(_ message: String) {
         let rawVoiceVal = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool
         let voiceEnabled = rawVoiceVal ?? true
-        
+
         guard voiceEnabled, !message.isEmpty else { return }
-        
+
         // Sanitize punctuation that causes natural speech to sound robotic ("Period", "Full Stop")
         // NOTE: We only replace dots that are followed by a space to preserve decimals like "2.5"
         let cleanMessage = message
@@ -842,15 +840,21 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             .replacingOccurrences(of: "..", with: " ")
             .replacingOccurrences(of: ". ", with: " ") 
             .trimmingCharacters(in: .whitespaces)
-        
+
         // Convert abbreviations like "Ave" to "Avenue" before speaking
         let expandedMessage = expandAbbreviations(cleanMessage)
-        
-        do {
-            // Activate session so ducking (lowering music volume) kicks in
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
+
+        // Only activate audio session if other audio is playing and we aren't already active
+        // This prevents redundant setActive calls when announce() is called multiple times rapidly
+        let audioSession = AVAudioSession.sharedInstance()
+        let shouldActivate = audioSession.isOtherAudioPlaying && !audioSession.isActive
+        if shouldActivate {
+            do {
+                // Activate session so ducking (lowering music volume) kicks in
+                try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+            } catch {
+                DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
+            }
         }
         
         let utterance = AVSpeechUtterance(string: expandedMessage)
@@ -1030,13 +1034,19 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
 } // <--- THIS BRACE CLOSES THE DRIVEVIEWMODEL CLASS
 
-// MARK: - File Scope Extensions
-extension DriveViewModel: @preconcurrency MKLocalSearchCompleterDelegate {
-    public func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        self.searchCompletions = completer.results
+// MARK: - MKLocalSearchCompleterDelegate
+// Properly handle Swift concurrency: delegate methods are nonisolated (called off-main-thread)
+// so we must hop to @MainActor when updating @Published properties
+extension DriveViewModel: MKLocalSearchCompleterDelegate {
+    nonisolated public func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        // Hop to MainActor to update @Published property
+        Task { @MainActor [weak self] in
+            self?.searchCompletions = completer.results
+        }
     }
     
-    public func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+    nonisolated public func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        // Log on background thread, no UI update needed
         print("Completer error: \(error)")
     }
 }

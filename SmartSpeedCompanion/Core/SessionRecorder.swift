@@ -65,19 +65,23 @@ public final class SessionRecorder: ObservableObject {
     }
     
     public func saveSession(_ session: DriveSession) {
-        if let context = modelContext {
-            // We want to make sure it's on the main thread for mainactor modelContext
-            Task { @MainActor in
-                context.insert(session)
-                do {
-                    try context.save()
-                    print("Session saved successfully!")
-                } catch {
-                    print("Failed to save session: \(error)")
-                }
+        // Capture context reference synchronously to avoid race condition with later setModelContext calls
+        // The [context] capture list ensures we use the same context instance that was validated
+        guard let context = modelContext else {
+            DebugLogger.shared.log("SessionRecorder: Cannot save - ModelContext not configured")
+            return
+        }
+        
+        // Ensure ModelContext operations happen on MainActor (SwiftData requirement)
+        // Using [context] capture list to bind the validated context value
+        Task { [context] @MainActor in
+            context.insert(session)
+            do {
+                try context.save()
+                DebugLogger.shared.log("Session saved successfully")
+            } catch {
+                DebugLogger.shared.log("Session save FAILED: \(error.localizedDescription)")
             }
-        } else {
-            print("SessionRecorder lacks a ModelContext! Cannot save session.")
         }
     }
     
