@@ -73,12 +73,7 @@ jobs:
           PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
         run: |
           echo "=== Decoding provisioning profile ==="
-          echo "$PP_BASE64" | tr -d '[:space:]' | base64 -D > /tmp/profile.mobileprovision
-
-          if ! grep -q "<!DOCTYPE plist" /tmp/profile.mobileprovision && ! grep -q "<?xml" /tmp/profile.mobileprovision; then
-            echo "⚠️ Raw decode failed, trying alternative..."
-            echo "$PP_BASE64" | base64 -d > /tmp/profile.mobileprovision
-          fi
+          python3 -c "import base64; data = base64.b64decode(''.join('$PP_BASE64'.split())); open('/tmp/profile.mobileprovision', 'wb').write(data); print(f'Decoded {len(data)} bytes')"
 
           echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes"
 
@@ -95,10 +90,9 @@ jobs:
           # Extract entitlements from provisioning profile for codesign --entitlements flag
           /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.mobileprovision > /tmp/entitlements.plist 2>/dev/null
           if [ -s /tmp/entitlements.plist ]; then
-            echo "✅ Extracted entitlements from provisioning profile"
-            cat /tmp/entitlements.plist
+            echo "[OK] Extracted entitlements from provisioning profile"
           else
-            echo "⚠️ Could not extract entitlements from profile"
+            echo "[WARN] Could not extract entitlements from profile"
           fi
 
           PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
