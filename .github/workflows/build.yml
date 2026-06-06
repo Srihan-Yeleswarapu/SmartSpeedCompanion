@@ -112,19 +112,38 @@ jobs:
           echo "Installed provisioning profile to: $PP_DIR"
           ls -la "$PP_DIR/"
 
-      - name: Build Archive (Unsigned)
+      - name: Build Signed Archive
+        env:
+          KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
+          # Unlock keychain so Xcode can access signing assets
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+
+          echo "=== Available signing identities ==="
+          security find-identity -v -p codesigning build.keychain
+
+          echo "=== Provisioning profiles ==="
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
+
           xcodebuild clean archive \
             -project SmartSpeedCompanion.xcodeproj \
             -scheme SmartSpeedCompanion \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
             -archivePath ./SmartSpeedCompanion.xcarchive 2>&1 | tail -100
+
+          echo "=== Verifying embedded.mobileprovision in archive ==="
+          ARCHIVE_APP="$(find ./SmartSpeedCompanion.xcarchive -name "*.app" -type d | head -1)"
+          if [ -n "$ARCHIVE_APP" ] && [ -f "$ARCHIVE_APP/embedded.mobileprovision" ]; then
+            echo "✅ embedded.mobileprovision FOUND in archive app bundle"
+          else
+            echo "❌ embedded.mobileprovision NOT found in archive"
+            exit 1
+          fi
         timeout-minutes: 30
 
       - name: Verify archive exists
