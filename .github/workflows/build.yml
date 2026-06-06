@@ -36,7 +36,7 @@ jobs:
       - name: Download iOS Platform Files
         run: |
           sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
-          xcodebuild -downloadAllPlatforms
+          xcodebuild -downloadPlatform iOS
 
       - name: Generate Xcode project
         run: xcodegen generate
