@@ -124,11 +124,17 @@ jobs:
             -archivePath ./SmartSpeedCompanion.xcarchive 2>&1 | tail -100
 
           echo "=== Verifying embedded.mobileprovision in archive ==="
-          ARCHIVE_APP="$(find ./SmartSpeedCompanion.xcarchive -name "*.app" -type d | head -1)"
+          # Archive structure: SmartSpeedCompanion.xcarchive/Products/Applications/*.app
+          ARCHIVE_APP=$(find ./SmartSpeedCompanion.xcarchive -path "*/Products/*.app" -type d 2>/dev/null | head -1)
+          if [ -z "$ARCHIVE_APP" ]; then
+            ARCHIVE_APP=$(find ./SmartSpeedCompanion.xcarchive -name "*.app" -type d 2>/dev/null | head -1)
+          fi
+          echo "Found .app at: $ARCHIVE_APP"
           if [ -n "$ARCHIVE_APP" ] && [ -f "$ARCHIVE_APP/embedded.mobileprovision" ]; then
             echo "✅ embedded.mobileprovision FOUND in archive app bundle"
           else
             echo "❌ embedded.mobileprovision NOT found in archive"
+            ls -la "$ARCHIVE_APP/" 2>/dev/null || echo ".app bundle contents unavailable"
             exit 1
           fi
         timeout-minutes: 30
