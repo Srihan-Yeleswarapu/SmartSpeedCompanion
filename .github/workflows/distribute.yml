@@ -25,6 +25,12 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Setup iOS Platform
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          xcodebuild -checkFirstLaunchStatus
+          sudo xcodebuild -runFirstLaunch
+
       - name: Setup Apple Certificate and Provisioning Profile
         env:
           KEYCHAIN_PASSWORD: "build_keychain_pass"

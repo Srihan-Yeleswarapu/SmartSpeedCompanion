@@ -33,6 +33,12 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Setup iOS Platform
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          xcodebuild -checkFirstLaunchStatus
+          sudo xcodebuild -runFirstLaunch
+
       - name: Generate Xcode project
         run: xcodegen generate
 
