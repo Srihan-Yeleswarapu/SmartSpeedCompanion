@@ -184,6 +184,12 @@ jobs:
           else
             echo "⚠️ embedded.mobileprovision NOT found — manually embedding..."
 
+            # Ensure profile is available at /tmp/profile.mobileprovision
+            if [ ! -f /tmp/profile.mobileprovision ]; then
+              echo "❌ /tmp/profile.mobileprovision not found!"
+              exit 1
+            fi
+
             # Extract IPA (which is a zip)
             cd "$PWD/IPAWork"
             unzip -o "$IPA_PATH" > /dev/null 2>&1
@@ -199,6 +205,11 @@ jobs:
             # Copy provisioning profile into the app bundle
             cp /tmp/profile.mobileprovision "$APP_BUNDLE/embedded.mobileprovision"
             echo "✅ Embedded provisioning profile into: $APP_BUNDLE/embedded.mobileprovision"
+
+            # Re-sign the app bundle after modifying it
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+            codesign --force --sign "Apple Distribution" "$APP_BUNDLE"
+            echo "✅ Re-signed app bundle after embedding profile"
 
             # Re-zip the contents back into an IPA
             rm -f "$IPA_PATH"
