@@ -28,8 +28,10 @@ jobs:
       - name: Setup iOS Platform
         run: |
           sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
-          xcodebuild -checkFirstLaunchStatus
-          sudo xcodebuild -runFirstLaunch -checkForNewerComponents
+          # Download iOS platform files explicitly
+          sudo xcodebuild -downloadPlatform iOS || true
+          # List available platforms
+          xcodebuild -showsdks | head -30
 
       - name: Setup Apple Certificate and Provisioning Profile
         env:
@@ -125,14 +127,13 @@ jobs:
       - name: Build App Store Archive (Signed)
         env:
           DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
-          SDKROOT: iphonesimulator
         run: |
           xcodebuild \
             -project SmartSpeedCompanion.xcodeproj \
             -scheme SmartSpeedCompanion \
             -configuration Release \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,id=28A23778-E1E2-42CB-A610-ECAAAA791EF5,OS=18.6' \
+            -destination 'generic/platform=iOS Simulator' \
             -archivePath ./SmartSpeedCompanion.xcarchive \
             clean archive
 
