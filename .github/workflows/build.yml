@@ -127,13 +127,12 @@ jobs:
       - name: Archive (Signed) Production Build
         env:
           DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
-          SDKROOT: iphoneos
         run: |
           xcodebuild \
             -project SmartSpeedCompanion.xcodeproj \
             -scheme SmartSpeedCompanion \
             -configuration Release \
-            -sdk iphoneos \
+            -destination 'generic/platform=iOS Simulator' \
             -archivePath $PWD/SmartSpeedCompanion.xcarchive \
             clean archive
 
