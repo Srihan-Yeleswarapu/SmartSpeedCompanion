@@ -66,9 +66,23 @@ jobs:
           mkdir -p "~/Library/MobileDevice/Provisioning Profiles"
           cp /tmp/profile.mobileprovision "~/Library/MobileDevice/Provisioning Profiles/"
 
-      - name: Build Archive
+      - name: Build Archive (Unsigned)
+        env:
+          CODE_SIGN_IDENTITY: "-"
+          CODE_SIGNING_REQUIRED: "NO"
+          CODE_SIGNING_ALLOWED: "NO"
         run: |
-          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -skipUnavailableActions -archivePath ./SmartSpeedCompanion.xcarchive
+          xcodebuild clean archive \
+            -project SmartSpeedCompanion.xcodeproj \
+            -scheme SmartSpeedCompanion \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -skipUnavailableActions \
+            CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
+            CODE_SIGNING_REQUIRED="$CODE_SIGNING_REQUIRED" \
+            CODE_SIGNING_ALLOWED="$CODE_SIGNING_ALLOWED" \
+            -archivePath ./SmartSpeedCompanion.xcarchive
 
       - name: Export IPA
         run: |
