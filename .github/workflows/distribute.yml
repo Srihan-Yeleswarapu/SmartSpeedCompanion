@@ -28,17 +28,16 @@ jobs:
         run: xcodegen generate
 
       - name: Build App Store Archive (Unsigned)
-        env:
-          CODE_SIGN_IDENTITY: "-"
-          CODE_SIGNING_REQUIRED: "NO"
-          CODE_SIGNING_ALLOWED: "NO"
-          PROVISIONING_PROFILE_SPECIFIER: ""
         run: |
           xcodebuild clean archive \
             -project SmartSpeedCompanion.xcodeproj \
             -scheme SmartSpeedCompanion \
             -configuration Release \
             -sdk iphoneos \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            PROVISIONING_PROFILE_SPECIFIER="" \
             -archivePath ./SmartSpeedCompanion.xcarchive
 
       - name: Setup signing
