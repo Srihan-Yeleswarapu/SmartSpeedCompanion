@@ -10,9 +10,6 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
 
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_16.app/Contents/Developer
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -116,6 +113,8 @@ jobs:
             cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: Increment build number
+        env:
+          DEVELOPER_DIR: $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)/Contents/Developer
         run: |
           agvtool next-version -all
           BUILD_NUMBER=$(xcodebuild -showBuildSettings -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release | awk '/CURRENT_PROJECT_VERSION/ {print $3}')
