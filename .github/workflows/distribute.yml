@@ -25,13 +25,19 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Setup iOS Platform
+      - name: Build App Store Archive (Signed)
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
-          # Download iOS platform files explicitly
-          sudo xcodebuild -downloadPlatform iOS || true
-          # List available platforms
-          xcodebuild -showsdks | head -30
+          xcodebuild \
+            -project SmartSpeedCompanion.xcodeproj \
+            -scheme SmartSpeedCompanion \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS Simulator' \
+            -archivePath ./SmartSpeedCompanion.xcarchive \
+            -skipUnavailablePlatforms \
+            clean archive
 
       - name: Setup Apple Certificate and Provisioning Profile
         env:
@@ -123,20 +129,6 @@ jobs:
 
       - name: Generate Xcode project
         run: xcodegen generate
-
-      - name: Build App Store Archive (Signed)
-        env:
-          DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
-          SDKROOT: iphoneos
-        run: |
-          xcodebuild \
-            -project SmartSpeedCompanion.xcodeproj \
-            -scheme SmartSpeedCompanion \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -archivePath ./SmartSpeedCompanion.xcarchive \
-            clean archive
 
       - name: Create Export Options Plist
         run: |
