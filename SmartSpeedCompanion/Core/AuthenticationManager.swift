@@ -49,14 +49,17 @@ public class AuthenticationManager: ObservableObject {
                 self.initialAuthChecked = true
             }
         }
-    }
-    
-    public func signUp(username: String, email: String, password: String, completion: @escaping (Result<Void, Error>) -> Void) {
+    }    public func signUp(username: String, email: String, password: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard FirebaseApp.app() != nil else {
+            completion(.failure(AuthError.firebaseNotConfigured))
+            return
+        }
+
         if username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             completion(.failure(AuthError.invalidUsername))
             return
         }
-        
+
         guard isValidEmail(email) else {
             completion(.failure(AuthError.invalidEmail))
             return
@@ -92,6 +95,11 @@ public class AuthenticationManager: ObservableObject {
     }
     
     public func signIn(email: String, password: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard FirebaseApp.app() != nil else {
+            completion(.failure(AuthError.firebaseNotConfigured))
+            return
+        }
+
         guard isValidEmail(email) else {
             completion(.failure(AuthError.invalidEmail))
             return
@@ -120,6 +128,11 @@ public class AuthenticationManager: ObservableObject {
     // MARK: - Apple Sign In
     
     public func signInWithApple(idToken: String, nonce: String, fullName: PersonNameComponents?, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard FirebaseApp.app() != nil else {
+            completion(.failure(AuthError.firebaseNotConfigured))
+            return
+        }
+
         let credential = OAuthProvider.appleCredential(
             withIDToken: idToken,
             rawNonce: nonce,
@@ -311,6 +324,7 @@ public enum AuthError: LocalizedError {
     case invalidEmail
     case passwordsDoNotMatch
     case incorrectPassword
+    case firebaseNotConfigured
     case userNotFound
     
     public var errorDescription: String? {
@@ -319,6 +333,7 @@ public enum AuthError: LocalizedError {
         case .invalidEmail: return "Please enter a valid email address."
         case .passwordsDoNotMatch: return "Passwords do not match."
         case .incorrectPassword: return "Incorrect password."
+        case .firebaseNotConfigured: return "Firebase is not configured. Please ensure GoogleService-Info.plist is included in the app bundle."
         case .userNotFound: return "User not found. Please sign up."
         }
     }
