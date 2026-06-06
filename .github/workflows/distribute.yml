@@ -34,7 +34,7 @@ jobs:
             -scheme SmartSpeedCompanion \
             -configuration Release \
             -sdk iphoneos \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination 'generic/platform=iOS' \
             -archivePath ./SmartSpeedCompanion.xcarchive \
             -skipUnavailablePlatforms \
             clean archive
