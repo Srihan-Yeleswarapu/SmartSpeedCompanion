@@ -9,7 +9,7 @@ jobs:
   distribute:
     name: Build and Release Signed IPA
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -94,7 +94,7 @@ jobs:
 
           PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PP_DIR"
-          cp /tmp/profile.mobileprovision "$PP_DIR/Speedio.mobileprovision"
+          cp /tmp/profile.mobileprovision "$PP_DIR/"
           echo "Installed provisioning profile to: $PP_DIR"
           ls -la "$PP_DIR/"
 
@@ -143,7 +143,9 @@ jobs:
           <plist version="1.0">
           <dict>
               <key>method</key><string>app-store-connect</string>
-              <key>signingStyle</key><string>automatic</string>
+              <key>signingStyle</key><string>manual</string>
+              <key>signingIdentity</key><string>Apple Distribution</string>
+              <key>provisioningProfileSpecifier</key><string>Speedio App Store</string>
               <key>teamID</key><string>VCNBBG32P6</string>
               <key>uploadBitcode</key><false/>
               <key>uploadSymbols</key><true/>
@@ -289,4 +291,4 @@ jobs:
         with:
           name: Speedio-IPA-${{ github.run_number }}
           path: Export/*.ipa
-          retention-days: 7
+          retention-days: 7
