@@ -53,8 +53,8 @@ jobs:
           KEYCHAIN_PASSWORD: "build_keychain_pass"
           PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
         run: |
-          CERT_PATH=$RUNNER_TEMP/build_certificate.p12
-          PP_DIR=~/Library/MobileDevice/Provisioning\\ Profiles
+          CERT_PATH="$RUNNER_TEMP/build_certificate.p12"
+          PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PP_DIR"
 
           openssl x509 -inform DER -in SmartSpeedCompanion/distribution.cer -out /tmp/distribution.pem
@@ -62,12 +62,12 @@ jobs:
 
           echo "$PP_BASE64" | tr -d '[:space:]' | base64 -D > "$PP_DIR/Speedio.mobileprovision"
 
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
-          security set-keychain-settings -lut 21600 $RUNNER_TEMP/app-signing.keychain-db
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
-          security import "$CERT_PATH" -k $RUNNER_TEMP/app-signing.keychain-db -P "speedio123" -T /usr/bin/codesign
-          security list-keychains -d user -s $RUNNER_TEMP/app-signing.keychain-db
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/app-signing.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
+          security import "$CERT_PATH" -k "$RUNNER_TEMP/app-signing.keychain-db" -P "speedio123" -T /usr/bin/codesign
+          security list-keychains -d user -s "$RUNNER_TEMP/app-signing.keychain-db"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
 
       - name: Export IPA
         run: |
