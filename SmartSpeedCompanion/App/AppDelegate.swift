@@ -24,7 +24,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
+        configureFirebase()
         return true
+    }
+
+    private func configureFirebase() {
+        guard let options = FirebaseOptions(contentsOfFile: Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") ?? "") else {
+            print("Firebase: GoogleService-Info.plist not found in bundle. Auth will fail.")
+            return
+        }
+        FirebaseApp.configure(options: options)
+        print("Firebase configured successfully.")
     }
     
     // Required for multi-scene support (iPhone + CarPlay)
