@@ -98,14 +98,8 @@ struct SpeedAppShortcutsProvider: AppShortcutsProvider {
             shortTitle: "Check Speed",
             systemImageName: "speedometer"
         )
-        AppShortcut(
-            intent: NavigateToDestinationIntent(),
-            phrases: [
-                "Navigate to \(\.$destinationName) in \(.applicationName)",
-                "Take me to \(\.$destinationName) in \(.applicationName)"
-            ],
-            shortTitle: "Navigate",
-            systemImageName: "arrow.turn.up.right"
-        )
+        // Note: NavigateToDestinationIntent is not included in AppShortcuts
+        // because String parameters cannot be used in parameterized shortcut phrases.
+        // The intent can still be triggered via Siri by name.
     }
 }
