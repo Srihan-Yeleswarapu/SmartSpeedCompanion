@@ -27,6 +27,13 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Download iOS platform for Xcode
+        run: |
+          echo "Checking available platforms..."
+          xcrun simctl list runtimes
+          echo "Downloading iOS platform..."
+          sudo xcodebuild -downloadPlatform iOS
+
       - name: Build App Store Archive (Unsigned)
         run: |
           xcodebuild clean archive \

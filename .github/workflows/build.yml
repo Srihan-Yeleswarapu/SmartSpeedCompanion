@@ -36,6 +36,13 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Download iOS platform for Xcode
+        run: |
+          echo "Checking available platforms..."
+          xcrun simctl list runtimes
+          echo "Downloading iOS platform..."
+          sudo xcodebuild -downloadPlatform iOS
+
       - name: Set up keychain & import signing certificate
         env:
           KEYCHAIN_PASSWORD: "build_keychain_pass"
