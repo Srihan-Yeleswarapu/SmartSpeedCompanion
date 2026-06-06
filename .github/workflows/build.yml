@@ -33,14 +33,6 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Setup iOS Platform
-        run: |
-          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
-          xcodebuild -checkFirstLaunchStatus
-          sudo xcodebuild -runFirstLaunch -checkForNewerComponents
-          sudo xcodebuild -downloadPlatform iOS
-          ls -la /Applications/Xcode_16.2.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/ || echo "iOS SDK not found"
-
       - name: Generate Xcode project
         run: xcodegen generate
 
@@ -48,158 +40,60 @@ jobs:
         env:
           KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
-          # Verify required signing assets exist in the repository
           if [ ! -f SmartSpeedCompanion/distribution.cer ]; then
-            echo "❌ distribution.cer not found in repository"
+            echo "❌ distribution.cer not found"
             exit 1
           fi
           if [ ! -f SmartSpeedCompanion/SmartSpeedCompanion.key ]; then
-            echo "❌ SmartSpeedCompanion.key not found in repository"
+            echo "❌ SmartSpeedCompanion.key not found"
             exit 1
           fi
 
-          # Create and unlock a dedicated keychain with a non‑empty password
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
 
-          # Debug: list repository files relevant to signing
-          echo "🔎 Repository signing assets:" && ls -lah SmartSpeedCompanion
+          openssl x509 -inform DER -in SmartSpeedCompanion/distribution.cer -out /tmp/distribution.pem
+          openssl pkcs12 -export -inkey SmartSpeedCompanion/SmartSpeedCompanion.key -in /tmp/distribution.pem -out /tmp/cert.p12 -passout pass:speedio123
 
-          # Convert Apple DER certificate to PEM first
-          echo "🔧 Converting DER certificate to PEM..."
-          openssl x509 \
-            -inform DER \
-            -in SmartSpeedCompanion/distribution.cer \
-            -out /tmp/distribution.pem
-
-          # Verify PEM conversion worked
-          if [ ! -s /tmp/distribution.pem ]; then
-            echo "❌ PEM conversion failed"
-            exit 1
-          fi
-
-          echo "🔧 Generating temporary P12 using OpenSSL..."
-          openssl pkcs12 -export \
-            -inkey SmartSpeedCompanion/SmartSpeedCompanion.key \
-            -in /tmp/distribution.pem \
-            -out /tmp/cert.p12 \
-            -passout pass:speedio123
-
-          # Fail fast if the generated P12 is missing or empty
-          if [ ! -s /tmp/cert.p12 ]; then
-            echo "❌ Generated P12 is empty. Generation failed."
-            exit 1
-          fi
-
-          # Debug: size and SHA‑256 hash of the generated P12
-          echo "🔎 Generated P12 size (bytes): $(stat -f %z /tmp/cert.p12)"
-          echo "🔎 Generated P12 SHA256: $(shasum -a 256 /tmp/cert.p12 | awk '{print $1}')"
-
-          # Inspect the generated P12 (no private keys) for verification
-          echo "🔍 Inspecting generated P12..."
-          openssl pkcs12 -info -in /tmp/cert.p12 -nokeys -passin pass:speedio123 || {
-            echo "❌ OpenSSL inspection of generated P12 failed"
-            exit 1
-          }
-
-          # Import the generated P12 into the keychain
           security import /tmp/cert.p12 -k build.keychain -P "speedio123" -T /usr/bin/codesign
-
-          # Allow codesign and security tools to access the keychain during the build
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-
-          # Verify that a signing identity is now present
-          echo "🔎 Verifying signing identities in the keychain:"
-          security find-identity -v -p codesigning build.keychain || {
-            echo "❌ No signing identity found after import"
-            exit 1
-          }
 
       - name: Install provisioning profile
         env:
           PROVISIONING_PROFILE: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
         run: |
-            # Decode provisioning profile (strip whitespace for macOS compatibility)
-            echo "$PROVISIONING_PROFILE" | tr -d '[:space:]' | base64 -D > /tmp/profile.mobileprovision
-            mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-            cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+          echo "$PROVISIONING_PROFILE" | tr -d '[:space:]' | base64 -D > /tmp/profile.mobileprovision
+          mkdir -p ~/Library/MobileDevice/Provisioning\\Models
+          cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\/
 
-      - name: Increment build number
+      - name: Build Archive
         run: |
-          export DEVELOPER_DIR=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)/Contents/Developer
-          agvtool next-version -all
-          BUILD_NUMBER=$(xcodebuild -showBuildSettings -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release | awk '/CURRENT_PROJECT_VERSION/ {print $3}')
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -skipUnavailableActions -archivePath ./SmartSpeedCompanion.xcarchive
 
-      - name: Archive (Signed) Production Build
-        env:
-          DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
+      - name: Export IPA
         run: |
-          # Use a specific simulator destination that's confirmed available (iOS 18.6)
-          xcodebuild \
-            -project SmartSpeedCompanion.xcodeproj \
-            -scheme SmartSpeedCompanion \
-            -configuration Release \
-            -destination 'platform=iOS Simulator,id=28A23778-E1E2-42CB-A610-ECAAAA791EF5,OS=18.6' \
-            -archivePath $PWD/SmartSpeedCompanion.xcarchive \
-            clean archive
-
-      - name: Export IPA (App Store)
-        run: |
-          cat <<EOF > ExportOptions.plist
+          cat > exportOptions.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
             <key>method</key><string>app-store</string>
             <key>signingStyle</key><string>manual</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>com.speedsense.app</key><string>Speedio App Store</string>
-            </dict>
+            <key>provisioningProfileSpecifier</key><string>Speedio App Store</string>
             <key>teamID</key><string>VCNBBG32P6</string>
-            <key>compileBitcode</key><false/>
-            <key>stripSwiftSymbols</key><true/>
           </dict>
           </plist>
-          </EOF>
+          EOF
 
-          xcodebuild -exportArchive \
-            -archivePath $PWD/SmartSpeedCompanion.xcarchive \
-            -exportPath $PWD/Exported \
-            -exportOptionsPlist ExportOptions.plist
+          xcodebuild -exportArchive -archivePath ./SmartSpeedCompanion.xcarchive -exportOptionsPlist exportOptions.plist -exportPath ./Export
 
-          echo "Exported files:"
-          ls -la Exported || true
-
-      - name: Upload IPA to TestFlight (Fastlane)
-        env:
-          FASTLANE_USER: ${{ secrets.APPLE_ID }}
-          FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+      - name: Upload to App Store Connect
         run: |
-          gem install fastlane -NV
+          xcrun altool --upload-app --file "./Export/SmartSpeedCompanion.ipa" --type ios --username "${{ secrets.APPSTORE_CONNECT_USERNAME }}" --password "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" --show-progress
 
-          echo "Contents of Exported directory:"
-          ls -la Exported
-
-          IPA_PATH=$(find Exported -name "*.ipa" | head -n 1)
-
-          if [ -z "$IPA_PATH" ]; then
-            echo "❌ No IPA found in Exported directory"
-            exit 1
-          fi
-
-          echo "Using IPA:"
-          echo "$IPA_PATH"
-
-          fastlane pilot upload \
-            --ipa "$IPA_PATH" \
-            --skip_waiting_for_build_processing
-
-      - name: Upload artifacts for debugging
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Signed-IPA-${{ github.run_number }}
-          path: Exported
-          retention-days: 30
+          name: Speedio-IPA-${{ github.run_number }}
+          path: Export/*.ipa
+          retention-days: 7
