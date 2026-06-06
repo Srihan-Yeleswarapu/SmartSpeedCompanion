@@ -29,7 +29,7 @@ jobs:
 
       - name: Build App Store Archive (Signed)
         run: |
-          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -archivePath ./SmartSpeedCompanion.xcarchive
+          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -skipUnavailableActions -archivePath ./SmartSpeedCompanion.xcarchive
 
       - name: Setup signing
         env:
