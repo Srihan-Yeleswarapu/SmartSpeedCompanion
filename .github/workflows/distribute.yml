@@ -130,7 +130,7 @@ jobs:
             -project SmartSpeedCompanion.xcodeproj \
             -scheme SmartSpeedCompanion \
             -configuration Release \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination 'platform=iOS Simulator,id=28A23778-E1E2-42CB-A610-ECAAAA791EF5,OS=18.6' \
             -archivePath ./SmartSpeedCompanion.xcarchive \
             clean archive
 
