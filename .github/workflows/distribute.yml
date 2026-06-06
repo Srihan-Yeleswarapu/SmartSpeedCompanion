@@ -8,7 +8,7 @@ on:
 jobs:
   distribute:
     name: Build and Release Signed IPA
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:
