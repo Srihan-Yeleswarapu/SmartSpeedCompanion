@@ -152,22 +152,7 @@ jobs:
           mkdir -p "$PWD/IPAWork"
 
           echo "=== Exporting IPA with manual signing ==="
-          cat > "$PWD/exportOptions.plist" << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>method</key><string>app-store-connect</string>
-    <key>signingStyle</key><string>manual</string>
-    <key>signingIdentity</key><string>Apple Distribution</string>
-    <key>provisioningProfileSpecifier</key><string>Speedio App Store</string>
-    <key>teamID</key><string>VCNBBG32P6</key>
-    <key>uploadBitcode</key><false/>
-    <key>uploadSymbols</key><true/>
-</dict>
-</plist>
-EOF
-
+          python3 -c "import plistlib; plistlib.dump({'method': 'app-store-connect', 'signingStyle': 'manual', 'signingIdentity': 'Apple Distribution', 'provisioningProfileSpecifier': 'Speedio App Store', 'teamID': 'VCNBBG32P6', 'uploadBitcode': False, 'uploadSymbols': True}, open('$PWD/exportOptions.plist', 'wb'))"
           xcodebuild -exportArchive -archivePath "$PWD/SmartSpeedCompanion.xcarchive" -exportOptionsPlist "$PWD/exportOptions.plist" -exportPath "$PWD/Export" 2>&1 | tail -50
 
           echo "=== Locating IPA ==="
@@ -244,4 +229,4 @@ EOF
         with:
           name: Speedio-IPA-${{ github.run_number }}
           path: Export/*.ipa
-          retention-days: 7
+          retention-days: 7
