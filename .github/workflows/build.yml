@@ -1,4 +1,4 @@
-name: "[Package] SmartSpeed Companion - Signed Build & TestFlight"
+name: 📦 SmartSpeed Companion – Signed Build & TestFlight
 
 on:
   push:
