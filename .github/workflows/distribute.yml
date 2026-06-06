@@ -45,8 +45,8 @@ jobs:
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            -archivePath ./SmartSpeedCompanion.xcarchive
+            PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" \
+            -archivePath ./SmartSpeedCompanion.xcarchive 2>&1 | tail -100
 
       - name: Setup signing
         env:
@@ -69,8 +69,19 @@ jobs:
           security list-keychains -d user -s "$RUNNER_TEMP/app-signing.keychain-db"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
 
-      - name: Export IPA
+      - name: Export IPA with embedded provisioning profile
+        env:
+          KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
+          # Unlock keychain first
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
+
+          echo "=== Signing identities available ==="
+          security find-identity -v -p codesigning "$RUNNER_TEMP/app-signing.keychain-db"
+
+          echo "=== Provisioning profiles available ==="
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
+
           mkdir -p "$PWD/Export"
 
           cat > exportOptions.plist << 'EOF'
@@ -78,23 +89,41 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>method</key><string>app-store</string>
-              <key>signingStyle</key><string>manual</string>
+              <key>method</key><string>app-store-connect</string>
+              <key>signingStyle</key><string>manual</key>
               <key>signingIdentity</key><string>Apple Distribution</string>
               <key>provisioningProfileSpecifier</key><string>Speedio App Store</string>
               <key>teamID</key><string>VCNBBG32P6</string>
+              <key>uploadBitcode</key><false/>
+              <key>uploadSymbols</key><true/>
           </dict>
           </plist>
           EOF
 
-          xcodebuild -exportArchive \
+          echo "=== Running xcodebuild -exportArchive ==="
+          xcodebuild -exportArchive -verbose \
             -archivePath "$PWD/SmartSpeedCompanion.xcarchive" \
             -exportOptionsPlist exportOptions.plist \
-            -exportPath "$PWD/Export"
+            -exportPath "$PWD/Export" 2>&1 | tail -80
 
           echo "=== Export directory contents ==="
-          find "$PWD/Export" -name "*.ipa" -type f 2>/dev/null || echo "No .ipa files found"
+          find "$PWD/Export" -type f 2>/dev/null
           ls -la "$PWD/Export/"
+
+          IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "❌ No IPA file found"
+            exit 1
+          fi
+          echo "✅ IPA created: $IPA_PATH"
+
+          echo "=== Verifying embedded.mobileprovision in IPA ==="
+          if unzip -l "$IPA_PATH" | grep -q "embedded.mobileprovision"; then
+            echo "✅ embedded.mobileprovision FOUND in IPA"
+          else
+            echo "❌ WARNING: embedded.mobileprovision NOT found in IPA!"
+            exit 1
+          fi
 
       - name: Upload to App Store Connect
         run: |
