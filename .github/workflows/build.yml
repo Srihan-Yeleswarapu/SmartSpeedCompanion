@@ -30,6 +30,9 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
           xcodebuild -version
 
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
       - name: Generate Xcode project
         run: xcodegen generate
 
