@@ -29,7 +29,7 @@ jobs:
         env:
           DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
         run: |
-          # First try to download iOS platform files
+          # Try to download iOS platform files
           sudo xcodebuild -downloadPlatform iOS || echo "Platform download may have failed, continuing..."
           
           xcodebuild \
@@ -39,6 +39,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -archivePath ./SmartSpeedCompanion.xcarchive \
+            -skipUnavailableActions \
             clean archive
 
       - name: Setup Apple Certificate and Provisioning Profile
