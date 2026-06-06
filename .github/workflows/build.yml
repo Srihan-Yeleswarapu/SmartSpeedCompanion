@@ -95,6 +95,8 @@ jobs:
           security list-keychains -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
 
+          mkdir -p "$PWD/Export"
+
           cat > exportOptions.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -109,11 +111,28 @@ jobs:
           </plist>
           EOF
 
-          xcodebuild -exportArchive -archivePath ./SmartSpeedCompanion.xcarchive -exportOptionsPlist exportOptions.plist -exportPath ./Export
+          xcodebuild -exportArchive \
+            -archivePath "$PWD/SmartSpeedCompanion.xcarchive" \
+            -exportOptionsPlist exportOptions.plist \
+            -exportPath "$PWD/Export"
+
+          echo "=== Export directory contents ==="
+          find "$PWD/Export" -name "*.ipa" -type f 2>/dev/null || echo "No .ipa files found"
+          ls -la "$PWD/Export/"
 
       - name: Upload to App Store Connect
         run: |
-          xcrun altool --upload-app --file "./Export/SmartSpeedCompanion.ipa" --type ios --username "${{ secrets.APPSTORE_CONNECT_USERNAME }}" --password "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" --show-progress
+          IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "ERROR: No .ipa file found in Export directory"
+            find "$PWD/Export" -type f 2>/dev/null
+            exit 1
+          fi
+          echo "Uploading IPA: $IPA_PATH"
+          xcrun altool --upload-app --file "$IPA_PATH" --type ios \
+            --username "${{ secrets.APPSTORE_CONNECT_USERNAME }}" \
+            --password "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" \
+            --show-progress
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
