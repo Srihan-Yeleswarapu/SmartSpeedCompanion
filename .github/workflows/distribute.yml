@@ -29,7 +29,7 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
           xcodebuild -checkFirstLaunchStatus
-          sudo xcodebuild -runFirstLaunch
+          sudo xcodebuild -runFirstLaunch -checkForNewerComponents
 
       - name: Setup Apple Certificate and Provisioning Profile
         env:

@@ -37,7 +37,7 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
           xcodebuild -checkFirstLaunchStatus
-          sudo xcodebuild -runFirstLaunch
+          sudo xcodebuild -runFirstLaunch -checkForNewerComponents
 
       - name: Generate Xcode project
         run: xcodegen generate
