@@ -113,9 +113,8 @@ jobs:
             cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: Increment build number
-        env:
-          DEVELOPER_DIR: $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)/Contents/Developer
         run: |
+          export DEVELOPER_DIR=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)/Contents/Developer
           agvtool next-version -all
           BUILD_NUMBER=$(xcodebuild -showBuildSettings -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release | awk '/CURRENT_PROJECT_VERSION/ {print $3}')
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
