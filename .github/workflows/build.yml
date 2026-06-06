@@ -88,7 +88,13 @@ jobs:
             -archivePath ./SmartSpeedCompanion.xcarchive
 
       - name: Export IPA
+        env:
+          KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
+          # Add our custom keychain to the search path
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+
           cat > exportOptions.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -96,6 +102,7 @@ jobs:
           <dict>
             <key>method</key><string>app-store</string>
             <key>signingStyle</key><string>manual</string>
+            <key>signingIdentity</key><string>Apple Distribution</string>
             <key>provisioningProfileSpecifier</key><string>Speedio App Store</string>
             <key>teamID</key><string>VCNBBG32P6</string>
           </dict>
