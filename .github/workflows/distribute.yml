@@ -127,13 +127,14 @@ jobs:
       - name: Build App Store Archive (Signed)
         env:
           DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
-          SDKROOT: iphonesimulator
+          SDKROOT: iphoneos
         run: |
           xcodebuild \
             -project SmartSpeedCompanion.xcodeproj \
             -scheme SmartSpeedCompanion \
             -configuration Release \
-            -sdk iphonesimulator \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -archivePath ./SmartSpeedCompanion.xcarchive \
             clean archive
 
