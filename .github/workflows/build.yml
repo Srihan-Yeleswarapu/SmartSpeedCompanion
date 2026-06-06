@@ -38,6 +38,8 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
           xcodebuild -checkFirstLaunchStatus
           sudo xcodebuild -runFirstLaunch -checkForNewerComponents
+          sudo xcodebuild -downloadPlatform iOS
+          ls -la /Applications/Xcode_16.2.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/ || echo "iOS SDK not found"
 
       - name: Generate Xcode project
         run: xcodegen generate
@@ -134,11 +136,12 @@ jobs:
         env:
           DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
         run: |
+          # Use a specific simulator destination that's confirmed available (iOS 18.6)
           xcodebuild \
             -project SmartSpeedCompanion.xcodeproj \
             -scheme SmartSpeedCompanion \
             -configuration Release \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination 'platform=iOS Simulator,id=28A23778-E1E2-42CB-A610-ECAAAA791EF5,OS=18.6' \
             -archivePath $PWD/SmartSpeedCompanion.xcarchive \
             clean archive
 
