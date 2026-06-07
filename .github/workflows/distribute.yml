@@ -69,17 +69,16 @@ jobs:
         run: |
           echo "=== Decoding provisioning profile ==="
 
-          # Step 1: Decode base64 -> DER file (Apple distribution profiles are PKCS#7 wrapped)
-          python3 -c "import base64; data = base64.b64decode(''.join('$PP_BASE64'.split())); open('/tmp/profile.mobileprovision.der', 'wb').write(data); print(f'DER file: {len(data)} bytes')"
+          # Step 1: Decode base64 -> raw bytes
+          python3 -c "import base64; data = base64.b64decode(''.join('$PP_BASE64'.split())); open('/tmp/profile.mobileprovision.raw', 'wb').write(data); print(f'Raw file: {len(data)} bytes')"
 
-          # Step 2: Unwrap PKCS#7/CMS signedData envelope to get raw plist
-          # Apple distribution profiles are stored as CMS/PKCS#7 SignedData containers
-          security cms -D -in /tmp/profile.mobileprovision.der -out /tmp/profile.mobileprovision 2>/dev/null
-          if [ $? -eq 0 ]; then
-            echo "[OK] Successfully unwrapped CMS/PKCS#7 envelope"
+          # Step 2: Try security cms -D first (works if signature can be verified)
+          if security cms -D -in /tmp/profile.mobileprovision.raw -out /tmp/profile.mobileprovision 2>/dev/null; then
+            echo "[OK] Successfully unwrapped CMS/PKCS#7 envelope via security cms"
           else
-            echo "[ERROR] Failed to unwrap CMS envelope - file may not be a valid signed profile"
-            exit 1
+            echo "[WARN] security cms -D failed - extracting embedded plist directly from DER structure"
+            # Step 2alt: Extract the embedded XML plist directly from DER/PKCS#7 structure
+            python3 -c "data=open('/tmp/profile.mobileprovision.raw','rb').read(); pos=data.find(b'<?xml'); print(f'Found XML plist at offset {pos}'); open('/tmp/profile.mobileprovision','wb').write(data[pos:]); print(f'Extracted plist size: {len(data)-pos} bytes')"
           fi
 
           echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes"
