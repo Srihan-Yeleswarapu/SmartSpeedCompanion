@@ -68,26 +68,21 @@ jobs:
           PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
         run: |
           echo "=== Decoding provisioning profile ==="
-          echo "$PP_BASE64" | tr -d '[:space:]' | base64 -D > /tmp/profile.mobileprovision
 
-          if ! grep -q "<!DOCTYPE plist" /tmp/profile.mobileprovision && ! grep -q "<?xml" /tmp/profile.mobileprovision; then
-            echo "[WARN] Raw decode failed, trying alternative..."
-            echo "$PP_BASE64" | base64 -d > /tmp/profile.mobileprovision
+          # Step 1: Decode base64 -> DER file (Apple distribution profiles are PKCS#7 wrapped)
+          python3 -c "import base64; data = base64.b64decode(''.join('$PP_BASE64'.split())); open('/tmp/profile.mobileprovision.der', 'wb').write(data); print(f'DER file: {len(data)} bytes')"
+
+          # Step 2: Unwrap PKCS#7/CMS signedData envelope to get raw plist
+          # Apple distribution profiles are stored as CMS/PKCS#7 SignedData containers
+          security cms -D -in /tmp/profile.mobileprovision.der -out /tmp/profile.mobileprovision 2>/dev/null
+          if [ $? -eq 0 ]; then
+            echo "[OK] Successfully unwrapped CMS/PKCS#7 envelope"
+          else
+            echo "[ERROR] Failed to unwrap CMS envelope - file may not be a valid signed profile"
+            exit 1
           fi
 
           echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes"
-
-          # DIAGNOSTIC: Show first 200 bytes of the decoded file in hex to identify what it actually is
-          echo "=== First 200 bytes (hex dump) ==="
-          head -c 200 /tmp/profile.mobileprovision | xxd | head -20
-
-          # DIAGNOSTIC: Show first 200 bytes as ASCII (replacing non-printable)
-          echo "=== First 200 bytes (ASCII) ==="
-          head -c 200 /tmp/profile.mobileprovision | tr -d '\0' | cat -v | head -5
-
-          # Try to detect what type of file this actually is
-          FILE_TYPE=$(file -b /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
-          echo "File type: $FILE_TYPE"
 
           PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
           PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")

@@ -83,7 +83,19 @@ jobs:
           PROVISIONING_PROFILE: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
         run: |
           echo "=== Decoding provisioning profile ==="
-          python3 -c "import base64; data = base64.b64decode(''.join('$PROVISIONING_PROFILE'.split())); open('/tmp/profile.mobileprovision', 'wb').write(data); print(f'Decoded {len(data)} bytes')"
+
+          # Step 1: Decode base64 -> DER file (Apple distribution profiles are PKCS#7 wrapped)
+          python3 -c "import base64; data = base64.b64decode(''.join('$PROVISIONING_PROFILE'.split())); open('/tmp/profile.mobileprovision.der', 'wb').write(data); print(f'DER file: {len(data)} bytes')"
+
+          # Step 2: Unwrap PKCS#7/CMS signedData envelope to get raw plist
+          # Apple distribution profiles are stored as CMS/PKCS#7 SignedData containers
+          security cms -D -in /tmp/profile.mobileprovision.der -out /tmp/profile.mobileprovision 2>/dev/null
+          if [ $? -eq 0 ]; then
+            echo "[OK] Successfully unwrapped CMS/PKCS#7 envelope"
+          else
+            echo "[ERROR] Failed to unwrap CMS envelope - file may not be a valid signed profile"
+            exit 1
+          fi
 
           echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes"
 
