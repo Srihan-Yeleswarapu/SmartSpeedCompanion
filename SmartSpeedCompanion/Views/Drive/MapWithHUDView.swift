@@ -402,7 +402,9 @@ fileprivate struct SpeedHUDPill: View {
         let s = Int(duration) % 60
         return String(format: "%02d:%02d:%02d", h, m, s)
     }
-}fileprivate struct LimitSignView: View {
+}
+
+fileprivate struct LimitSignView: View {
     let limit: Int
     let source: String
     let isLandscape: Bool
@@ -434,17 +436,17 @@ fileprivate struct SpeedHUDPill: View {
                 .offset(y: isLandscape ? -2 : -1)
             }
 
-            let chip = sourceChip(for: source)
-            Text(chip.text)
+            Text(sourceChip.text)
                 .font(.system(size: isLandscape ? 8 : 10, weight: .bold))
-                .foregroundColor(chip.color)
+                .foregroundColor(sourceChip.color)
         }
     }
 
     /// Chip-style label + color for the active speed-limit source.
+    /// Computed property (not `let`) so it stays legal inside `var body`'s @ViewBuilder.
     /// Keeps the legacy "DB"-keyed color when offline/SQLite is the source, distinguishes
     /// the two live network paths, and shows an unobtrusive grey when no data is available.
-    private func sourceChip(for source: String) -> (text: String, color: Color) {
+    private var sourceChip: (text: String, color: Color) {
         switch source {
         case "Live (ArcGIS)":   return ("ArcGIS", Color(hex: "#34D38A"))     // green = freshest
         case "Live (Overpass)": return ("OSM", Color(hex: "#00D4FF"))        // cyan = live but OSM-based
