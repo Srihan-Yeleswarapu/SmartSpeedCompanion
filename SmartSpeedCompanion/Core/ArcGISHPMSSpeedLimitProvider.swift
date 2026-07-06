@@ -113,13 +113,13 @@ public final class ArcGISHPMSSpeedLimitProvider: SpeedLimitProvider, @unchecked 
 
         guard !parsed.features.isEmpty,
               let bestIdx = bestFeatureIndex(parsed.features, currentCoord: coordinate, heading: heading),
-              let attrs = parsed.features[bestIdx].attributes,
-              let limit = attrs.SpeedLimit,
+              let limit = parsed.features[bestIdx].attributes.SpeedLimit,
               limit > 0 else {
             // Genuinely no record — sample-panel gap or out-of-AZ. Not an error to retry.
             lastFailureAt = Date()
             return nil
         }
+        let attrs = parsed.features[bestIdx].attributes
 
         lastSuccessLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         let sr = attrs.SRNumber ?? "?"
