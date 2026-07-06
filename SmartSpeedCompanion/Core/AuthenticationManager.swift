@@ -117,16 +117,34 @@ public class AuthenticationManager: ObservableObject {
         do {
             authResult = try await Auth.auth().signIn(withEmail: email, password: password)
         } catch let nsError as NSError {
-            // Only retry the email-presence lookup on credential-class failures.
-            guard let code = AuthErrorCode(rawValue: nsError.code),
-                  code == .wrongPassword || code == .invalidCredential else {
+            // Three credential-class outcomes are possible:
+            //   - `.userNotFound` / `.emailNotFound`: email is not registered. Throw
+            //     our typed case directly — we don't need to consult
+            //     `fetchSignInMethods` because the answer is already definitive.
+            //   - `.wrongPassword`: email exists, password mismatch. Same.
+            //   - `.invalidCredential`: returned by Firebase under Email Enumeration
+            //     Protection for BOTH unregistered-email AND wrong-password, so the
+            //     result is ambiguous — we have to consult `fetchSignInMethods` to
+            //     disambiguate. (When EEP is off, Firebase uses `.userNotFound` /
+            //     `.wrongPassword` directly and this branch is unreachable.)
+            //   - everything else: network, user-disabled, too-many-requests, etc.
+            //     Propagate the original error so the UI surfaces the canonical
+            //     Firebase message.
+            guard let code = AuthErrorCode(rawValue: nsError.code) else { throw nsError }
+            switch code {
+            case .userNotFound, .emailNotFound:
+                throw AuthError.userNotFound
+            case .wrongPassword:
+                throw AuthError.incorrectPassword
+            case .invalidCredential:
+                let methods = try await Auth.auth().fetchSignInMethods(forEmail: email)
+                if methods.isEmpty {
+                    throw AuthError.userNotFound
+                }
+                throw AuthError.incorrectPassword
+            default:
                 throw nsError
             }
-            let methods = try await Auth.auth().fetchSignInMethods(forEmail: email)
-            if methods.isEmpty {
-                throw AuthError.userNotFound
-            }
-            throw AuthError.incorrectPassword
         }
 
         await MainActor.run {
