@@ -214,43 +214,6 @@ jobs:
             exit 1
           fi
 
-      - name: Export IPA with embedded provisioning profile
-        env:
-          KEYCHAIN_PASSWORD: "build_keychain_pass"
-        run: |
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
-
-          echo "=== Signing identities available ==="
-          security find-identity -v -p codesigning "$RUNNER_TEMP/app-signing.keychain-db"
-
-          echo "=== Provisioning profiles available ==="
-          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
-
-          mkdir -p "$PWD/Export"
-          python3 -c "import plistlib; plistlib.dump({'method': 'app-store-connect', 'signingStyle': 'manual', 'signingIdentity': 'Apple Distribution', 'provisioningProfileSpecifier': 'Speedio App Store', 'teamID': 'VCNBBG32P6', 'uploadBitcode': False, 'uploadSymbols': True}, open('$PWD/exportOptions.plist', 'wb'))"
-
-          echo "=== Running xcodebuild -exportArchive ==="
-          xcodebuild -exportArchive -verbose -archivePath "$PWD/SmartSpeedCompanion.xcarchive" -exportOptionsPlist "$PWD/exportOptions.plist" -exportPath "$PWD/Export" 2>&1 | tail -80
-
-          echo "=== Export directory contents ==="
-          find "$PWD/Export" -type f 2>/dev/null
-          ls -la "$PWD/Export/"
-
-          IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
-          if [ -z "$IPA_PATH" ]; then
-            echo "[ERROR] No IPA file found"
-            exit 1
-          fi
-          echo "[OK] IPA created: $IPA_PATH"
-
-          echo "=== Verifying embedded.mobileprovision in IPA ==="
-          if unzip -l "$IPA_PATH" | grep -q "embedded.mobileprovision"; then
-            echo "[OK] embedded.mobileprovision FOUND in IPA"
-          else
-            echo "[ERROR] WARNING: embedded.mobileprovision NOT found in IPA!"
-            exit 1
-          fi
-
       - name: Upload to App Store Connect
         run: |
           IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
