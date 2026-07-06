@@ -51,79 +51,89 @@ public class AuthenticationManager: ObservableObject {
         }
     }
 
-    public func signUp(username: String, email: String, password: String, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard FirebaseApp.app() != nil else {
-            completion(.failure(AuthError.firebaseNotConfigured))
-            return
-        }
+    public func signUp(username: String, email: String, password: String) async throws {
+        guard FirebaseApp.app() != nil else { throw AuthError.firebaseNotConfigured }
 
         if username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            completion(.failure(AuthError.invalidUsername))
-            return
+            throw AuthError.invalidUsername
         }
 
-        guard isValidEmail(email) else {
-            completion(.failure(AuthError.invalidEmail))
-            return
+        guard isValidEmail(email) else { throw AuthError.invalidEmail }
+
+        // Pre-flight: confirm the email isn't already registered. fetchSignInMethods
+        // returns an array of provider IDs tied to that email; an empty array means
+        // no Firebase Auth user exists for it under any provider.
+        let methods = try await Auth.auth().fetchSignInMethods(forEmail: email)
+        if !methods.isEmpty {
+            throw AuthError.emailAlreadyInUse
         }
-        
-        // Firebase Auth Create User
-        Auth.auth().createUser(withEmail: email, password: password) { [weak self] authResult, error in
-            if let error = error {
-                completion(.failure(error))
-                return
+
+        // Create the Auth user. Defense-in-depth: another client could register the
+        // same email between our check and our create call; map the canonical
+        // "email already in use" error to our typed case so the UI is consistent.
+        let authResult: AuthDataResult
+        do {
+            authResult = try await Auth.auth().createUser(withEmail: email, password: password)
+        } catch let nsError as NSError {
+            if nsError.domain == AuthErrorDomain,
+               nsError.code == AuthErrorCode.emailAlreadyInUse.rawValue {
+                throw AuthError.emailAlreadyInUse
             }
-            
-            guard let user = authResult?.user else {
-                completion(.failure(AuthError.userNotFound))
-                return
-            }
-            
-            // Create Firestore Record
-            self?.createUserDocument(uid: user.uid, email: email, username: username) { error in
+            throw nsError
+        }
+
+        // Create the Firestore user doc (idempotent merge, non-fatal if it fails).
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            self.createUserDocument(uid: authResult.user.uid, email: email, username: username) { error in
                 if let error = error {
-                    // It's a non-fatal error if Firestore fails, but we should log it
                     print("Error creating user document: \(error)")
                 }
-                
-                DispatchQueue.main.async {
-                    self?.isAuthenticated = true
-                    self?.currentUserEmail = email
-                    self?.saveUIDToKeychain(uid: user.uid)
-                    completion(.success(()))
-                }
+                continuation.resume()
             }
+        }
+
+        // Surface the new session to the rest of the app on the main thread.
+        await MainActor.run {
+            self.isAuthenticated = true
+            self.currentUserEmail = email
+            self.saveUIDToKeychain(uid: authResult.user.uid)
         }
     }
     
-    public func signIn(email: String, password: String, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard FirebaseApp.app() != nil else {
-            completion(.failure(AuthError.firebaseNotConfigured))
-            return
+    public func signIn(email: String, password: String) async throws {
+        guard FirebaseApp.app() != nil else { throw AuthError.firebaseNotConfigured }
+        guard isValidEmail(email) else { throw AuthError.invalidEmail }
+
+        // Credential attempt FIRST. With Email Enumeration Protection enabled
+        // in the Firebase Console, the distinction between "email not
+        // registered" and "wrong password" is intentionally collapsed by
+        // Firebase — both come back as `invalidCredential`. Running the
+        // credential attempt up front means a wrong password never gets
+        // misreported as "no account found" when EEP is on.
+        //
+        // We only consult `fetchSignInMethods` to disambiguate when the
+        // credential attempt fails with a credential-class code.
+        let authResult: AuthDataResult
+        do {
+            authResult = try await Auth.auth().signIn(withEmail: email, password: password)
+        } catch let nsError as NSError {
+            // Only retry the email-presence lookup on credential-class failures.
+            guard let code = AuthErrorCode(rawValue: nsError.code),
+                  code == .wrongPassword || code == .invalidCredential else {
+                throw nsError
+            }
+            let methods = try await Auth.auth().fetchSignInMethods(forEmail: email)
+            if methods.isEmpty {
+                throw AuthError.userNotFound
+            }
+            throw AuthError.incorrectPassword
         }
 
-        guard isValidEmail(email) else {
-            completion(.failure(AuthError.invalidEmail))
-            return
-        }
-        
-        Auth.auth().signIn(withEmail: email, password: password) { [weak self] authResult, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-            
-            guard let user = authResult?.user else {
-                completion(.failure(AuthError.userNotFound))
-                return
-            }
-            
-            DispatchQueue.main.async {
-                self?.isAuthenticated = true
-                self?.currentUserEmail = user.email
-                self?.saveUIDToKeychain(uid: user.uid)
-                completion(.success(()))
-            }
+        await MainActor.run {
+            self.isAuthenticated = true
+            self.currentUserEmail = authResult.user.email
+            self.saveUIDToKeychain(uid: authResult.user.uid)
+            self.fetchUserPreferences()  // parity with the auth-state listener
         }
     }
     
@@ -321,22 +331,24 @@ public class AuthenticationManager: ObservableObject {
     }
 }
 
-public enum AuthError: LocalizedError {
+public enum AuthError: LocalizedError, Sendable {
     case invalidUsername
     case invalidEmail
     case passwordsDoNotMatch
     case incorrectPassword
     case firebaseNotConfigured
     case userNotFound
-    
+    case emailAlreadyInUse
+
     public var errorDescription: String? {
         switch self {
         case .invalidUsername: return "Username cannot be empty."
         case .invalidEmail: return "Please enter a valid email address."
         case .passwordsDoNotMatch: return "Passwords do not match."
-        case .incorrectPassword: return "Incorrect password."
+        case .incorrectPassword: return "Incorrect password. Try again."
         case .firebaseNotConfigured: return "Firebase is not configured. Please ensure GoogleService-Info.plist is included in the app bundle."
-        case .userNotFound: return "User not found. Please sign up."
+        case .userNotFound: return "No account found for this email. Sign up first."
+        case .emailAlreadyInUse: return "You already have an account. Sign in instead."
         }
     }
 }

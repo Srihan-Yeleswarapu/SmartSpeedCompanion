@@ -151,18 +151,24 @@ public struct SignInView: View {
             isError = true
             return
         }
-        
+
         isSigningIn = true
         isError = false
-        
-        appState.authManager.signIn(email: email, password: password) { result in
-            self.isSigningIn = false
-            switch result {
-            case .success:
-                break // AppState view logic will navigate
-            case .failure(let error):
+
+        // Capture inputs as locals so the Task closure is unambiguous and the
+        // body is implicitly main-isolated (so we can mutate @State directly
+        // without inner MainActor.run wrappers).
+        let authManager = appState.authManager
+        let emailCopy = email
+        let passwordCopy = password
+        Task { @MainActor in
+            do {
+                try await authManager.signIn(email: emailCopy, password: passwordCopy)
+                self.isSigningIn = false
+            } catch {
                 self.errorMessage = error.localizedDescription
                 self.isError = true
+                self.isSigningIn = false
             }
         }
     }

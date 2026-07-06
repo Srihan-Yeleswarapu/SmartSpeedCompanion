@@ -11,6 +11,7 @@ public struct SignUpView: View {
     @State private var errorMessage = ""
     @State private var isError = false
     @State private var isSigningUp = false
+    @State private var signUpError: AuthError? = nil
     
     public var body: some View {
         ZStack {
@@ -61,9 +62,31 @@ public struct SignUpView: View {
                 .padding(.horizontal)
                 
                 if isError {
-                    Text(errorMessage)
-                        .foregroundColor(DesignSystem.alertRed)
-                        .font(.caption)
+                    VStack(spacing: 8) {
+                        Text(errorMessage)
+                            .foregroundColor(DesignSystem.alertRed)
+                            .font(.caption)
+                            .multilineTextAlignment(.center)
+
+                        if signUpError == .emailAlreadyInUse {
+                            Button(action: {
+                                withAnimation {
+                                    isShowingSignUp = false
+                                    isError = false
+                                    signUpError = nil
+                                    errorMessage = ""
+                                }
+                            }) {
+                                Text("Go to Sign In")
+                                    .font(.caption.bold())
+                                    .foregroundColor(DesignSystem.cyan)
+                                    .padding(.vertical, 6)
+                                    .padding(.horizontal, 12)
+                                    .background(DesignSystem.cyan.opacity(0.15))
+                                    .cornerRadius(8)
+                            }
+                        }
+                    }
                 }
                 
                 Button(action: handleSignUp) {
@@ -109,26 +132,37 @@ public struct SignUpView: View {
         guard !username.isEmpty, !email.isEmpty, !password.isEmpty, !confirmPassword.isEmpty else {
             errorMessage = "All fields are required."
             isError = true
+            signUpError = nil
             return
         }
-        
+
         guard password == confirmPassword else {
             errorMessage = "Passwords do not match."
             isError = true
+            signUpError = nil
             return
         }
-        
+
         isSigningUp = true
         isError = false
-        
-        appState.authManager.signUp(username: username, email: email, password: password) { result in
-            self.isSigningUp = false
-            switch result {
-            case .success:
-                break // State will update automatically
-            case .failure(let error):
+        signUpError = nil
+
+        // Capture inputs as locals so the Task closure is unambiguous and the
+        // body is implicitly main-isolated (so we can mutate @State directly
+        // without inner MainActor.run wrappers).
+        let authManager = appState.authManager
+        let usernameCopy = username
+        let emailCopy = email
+        let passwordCopy = password
+        Task { @MainActor in
+            do {
+                try await authManager.signUp(username: usernameCopy, email: emailCopy, password: passwordCopy)
+                self.isSigningUp = false
+            } catch {
                 self.errorMessage = error.localizedDescription
                 self.isError = true
+                self.signUpError = error as? AuthError
+                self.isSigningUp = false
             }
         }
     }
