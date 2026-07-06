@@ -141,7 +141,7 @@ jobs:
           echo "=== Provisioning profiles ==="
           ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
 
-          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" -archivePath ./SmartSpeedCompanion.xcarchive 2>&1 | tail -100
+          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" -archivePath ./SmartSpeedCompanion.xcarchive
         timeout-minutes: 30
 
       - name: Export IPA and manually embed provisioning profile
@@ -156,7 +156,7 @@ jobs:
           echo "=== Exporting IPA ==="
           python3 -c "import plistlib; plistlib.dump({'method': 'app-store-connect', 'signingStyle': 'manual', 'signingIdentity': 'Apple Distribution', 'provisioningProfileSpecifier': 'Speedio App Store', 'teamID': 'VCNBBG32P6', 'uploadBitcode': False, 'uploadSymbols': True}, open('$PWD/exportOptions.plist', 'wb'))"
 
-          xcodebuild -exportArchive -archivePath "$PWD/SmartSpeedCompanion.xcarchive" -exportOptionsPlist "$PWD/exportOptions.plist" -exportPath "$PWD/Export" 2>&1 | tail -50
+          xcodebuild -exportArchive -archivePath "$PWD/SmartSpeedCompanion.xcarchive" -exportOptionsPlist "$PWD/exportOptions.plist" -exportPath "$PWD/Export"
 
           echo "=== Locating IPA ==="
           IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
@@ -233,7 +233,7 @@ jobs:
 
           UPLOAD_LOG=$(mktemp)
           set +e
-          xcrun altool --upload-app --file "$IPA_PATH" --type ios --show-progress -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" 2>&1 | tee "$UPLOAD_LOG" | tail -30
+          xcrun altool --upload-app --file "$IPA_PATH" --type ios --show-progress -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" 2>&1 | tee "$UPLOAD_LOG"
           UPLOAD_EXIT=${PIPESTATUS[0]}
           set -e
 
