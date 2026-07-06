@@ -49,7 +49,9 @@ public class AuthenticationManager: ObservableObject {
                 self.initialAuthChecked = true
             }
         }
-    }    public func signUp(username: String, email: String, password: String, completion: @escaping (Result<Void, Error>) -> Void) {
+    }
+
+    public func signUp(username: String, email: String, password: String, completion: @escaping (Result<Void, Error>) -> Void) {
         guard FirebaseApp.app() != nil else {
             completion(.failure(AuthError.firebaseNotConfigured))
             return
