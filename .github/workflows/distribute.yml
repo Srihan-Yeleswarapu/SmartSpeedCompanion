@@ -214,18 +214,55 @@ jobs:
             exit 1
           fi
 
-      - name: Upload to App Store Connect
+      - name: Upload to TestFlight (App Store Connect)
+        # Upload the IPA so it appears under App Store Connect → TestFlight for the Speedio
+        # bundle id. This step is non-blocking: a build verification failure here should
+        # not prevent the IPA artifact from being preserved on GitHub.
+        continue-on-error: true
         run: |
           IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
           if [ -z "$IPA_PATH" ]; then
-            echo "ERROR: No .ipa file found in Export directory"
+            echo "[ERROR] No .ipa file found in Export directory"
             find "$PWD/Export" -type f 2>/dev/null
             exit 1
           fi
-          echo "Uploading IPA: $IPA_PATH"
-          xcrun altool --upload-app --file "$IPA_PATH" --type ios --show-progress -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" 2>&1 | tail -30
+          echo "============================================================"
+          echo "Uploading IPA to App Store Connect (TestFlight): $IPA_PATH"
+          echo "IPA size: $(wc -c < "$IPA_PATH") bytes"
+          echo "============================================================"
+
+          UPLOAD_LOG=$(mktemp)
+          set +e
+          xcrun altool --upload-app --file "$IPA_PATH" --type ios --show-progress -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" 2>&1 | tee "$UPLOAD_LOG" | tail -30
+          UPLOAD_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          echo "============================================================"
+          if [ "$UPLOAD_EXIT" -eq 0 ]; then
+            echo "[OK] IPA uploaded successfully. It will appear under App Store Connect → TestFlight once processing completes (usually 1-2 minutes)."
+          else
+            echo "[WARN] altool exited with non-zero status ($UPLOAD_EXIT). The IPA build itself is fine — see diagnostics below."
+            if grep -qE "403|required contracts|FORBIDDEN_ERROR|CONTRACT_NOT_VALID" "$UPLOAD_LOG"; then
+              echo ""
+              echo "ACTION REQUIRED: 403 'You do not have required contracts'"
+              echo "Sign the Apple Developer Program License Agreement in App Store Connect:"
+              echo "  https://appstoreconnect.apple.com → (your app) → Agreements, Tax, and Banking"
+              echo "After signing, re-run this workflow (workflow_dispatch) to upload the build."
+            elif grep -qE "401|invalid username|invalid password|authentication" "$UPLOAD_LOG"; then
+              echo ""
+              echo "ACTION REQUIRED: Authentication failure"
+              echo "Regenerate an app-specific password at https://appleid.apple.com/account/manage"
+              echo "Update the APPSTORE_CONNECT_USERNAME and APPSTORE_CONNECT_PASSWORD GitHub Actions secrets."
+            else
+              echo ""
+              echo "Check the full upload log for details; the build artifact will still be uploaded below."
+            fi
+          fi
+          rm -f "$UPLOAD_LOG"
 
       - name: Upload Artifacts
+        # Always upload the IPA artifact, even when the TestFlight upload step failed.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Speedio-IPA-${{ github.run_number }}
