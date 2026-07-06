@@ -61,6 +61,15 @@ targets:
     info:
       path: SmartSpeedCompanion/Configuration/Info.plist
       properties:
+        # CFBundleVersion and CFBundleShortVersionString MUST be declared here (with the
+        # Xcode build-setting variable references below) — XcodeGen regenerates Info.plist
+        # from this block at generate time and a literal CFBundleVersion key was missing,
+        # causing App Store Connect ingestion to fall back to version "1" and produce a 409
+        # duplicate error after every bump to CURRENT_PROJECT_VERSION. With these explicit
+        # entries, Xcode substitutes $(CURRENT_PROJECT_VERSION) / $(MARKETING_VERSION) into
+        # the final Info.plist at archive time and altool sees the actual build number.
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleName: Speedio
         CFBundleDisplayName: Speedio
         CFBundleIdentifier: com.speedsense.app
