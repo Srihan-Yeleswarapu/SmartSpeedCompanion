@@ -77,8 +77,10 @@ jobs:
             echo "[OK] Successfully unwrapped CMS/PKCS#7 envelope via security cms"
           else
             echo "[WARN] security cms -D failed - extracting embedded plist directly from DER structure"
-            # Step 2alt: Extract the embedded XML plist directly from DER/PKCS#7 structure
-            python3 -c "data=open('/tmp/profile.mobileprovision.raw','rb').read(); pos=data.find(b'<?xml'); print(f'Found XML plist at offset {pos}'); open('/tmp/profile.mobileprovision','wb').write(data[pos:]); print(f'Extracted plist size: {len(data)-pos} bytes')"
+            # Step 2alt: Find <?xml ... </plist> boundaries (excluding trailing PKCS#7 signature bytes),
+            # parse with plistlib to validate the XML, then assert the required UUID property exists.
+            # This produces a clean plist that DVTProvisioningProfileManager can load.
+            python3 -c "import plistlib,sys; d=open('/tmp/profile.mobileprovision.raw','rb').read(); s=d.find(b'<?xml'); e=d.find(b'</plist>',s); assert s>=0 and e>=0,b'no plist boundaries found'; e+=len(b'</plist>'); pb=d[s:e]; p=plistlib.loads(pb); assert 'UUID' in p,b'plist missing required UUID property'; open('/tmp/profile.mobileprovision','wb').write(pb); print('[OK] extracted clean plist: %d bytes, UUID=%s, Name=%s' % (len(pb),p['UUID'],p.get('Name','?')))"
           fi
 
           echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes"
