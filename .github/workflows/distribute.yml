@@ -72,30 +72,32 @@ jobs:
           # Step 1: Decode base64 -> raw bytes
           python3 -c "import base64; data = base64.b64decode(''.join('$PP_BASE64'.split())); open('/tmp/profile.mobileprovision.raw', 'wb').write(data); print(f'Raw file: {len(data)} bytes')"
 
-          # Step 2: Produce a clean, parseable plist at /tmp/profile.mobileprovision.
-          # Apple DVTProvisioningProfileManager is satisfied with either the raw PKCS#7 envelope
-          # OR the unwrapped plist, but PlistBuddy (used for subsequent metadata gates) requires
-          # a parseable plist and cannot read PKCS#7 binary. We therefore write the *unwrapped*
-          # plist here (PlistBuddy-friendly) and also install with the proper <UUID>.mobileprovision
-          # filename convention so DVTProvisioningProfileManager can locate the profile.
-          if security cms -D -in /tmp/profile.mobileprovision.raw -out /tmp/profile.mobileprovision 2>/dev/null; then
+          # Step 2: Install the ORIGINAL raw PKCS#7 envelope. Apple's DVTProvisioningProfileManager
+          # only accepts the PKCS#7 signed-data format AND the file must be named <UUID>.mobileprovision.
+          # Previous iterations that wrote the unwrapped plist caused xcodebuild to log
+          # "Profile is missing the required UUID property" because Apple's parser expects PKCS#7.
+          # PlistBuddy cannot read PKCS#7 binary, so we also produce an unwrapped plist copy at
+          # /tmp/profile.unwrapped.plist for metadata extraction and entitlements.
+          if security cms -D -in /tmp/profile.mobileprovision.raw -out /tmp/profile.unwrapped.plist 2>/dev/null; then
             echo "[OK] Successfully unwrapped CMS/PKCS#7 envelope via security cms"
           else
             echo "[WARN] security cms -D failed - extracting embedded plist directly from DER structure"
-            python3 -c "import plistlib,sys; d=open('/tmp/profile.mobileprovision.raw','rb').read(); s=d.find(b'<?xml'); e=d.find(b'</plist>',s); assert s>=0 and e>=0,b'no plist boundaries found'; pb=d[s:e+len(b'</plist>')]; p=plistlib.loads(pb); assert 'UUID' in p,b'plist missing required UUID property'; open('/tmp/profile.mobileprovision','wb').write(pb); print('[OK] extracted clean plist: %d bytes, UUID=%s, Name=%s' % (len(pb),p['UUID'],p.get('Name','?')))"
+            python3 -c "import plistlib,sys; d=open('/tmp/profile.mobileprovision.raw','rb').read(); s=d.find(b'<?xml'); e=d.find(b'</plist>',s); assert s>=0 and e>=0,b'no plist boundaries found'; pb=d[s:e+len(b'</plist>')]; p=plistlib.loads(pb); assert 'UUID' in p,b'plist missing required UUID property'; open('/tmp/profile.unwrapped.plist','wb').write(pb); print('[OK] extracted clean plist: %d bytes, UUID=%s, Name=%s' % (len(pb),p['UUID'],p.get('Name','?')))"
           fi
-          echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes"
 
-          # Extract metadata via PlistBuddy (works on the unwrapped plist) AND via plistlib for
-          # the UUID used in the filename (belt-and-suspenders so a PlistBuddy edge case can't
-          # leak garbage into cp).
-          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
-          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
-          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
-          APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
+          # /tmp/profile.mobileprovision must be the RAW PKCS#7 file - this is what xcodebuild
+          # DVTProvisioningProfileManager expects and what we'll later embed in the IPA.
+          cp /tmp/profile.mobileprovision.raw /tmp/profile.mobileprovision
+          echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes (raw PKCS#7)"
 
-          # Robust UUID extraction via plistlib (independent of PlistBuddy)
-          UUID_FROM_PLIST=$(python3 -c "import plistlib; print(plistlib.loads(open('/tmp/profile.mobileprovision','rb').read()).get('UUID',''))" 2>/dev/null || echo "")
+          # Extract metadata via PlistBuddy on the UNWRAPPED plist (PlistBuddy can't read PKCS#7).
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+          APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+
+          # Robust UUID extraction via plistlib (independent of PlistBuddy) for the install filename.
+          UUID_FROM_PLIST=$(python3 -c "import plistlib; print(plistlib.loads(open('/tmp/profile.unwrapped.plist','rb').read()).get('UUID',''))" 2>/dev/null || echo "")
           if [ -n "$UUID_FROM_PLIST" ]; then
             PROFILE_UUID="$UUID_FROM_PLIST"
           fi
@@ -113,7 +115,7 @@ jobs:
           echo "Team ID: $TEAM_ID"
           echo "App ID: $APPID"
 
-          /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.mobileprovision > /tmp/entitlements.plist 2>/dev/null
+          /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.unwrapped.plist > /tmp/entitlements.plist 2>/dev/null
           if [ -s /tmp/entitlements.plist ]; then
             echo "[OK] Extracted entitlements from provisioning profile"
           else
@@ -122,7 +124,8 @@ jobs:
 
           PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PP_DIR"
-          cp /tmp/profile.mobileprovision "$PP_DIR/${INSTALL_NAME}"
+          # Install the RAW PKCS#7 with proper <UUID>.mobileprovision filename.
+          cp /tmp/profile.mobileprovision.raw "$PP_DIR/${INSTALL_NAME}"
           echo "Installed provisioning profile to: $PP_DIR/${INSTALL_NAME}"
           ls -la "$PP_DIR/"
 
