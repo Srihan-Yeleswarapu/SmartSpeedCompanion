@@ -1,4 +1,5 @@
-import SwiftUIpublic struct AuthView: View {
+import SwiftUI
+public struct AuthView: View {
     @State private var isShowingSignUp: Bool
 
     /// - Parameter defaultToSignUp: When `true`, the view opens on the Sign Up tab.
