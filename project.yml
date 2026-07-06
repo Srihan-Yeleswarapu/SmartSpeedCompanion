@@ -87,6 +87,10 @@ targets:
         UIRequiredDeviceCapabilities:
           - location-services
           - gps
+        # NOTE: XcodeGen regenerates Info.plist from this block at build time, so orientation keys
+        # must be declared here. Source SmartSpeedCompanion/Configuration/Info.plist is overridden
+        # by the generated copy; altool's "Invalid bundle. No orientations were specified" 409
+        # validation surfaces when these are missing.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
@@ -96,7 +100,6 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        UIRequiresFullScreen: false
 
     settings:
       base:
