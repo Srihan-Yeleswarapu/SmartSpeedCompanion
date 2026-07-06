@@ -7,6 +7,8 @@ public class AppState: ObservableObject {
     @AppStorage("hasSeenTutorialTransition") public var hasSeenTutorialTransition = false
     @AppStorage("hasSelectedState") public var hasSelectedState: Bool = false
     @AppStorage("userState") public var userState: String = ""
+    // Persisted so we can present Sign In (instead of Sign Up) when a returning user signs out.
+    @AppStorage("hasEverAuthenticated") public var hasEverAuthenticated: Bool = false
     
     @Published public var authManager = AuthenticationManager.shared
     
