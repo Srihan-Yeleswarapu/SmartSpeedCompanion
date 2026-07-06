@@ -1,71 +1,145 @@
 // SpeedLimitService.swift
+// Orchestrator that picks the best speed-limit answer for the user's current coord.
+//
+// Decision tree:
+//   1. Spatial-grid cache lookup -> hit short-circuits everything below.
+//   2. If NetworkReachability.isConnected:
+//        Walk liveProviders in order (ArcGIS HPMS -> Overpass) -- first non-nil response wins.
+//        On network/parse failure for a provider, drop and try the next.
+//   3. If offline (or all live providers miss) -> ArizonaSpeedLimitService (SQLite fallback).
+//   4. SQLite miss raises missCount; at missThresholdBeforeClear consecutive misses we drop
+//      state to "No Data" rather than pinning the driver to a stale segment.
+//
+// @Published dataSource is now a typed SpeedLimitDataSource enum (was a bare String).
+// Existing UI consumers that read .rawValue continue to work because rawValues match the
+// old string keys.
+
 import Foundation
 import CoreLocation
 import Combine
 
-public protocol SpeedLimitProviding {
-    func fetchSpeedLimit(at coordinate: CLLocationCoordinate2D) async throws -> Int
-}
-
 @MainActor
 public class SmartSpeedLimitService: ObservableObject {
     public static let shared = SmartSpeedLimitService()
-    
+
     @Published public var currentLimit: Int = 0
-    @Published public var dataSource: String = "No Data"
-    
+    @Published public var dataSource: SpeedLimitDataSource = .noData
+
     private var lastValidLimit: Int = 0
     private var consecutiveMissCount: Int = 0
-    // After 20 consecutive misses, auto-clear the spatial cache so stale
-    // bounding boxes can't pin us to the wrong road.
+    /// After 20 consecutive misses, auto-clear the spatial cache so stale bounding boxes
+    /// can't pin us to the wrong road.
     private let missThresholdBeforeClear: Int = 20
-    
-    private init() {}
-    
-    public func updateSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double?, currentSpeedMph: Double) async -> Int {
+
+    private let liveProviders: [SpeedLimitProvider]
+    private let reachability = NetworkReachability.shared
+    private let cache = SpeedLimitResponseCache.shared
+
+    private init() {
+        self.liveProviders = [
+            ArcGISHPMSSpeedLimitProvider(),
+            OverpassSpeedLimitProvider(),
+        ]
+        // Preload any persisted entries from disk so the very first fetch can
+        // avoid the network round-trip if the user is revisiting a road.
+        Task { await cache.loadFromDisk() }
+    }
+
+    /// Pick the best speed limit at the user's current coord. Returns the new limit value
+    /// and updates the @Published `currentLimit` + `dataSource` properties.
+    public func updateSpeedLimit(
+        at coordinate: CLLocationCoordinate2D,
+        heading: Double?,
+        currentSpeedMph: Double
+    ) async -> Int {
+        // 1. Cache short-circuit.
+        if let cached = await cache.lookup(at: coordinate) {
+            apply(limit: cached.speedLimitMph,
+                  source: sourceForProviderName(cached.providerName))
+            return cached.speedLimitMph
+        }
+
+        // 2. Live provider chain (only when online).
+        if reachability.isConnected {
+            for provider in liveProviders {
+                do {
+                    if let resp = try await provider.fetchSpeedLimit(at: coordinate, heading: heading),
+                       resp.speedLimitMph > 0 {
+                        await cache.store(resp, at: coordinate)
+                        apply(limit: resp.speedLimitMph,
+                              source: sourceForProviderName(resp.providerName))
+                        return resp.speedLimitMph
+                    }
+                } catch {
+                    DebugLogger.shared.log("[\(provider.displayName)] Live fetch failed: \(error.localizedDescription)")
+                    continue  // try the next provider in the chain
+                }
+            }
+        }
+
+        // 3. SQLite fallback (offline, or all live providers missed).
+        return await querySQLiteFallback(at: coordinate, heading: heading, currentSpeedMph: currentSpeedMph)
+    }
+
+    // MARK: - Private helpers
+
+    private func querySQLiteFallback(
+        at coordinate: CLLocationCoordinate2D,
+        heading: Double?,
+        currentSpeedMph: Double
+    ) async -> Int {
         do {
-            // 1. Added 'try' back because the actor method 'throws'
             let localLimit = try await ArizonaSpeedLimitService.shared.updateSpeedLimit(
-                at: coordinate, 
-                heading: heading, 
+                at: coordinate,
+                heading: heading,
                 currentSpeedMph: currentSpeedMph
             )
-            
-            self.lastValidLimit = localLimit
-            self.currentLimit = localLimit
-            self.consecutiveMissCount = 0
-            self.dataSource = "DB"
+            apply(limit: localLimit, source: .localDB)
             return localLimit
-            
         } catch {
             consecutiveMissCount += 1
-            
-            // 2. Fixed the "if if let" typo and added 'try?' 
+
+            // ExpandedSearch with 60m radius.
             if let recoveryLimit = try? await ArizonaSpeedLimitService.shared.updateSpeedLimit(
-                at: coordinate, 
-                heading: heading, 
-                currentSpeedMph: currentSpeedMph, 
+                at: coordinate,
+                heading: heading,
+                currentSpeedMph: currentSpeedMph,
                 expandedSearch: true
             ) {
-                self.lastValidLimit = recoveryLimit
-                self.currentLimit = recoveryLimit
-                self.consecutiveMissCount = 0
-                self.dataSource = "DB (Recovered)"
+                apply(limit: recoveryLimit, source: .localDBRecovered)
                 return recoveryLimit
             }
-            
+
+            // Hold the last valid limit for a grace window of 20 misses before giving up.
             if consecutiveMissCount < missThresholdBeforeClear && lastValidLimit > 0 {
                 self.currentLimit = lastValidLimit
                 return lastValidLimit
             } else if consecutiveMissCount >= missThresholdBeforeClear {
                 await ArizonaSpeedLimitService.shared.clearCache()
-                self.lastValidLimit = 0
-                self.currentLimit = 0
-                self.dataSource = "No Data"
-                self.consecutiveMissCount = 0
+                await cache.clear()
+                lastValidLimit = 0
+                currentLimit = 0
+                dataSource = .noData
+                consecutiveMissCount = 0
             }
-            
             return self.currentLimit
+        }
+    }
+
+    private func apply(limit: Int, source: SpeedLimitDataSource) {
+        if limit > 0 {
+            self.lastValidLimit = limit
+            self.consecutiveMissCount = 0
+        }
+        self.currentLimit = limit
+        self.dataSource = source
+    }
+
+    private func sourceForProviderName(_ name: String) -> SpeedLimitDataSource {
+        switch name {
+        case "ArcGIS": return .liveArcGIS
+        case "Overpass": return .liveOverpass
+        default: return .noData
         }
     }
 }

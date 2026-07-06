@@ -19,8 +19,14 @@ public final class SpeedEngine: ObservableObject {
     private var smoothedSpeed: Double = 0.0
     private let smoothingFactor: Double = 0.4 
     
-    /// Minimum distance (meters) the user must travel before we re-query the speed limit DB.
-    private let minimumFetchDistance: CLLocationDistance = 15.0
+    /// Minimum distance (meters) the user must travel before we re-query the speed limit provider.
+    /// The orchestration now self-throttles via the SpeedLimitResponseCache (spatial-grid
+    /// short-circuit) + per-provider dedup, so we can space out fetches far enough for the
+    /// live network providers without missing turns on city streets.
+    ///   - Surface streets (< 20 m/s = ~45 mph): 80m (~ one city block)
+    ///   - Highways (>= 20 m/s): 250m
+    private let surfaceFetchDistance: CLLocationDistance = 80.0
+    private let highwayFetchDistance: CLLocationDistance = 250.0
     private var lastFetchLocation: CLLocation?
     
     public init(locationManager: LocationManager) {
@@ -74,9 +80,10 @@ public final class SpeedEngine: ObservableObject {
                 return
             }
             
-            // 2. Movement check
+            // 2. Movement check — dynamic interval: 80m on surface streets, 250m on highways.
+            let threshold: CLLocationDistance = location.speed >= 20 ? highwayFetchDistance : surfaceFetchDistance
             if let lastLoc = lastFetchLocation,
-            location.distance(from: lastLoc) < minimumFetchDistance {
+            location.distance(from: lastLoc) < threshold {
                 return
             }
             lastFetchLocation = location

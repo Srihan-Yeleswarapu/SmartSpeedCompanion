@@ -402,24 +402,22 @@ fileprivate struct SpeedHUDPill: View {
         let s = Int(duration) % 60
         return String(format: "%02d:%02d:%02d", h, m, s)
     }
-}
-
-fileprivate struct LimitSignView: View {
+}fileprivate struct LimitSignView: View {
     let limit: Int
     let source: String
     let isLandscape: Bool
-    
+
     var body: some View {
         VStack(spacing: 4) {
             ZStack {
                 Circle()
                     .fill(Color.white)
                     .frame(width: isLandscape ? 40 : 52, height: isLandscape ? 40 : 52)
-                
+
                 Circle()
                     .stroke(Color(hex: "#FF3D71"), lineWidth: 3)
                     .frame(width: isLandscape ? 40 : 52, height: isLandscape ? 40 : 52)
-                
+
                 VStack(spacing: 0) {
                     let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
                     let displayLimit = isMetric ? Int(Double(limit) * 1.60934) : limit
@@ -428,17 +426,31 @@ fileprivate struct LimitSignView: View {
                         .foregroundColor(.black)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
-                    
+
                     Text(UserDefaults.standard.string(forKey: "measurementSystem") == "Metric" ? "KMH" : "MPH")
                         .font(.system(size: isLandscape ? 7 : 9, weight: .black))
                         .foregroundColor(Color(hex: "#FF3D71"))
                 }
                 .offset(y: isLandscape ? -2 : -1)
             }
-            
-            Text(source == "DB" ? "DB" : (source == "OpenStreetMap" ? "OSM" : "??"))
+
+            let chip = sourceChip(for: source)
+            Text(chip.text)
                 .font(.system(size: isLandscape ? 8 : 10, weight: .bold))
-                .foregroundColor(source == "DB" ? DesignSystem.cyan : (source == "OpenStreetMap" ? Color(hex: "#00D4FF") : Color(hex: "#8888AA")))
+                .foregroundColor(chip.color)
+        }
+    }
+
+    /// Chip-style label + color for the active speed-limit source.
+    /// Keeps the legacy "DB"-keyed color when offline/SQLite is the source, distinguishes
+    /// the two live network paths, and shows an unobtrusive grey when no data is available.
+    private func sourceChip(for source: String) -> (text: String, color: Color) {
+        switch source {
+        case "Live (ArcGIS)":   return ("ArcGIS", Color(hex: "#34D38A"))     // green = freshest
+        case "Live (Overpass)": return ("OSM", Color(hex: "#00D4FF"))        // cyan = live but OSM-based
+        case "DB":              return ("DB", DesignSystem.cyan)             // local fallback
+        case "DB (Recovered)":  return ("DB (R)", DesignSystem.amber)        // expanded-search fallback
+        default:                return ("--", Color(hex: "#8888AA"))         // No Data / unknown
         }
     }
 }

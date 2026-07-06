@@ -160,7 +160,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         alrtEngine.$audioAlertActive.assign(to: &$alertActive)
         rec.$isRecording.assign(to: &$isRecording)
         
+        // SmartSpeedLimitService emits a typed SpeedLimitDataSource enum now; the UI still reads
+        // a String here via .rawValue so we map at the binding boundary.
         SmartSpeedLimitService.shared.$dataSource
+            .map { $0.rawValue }
             .receive(on: RunLoop.main)
             .assign(to: &$speedLimitSource)
         
