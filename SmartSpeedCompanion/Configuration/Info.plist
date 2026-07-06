@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <true/>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
     <string>Speed Sense needs constant background location access to monitor speed and provide CarPlay navigation alerts even when the app is backgrounded.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
