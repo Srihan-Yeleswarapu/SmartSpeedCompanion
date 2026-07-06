@@ -133,6 +133,11 @@ jobs:
         env:
           KEYCHAIN_PASSWORD: "build_keychain_pass"
         run: |
+          # Defense-in-depth: surface any non-zero exit from xcodebuild directly instead of
+          # letting the step finish "successfully" without an xcarchive artifact (which is
+          # what it has been doing every run since the speed-limit feature landed).
+          set -euo pipefail
+
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
 
           echo "=== Available signing identities ==="
@@ -141,8 +146,31 @@ jobs:
           echo "=== Provisioning profiles ==="
           ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
 
+          echo "=== xcodebuild archive START at $(date -u +%H:%M:%SZ) ==="
+
+          # Capture the real exit code without aborting on it.
+          set +e
           xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" -archivePath ./SmartSpeedCompanion.xcarchive
-        timeout-minutes: 30
+          BUILD_EXIT=$?
+          set -e
+
+          echo "=== xcodebuild DONE at $(date -u +%H:%M:%SZ); exit=${BUILD_EXIT} ==="
+          echo "=== Archive directory check ==="
+          ls -la ./SmartSpeedCompanion.xcarchive 2>&1 | head -25 || true
+
+          if [ "${BUILD_EXIT}" -ne 0 ]; then
+            echo "*** FATAL: xcodebuild failed with exit ${BUILD_EXIT} ***"
+            exit "${BUILD_EXIT}"
+          fi
+
+          if [ ! -d "./SmartSpeedCompanion.xcarchive" ]; then
+            echo "*** FATAL: xcodebuild exited 0 but no .xcarchive was produced ***"
+            exit 1
+          fi
+
+          echo "=== Archive verified ==="
+          ls -la ./SmartSpeedCompanion.xcarchive/
+        timeout-minutes: 60
 
       - name: Export IPA and manually embed provisioning profile
         env:
