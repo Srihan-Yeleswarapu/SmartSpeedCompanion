@@ -125,8 +125,11 @@ public struct LiveMapView: UIViewRepresentable {
         scale.translatesAutoresizingMaskIntoConstraints = false
         map.addSubview(scale)
 
-        // Bottom-trailing stack: pitch toggle above compass above tracking
-        // button. All three are free on-device controls (no API/token).
+        // Bottom-trailing stack: compass + explicit user-tracking button.
+        // (The system pitch toggle is rendered separately via
+        //  `pitchButtonVisibility = .visible` on the MKMapView itself —
+        //  there is no UIKit MapKit class named MKPitchToggle to host
+        //  here.) All controls are free on-device.
         guard #available(iOS 17.0, *) else {
             NSLayoutConstraint.activate([
                 scale.topAnchor.constraint(equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 10),
