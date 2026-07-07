@@ -41,7 +41,9 @@ public class SmartSpeedLimitService: ObservableObject {
 
     private let liveProviders: [SpeedLimitProvider]
     private let reachability = NetworkReachability.shared
-    private let cache = SpeedLimitResponseCache.shared    private init() {
+    private let cache = SpeedLimitResponseCache.shared
+
+    private init() {
         // Order matters for accuracy on signed arterials: HERE REST relies on
         // the user's HERE Platform creds (Keychain). 250k requests/month free
         // permanently. Falls through on nil / 429 / 5xx / missing creds.
