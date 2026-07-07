@@ -7,6 +7,13 @@ public struct SettingsView: View {
     @AppStorage("avoidHighways") var avoidHighways: Bool = false
     @AppStorage("measurementSystem") var measurementSystem: String = "Imperial"
     @AppStorage("gpsAccuracyMode") var gpsAccuracyMode: String = "navigation"
+
+    // Native MapKit feature toggles (see DriveViewModel.MapStyleChoice).
+    @AppStorage("mapStyle") private var mapStyle: String = "mutedDark"
+    @AppStorage("showApplePOIs") private var showApplePOIs: Bool = false
+    @AppStorage("lookAroundPreviewEnabled") private var lookAroundPreviewEnabled: Bool = true
+    @AppStorage("gradientRouteEnabled") private var gradientRouteEnabled: Bool = true
+    @AppStorage("threeDFlyoverEnabled") private var threeDFlyoverEnabled: Bool = false
     
     @EnvironmentObject var driveViewModel: DriveViewModel
     @EnvironmentObject var appState: AppState
@@ -26,7 +33,11 @@ public struct SettingsView: View {
     @State private var deleteError: String? = nil
 
     let systems = ["Imperial", "Metric"]
-    
+
+    // MARK: - Apple Maps Server API token paste row state
+    @State private var pasteTokenText: String = ""
+    @State private var tokenSaveMessage: String? = nil
+
     public init() {}
     
     public var body: some View {
@@ -75,10 +86,51 @@ public struct SettingsView: View {
                     .onChange(of: gpsAccuracyMode) { oldValue, newValue in
                         driveViewModel.locationManager.applyAccuracyMode()
                     }
-                    
-                    Text(gpsAccuracyMode == "navigation" ? 
-                         "Uses the highest GPS accuracy. Best for speed limit detection." : 
+
+                    Text(gpsAccuracyMode == "navigation" ?
+                         "Uses the highest GPS accuracy. Best for speed limit detection." :
                          "Reduced GPS accuracy (~5-10m). Significantly reduces battery drain.")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                .listRowBackground(DesignSystem.bgPanel)
+
+                // MARK: - MAP section
+                // Native MapKit surface controls. Every toggle here maps to a
+                // free, on-device feature — nothing here requires an Apple
+                // Maps Server token.
+                Section(header: Text("MAP").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                    Picker("Map Style", selection: $mapStyle) {
+                        Text("Muted (Dark)").tag("mutedDark")
+                        Text("Standard").tag("standard")
+                        Text("Satellite").tag("satellite")
+                        Text("Hybrid 3D").tag("hybridFlyover")
+                    }
+
+                    Toggle("Show Apple POIs (gas / food / parking)", isOn: $showApplePOIs)
+                        .tint(DesignSystem.neonGreen)
+
+                    Toggle("Look Around previews", isOn: $lookAroundPreviewEnabled)
+                        .tint(DesignSystem.neonGreen)
+
+                    Toggle("Gradient route line", isOn: $gradientRouteEnabled)
+                        .tint(DesignSystem.neonGreen)
+
+                    Toggle("3D flyover (long highways)", isOn: $threeDFlyoverEnabled)
+                        .tint(DesignSystem.amber)
+                }
+                .listRowBackground(DesignSystem.bgPanel)
+
+                // MARK: - Apple Maps Server API (optional)
+                // The token unlocks server-side endpoints (/v1/directions,
+                // /v1/search, /v1/reverseGeocode, /v1/place). Without it the
+                // app uses the FREE on-device equivalents (MKDirections /
+                // MKLocalSearch / CLGeocoder) and the AppleMapsServerClient
+                // code is a no-op. See SmartSpeedCompanion/Core/AppleMapsServerToken.swift.
+                Section(header: Text("APPLE MAPS SERVER API").font(DesignSystem.labelFont).foregroundColor(DesignSystem.amber)) {
+                    tokenPasteRow
+
+                    Text("Without a token, the app already does everything via the on-device MapKit stack. The token only unlocks server-side batch enrichment and Place ID persistence.")
                         .font(.caption)
                         .foregroundColor(.gray)
                 }
@@ -330,5 +382,86 @@ public struct SettingsView: View {
         isDeleting = true
         defer { isDeleting = false }
         await work()
+    }
+
+    // MARK: - Apple Maps Server API: token paste row
+    // Inline TextField + Save/Clear buttons for the Apple Maps Server API
+    // token. The token is never logged and is stored in Keychain via
+    // `AppleMapsServerToken.saveToken(_:)`.
+    private var tokenPasteRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Token")
+                    .foregroundColor(.white)
+                Spacer()
+                if AppleMapsServerToken.shared.isConfigured {
+                    Text("Configured")
+                        .foregroundColor(DesignSystem.neonGreen)
+                        .font(.caption)
+                } else {
+                    Text("Not configured")
+                        .foregroundColor(.gray)
+                        .font(.caption)
+                }
+            }
+
+            // Plain TextField (not SecureField): tokens are 200+ char JWTs
+            // the user needs to eyeball to confirm the paste landed crisp.
+            TextField("Paste Apple Maps Server API token", text: $pasteTokenText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(.white)
+
+            HStack(spacing: 12) {
+                Button(action: saveToken) {
+                    Text("Save Token")
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(DesignSystem.cyan)
+                        .cornerRadius(10)
+                }
+                .disabled(pasteTokenText.trimmingCharacters(in: .whitespacesAndNewlines).count < 16)
+
+                if AppleMapsServerToken.shared.isConfigured {
+                    Button(action: clearToken) {
+                        Text("Clear")
+                            .foregroundColor(DesignSystem.alertRed)
+                    }
+                }
+                Spacer()
+            }
+
+            if let msg = tokenSaveMessage {
+                Text(msg)
+                    .font(.caption)
+                    .foregroundColor(DesignSystem.neonGreen)
+            }
+        }
+    }
+
+    private func saveToken() {
+        let trimmed = pasteTokenText.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try AppleMapsServerToken.shared.saveToken(trimmed)
+            pasteTokenText = ""
+            tokenSaveMessage = "Saved to Keychain."
+            // Clear the message after a few seconds so the row returns to its
+            // default state without manual interaction.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                tokenSaveMessage = nil
+            }
+        } catch {
+            tokenSaveMessage = "Failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func clearToken() {
+        AppleMapsServerToken.shared.clearToken()
+        tokenSaveMessage = "Cleared."
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            tokenSaveMessage = nil
+        }
     }
 }

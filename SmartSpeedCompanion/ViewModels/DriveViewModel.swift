@@ -93,7 +93,77 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     @Published public var distanceToNextTurn: CLLocationDistance = 0
     /// Estimated time of arrival calculated based on expected route time and progress.
     @Published public var eta: Date? = nil
-    
+
+    // MARK: - Native MapKit Features (see Apple Maps Server API notes in code comments)
+
+    /// Coordinate of the upcoming maneuver (last point of the current route step).
+    /// Used by the map to drop a maneuver annotation and to fetch a Look Around scene.
+    @Published public var nextManeuverCoordinate: CLLocationCoordinate2D? = nil
+
+    /// Cached Look Around scene for the upcoming maneuver (nil when coverage missing).
+    @Published public var upcomingLookAroundScene: MKLookAroundScene? = nil
+
+    /// Cached Look Around scene for the final destination.
+    @Published public var destinationLookAroundScene: MKLookAroundScene? = nil
+
+    /// Last few MKMapItems returned by a "nearby amenities" category search.
+    @Published public var nearbyAmenities: [MKMapItem] = []
+    /// Short label for the active nearby search ("Gas", "Coffee", …) for HUD presentation.
+    @Published public var nearbyAmenitiesQuery: String = ""
+
+    /// Persisted map style (the same enum exposed to the Settings screen).
+    public var mapStyle: MapStyleChoice {
+        get { MapStyleChoice(rawValue: UserDefaults.standard.string(forKey: Self.mapStyleKey) ?? "") ?? .mutedDark }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.mapStyleKey) }
+    }
+    private static let mapStyleKey = "mapStyle"
+
+    /// Whether to render Apple's POI glyphs (gas / food / parking / hospital / police)
+    /// on top of the map. Persisted from Settings.
+    public var showApplePOIs: Bool {
+        get { UserDefaults.standard.object(forKey: "showApplePOIs") as? Bool ?? false }
+        set { UserDefaults.standard.set(newValue, forKey: "showApplePOIs") }
+    }
+
+    /// Master toggle for Look Around preview chips near turns / destination.
+    public var lookAroundPreviewEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "lookAroundPreviewEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "lookAroundPreviewEnabled") }
+    }
+
+    /// When true, the route polyline is drawn with a gradient (iOS 17+) tinted by
+    /// the per-segment speed limit pulled from our local SQLite provider.
+    public var gradientRouteEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "gradientRouteEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "gradientRouteEnabled") }
+    }
+
+    /// When true, the camera pitches aggressively and pulls back during long
+    /// straight highway stretches so the user gets a "3D flyover" perspective.
+    public var threeDFlyoverEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "threeDFlyoverEnabled") as? Bool ?? false }
+        set { UserDefaults.standard.set(newValue, forKey: "threeDFlyoverEnabled") }
+    }
+
+    /// The four map styles the Settings screen offers, mapped to the native
+    /// `MKMapConfiguration` family. Every choice below is on-device and free.
+    public enum MapStyleChoice: String, CaseIterable, Identifiable, Sendable {
+        case mutedDark      // MKStandardMapConfiguration(.realistic, .muted) — current default
+        case standard       // MKStandardMapConfiguration(.flat, .default)
+        case satellite      // MKImageryMapConfiguration(.realistic)
+        case hybridFlyover  // MKHybridMapConfiguration(.realistic) with terrain
+
+        public var id: String { rawValue }
+        public var displayName: String {
+            switch self {
+            case .mutedDark:     return "Muted (Dark)"
+            case .standard:      return "Standard"
+            case .satellite:     return "Satellite"
+            case .hybridFlyover: return "Hybrid 3D"
+            }
+        }
+    }
+
     // Search Completer
     private let completer = MKLocalSearchCompleter()
     private let speechSynthesizer = AVSpeechSynthesizer()
@@ -112,6 +182,17 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private var stepStageFlags: [Int: Set<String>] = [:]
     private var lastDistanceToTurn: CLLocationDistance? = nil
     private var hasAnnouncedArrival: Bool = false
+    /// Last coordinate for which we fired the Look Around fetch — guards against
+    /// hammering Apple's servers every GPS ping when the maneuver hasn't moved.
+    private var lastLookAroundRequestedAt: CLLocationCoordinate2D? = nil
+    /// Monotonic search id for `searchNearby(category:)`. When the user
+    /// taps Gas then Coffee rapidly, only the last response updates the
+    /// card so the label always matches the visible results.
+    private var nearbySearchGeneration: UInt64 = 0
+    /// In-flight destination Look Around fetch (started on navigation
+    /// begin). We cancel it on `endNavigation` so the scene published
+    /// after the user already left the route never appears in the HUD.
+    private var destinationLookAroundTask: Task<Void, Never>? = nil
     
     public init(modelContext: ModelContext? = nil) {
         // Core Logic components are owned by the ViewModel
@@ -286,6 +367,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 // Wipe speed limit cache to save memory once drive is over
                 await ArizonaSpeedLimitService.shared.clearCache()
             }
+            // Free Look-Around + amenity transient state between drives so
+            // the next navigation starts with an empty LRU and no stale
+            // upcoming-turn coordinates pinned in memory.
+            clearNativeMapCache()
         }
     }
     
@@ -371,6 +456,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Cache speed limits for the route points to ensure we stay offline-capable during the drive
         await cacheRouteSegments(route)
 
+        // Pre-warm the destination Look Around scene in the background while the
+        // user is still approaching the start of the route. The graphic card
+        // will be ready to display by the time the user arrives.
+        destinationLookAroundTask?.cancel()
+        destinationLookAroundTask = Task { [weak self] in
+            await self?.loadLookAroundForDestination()
+        }
+
         // Inform the CarPlay/UI layer that navigation is moving
         if let dest = self.destination {
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
@@ -454,6 +547,13 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         rerouteTimer?.invalidate()
         rerouteTimer = nil
         self.stepStageFlags.removeAll()
+        // Drop maneuver + Look Around scratch state so the next navigation starts clean.
+        self.nextManeuverCoordinate = nil
+        self.upcomingLookAroundScene = nil
+        self.destinationLookAroundScene = nil
+        self.lastLookAroundRequestedAt = nil
+        destinationLookAroundTask?.cancel()
+        destinationLookAroundTask = nil
         await navigationDelegate?.endNavigationTrigger()
         
         // Requirement 4: If we end directions, we end the session (recording).
@@ -589,10 +689,29 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         if pointCount > 0 {
             let maneuverPoint = stepPolyline.points()[pointCount - 1].coordinate
             let maneuverLocation = CLLocation(latitude: maneuverPoint.latitude, longitude: maneuverPoint.longitude)
-            let distanceToTurn = location.distance(from: maneuverLocation)
-            
-            self.distanceToNextTurn = distanceToTurn
-            
+            let distanceToTurn = location.distance(from: maneuverLocation)            self.distanceToNextTurn = distanceToTurn
+
+            // Surface the maneuver coordinate so the map can drop an annotation
+            // and Look-Around-At-Turn can be fetched on demand. CLLocationCoordinate2D
+            // is `Sendable`, so we publish it directly.
+            let maneuverCoord = stepPolyline.points()[pointCount - 1].coordinate
+            self.nextManeuverCoordinate = maneuverCoord
+
+            // Debounce Look Around fetches: only re-request when the upcoming
+            // maneuver has moved at least ~75 m. Without this guard we'd hit
+            // Apple's scene server on every GPS ping.
+            if let prev = lastLookAroundRequestedAt {
+                let dist = CLLocation(latitude: prev.latitude, longitude: prev.longitude)
+                    .distance(from: CLLocation(latitude: maneuverCoord.latitude, longitude: maneuverCoord.longitude))
+                if dist >= 75 {
+                    lastLookAroundRequestedAt = maneuverCoord
+                    Task { await self.loadLookAroundForUpcomingTurn() }
+                }
+            } else {
+                lastLookAroundRequestedAt = maneuverCoord
+                Task { await self.loadLookAroundForUpcomingTurn() }
+            }
+
             // Determine the actual active instruction (skip generic labels)
             var activeInstruction = currentStep.instructions
             if instructionIsGenericLabel(activeInstruction) {
@@ -829,7 +948,115 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         } catch {
             DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
         }
-    }    /// Triggers speech synthesis for a given string.
+    }    // MARK: - Native MapKit Feature Helpers
+
+    /// Asks the LookAroundCoordinator for a panoramic scene at the upcoming
+    /// maneuver and publishes the result on the main thread.
+    /// Silently no-ops if the user has disabled Look Around previews in Settings.
+    public func loadLookAroundForUpcomingTurn() async {
+        guard lookAroundPreviewEnabled, isNavigating else { return }
+        guard #available(iOS 16.0, *), let coord = nextManeuverCoordinate else { return }
+        let scene = await LookAroundCoordinator.shared.requestScene(at: coord)
+        guard !Task.isCancelled else { return }
+        self.upcomingLookAroundScene = scene
+    }
+
+    /// Asks the LookAroundCoordinator for a panoramic scene at the destination
+    /// placemark and publishes the result.
+    public func loadLookAroundForDestination() async {
+        guard lookAroundPreviewEnabled, isNavigating else { return }
+        guard #available(iOS 16.0, *) else { return }
+        guard let coord = destination?.placemark.coordinate else { return }
+        let scene = await LookAroundCoordinator.shared.requestScene(at: coord)
+        guard !Task.isCancelled else { return }
+        self.destinationLookAroundScene = scene
+    }
+
+    /// Free-text + category "nearby" search. The native MKLocalSearch API is
+    /// fully on-device (this is `/v1/search`'s free equivalent in Apple Maps
+    /// Server API terms) — no Apple Maps Server token required.
+    public func searchNearby(category: MKPointOfInterestCategory) async {
+        // Bump the generation early so any earlier in-flight search becomes
+        // a no-op when it eventually returns.
+        nearbySearchGeneration &+= 1
+        let myGeneration = nearbySearchGeneration
+
+        self.nearbyAmenitiesQuery = Self.labelForCategory(category)
+        let request = MKLocalSearch.Request()
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: [category])
+        let center = locationManager.latestLocation?.coordinate
+            ?? destination?.placemark.coordinate
+            ?? CLLocationCoordinate2D()
+        request.region = MKCoordinateRegion(
+            center: center,
+            latitudinalMeters: 10000,
+            longitudinalMeters: 10000
+        )
+        let search = MKLocalSearch(request: request)
+        do {
+            let response = try await search.start()
+            // Drop the response if a newer search has been kicked off since.
+            guard myGeneration == nearbySearchGeneration else { return }
+            self.nearbyAmenities = Array(response.mapItems.prefix(8))
+        } catch {
+            guard myGeneration == nearbySearchGeneration else { return }
+            self.nearbyAmenities = []
+        }
+    }
+
+    /// Convenience label for the active nearby search.
+    private static func labelForCategory(_ category: MKPointOfInterestCategory) -> String {
+        switch category {
+        case .gasStation:  return "Gas"
+        case .restaurant:  return "Food"
+        case .cafe:        return "Coffee"
+        case .parking:     return "Parking"
+        case .hospital:    return "Hospital"
+        case .pharmacy:    return "Pharmacy"
+        case .atm:         return "ATM"
+        case .bank:        return "Bank"
+        case .gasStation, .chargingStation: return "Charge"
+        default:           return "Nearby"
+        }
+    }
+
+    /// Promotes an MKMapItem out to Apple Maps for full-fidelity directions,
+    /// live traffic detail, and Look Around the moment the user wants it.
+    /// Used when the user taps "Open in Maps" in the HUD.
+    public func openInAppleMaps(_ item: MKMapItem) {
+        item.openInMaps(launchOptions: [
+            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
+        ])
+    }
+
+    /// Reverse-geocode a coordinate via the on-device CLGeocoder (this is
+    /// `/v1/reverseGeocode`'s free equivalent). We use it during session end
+    /// to enrich recorded journeys with a human-readable city/state string.
+    public func reverseGeocode(_ coord: CLLocationCoordinate2D) async -> String? {
+        let location = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+        let geocoder = CLGeocoder()
+        do {
+            let placemarks = try await geocoder.reverseGeocodeLocation(location)
+            guard let p = placemarks.first else { return nil }
+            let parts = [p.locality, p.administrativeArea].compactMap { $0 }
+            return parts.isEmpty ? p.name : parts.joined(separator: ", ")
+        } catch {
+            return nil
+        }
+    }
+
+    /// Resets Look-Around + amenity transient state for a fresh drive.
+    public func clearNativeMapCache() {
+        LookAroundCoordinator.shared.clear()
+        self.nearbyAmenities = []
+        self.nearbyAmenitiesQuery = ""
+        self.upcomingLookAroundScene = nil
+        self.destinationLookAroundScene = nil
+        self.nextManeuverCoordinate = nil
+        self.lastLookAroundRequestedAt = nil
+    }
+
+    /// Triggers speech synthesis for a given string.
     func announce(_ message: String) {
         let rawVoiceVal = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool
         let voiceEnabled = rawVoiceVal ?? true

@@ -5,21 +5,35 @@ public struct MapWithHUDView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @Environment(\.horizontalSizeClass) var hSizeClass
     @Environment(\.verticalSizeClass) var vSizeClass
-    
+
     public init() {}
-    
+
     private var isLandscape: Bool {
         // Simple heuristic: if vertical is compact, it's usually landscape on iPhone.
         return vSizeClass == .compact
     }
-    
+
     public var body: some View {
         GeometryReader { geo in
             ZStack {
                 // Background map spanning entire screen
                 LiveMapView()
                     .ignoresSafeArea(.all)
-                
+
+                // Look Around preview card pinned above the speed HUD when a
+                // scene becomes available for the current destination.
+                if driveViewModel.isNavigating,
+                   driveViewModel.lookAroundPreviewEnabled,
+                   #available(iOS 16.0, *),
+                   let scene = driveViewModel.destinationLookAroundScene ?? driveViewModel.upcomingLookAroundScene {
+                    LookAroundPreviewCard(scene: scene)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, geo.safeAreaInsets.bottom + 96)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
                 // Overlay content
                 VStack(spacing: 0) {
                     if (driveViewModel.isNavigating || driveViewModel.isSelectingRoute) && !driveViewModel.isSearchingLocally {
@@ -34,16 +48,34 @@ public struct MapWithHUDView: View {
                                 .padding(.horizontal, 16)
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
+
+                        // Look Around + Apple Maps shortcut row shown right
+                        // under the navigation instruction card while we are
+                        // actively navigating to a destination.
+                        if driveViewModel.isNavigating, let dest = driveViewModel.destination {
+                            NavigationShortcutsRow(destination: dest)
+                                .padding(.top, 8)
+                                .padding(.horizontal, 16)
+                        }
                     } else {
                         SearchBarView()
                             .padding(.top, geo.safeAreaInsets.top + 12)
                             .padding(.horizontal, 16)
                     }
-                    
+
                     // NOTE: SpeedCameraAlertBanner removed — camera API is disabled.
-                    
+
+                    // Nearby amenities sheet: results of an MKLocalSearch
+                    // category query (gas/food/coffee/parking). Empty by default.
+                    if !driveViewModel.nearbyAmenities.isEmpty {
+                        NearbyAmenitiesCard()
+                            .padding(.top, 8)
+                            .padding(.horizontal, 16)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
                     Spacer()
-                    
+
                     // Re-center button — always visible when map is detached
                     if driveViewModel.isMapDetached {
                         HStack {
@@ -65,11 +97,11 @@ public struct MapWithHUDView: View {
                             .padding(.leading, 16)
                             .padding(.bottom, 8)
                             .transition(.scale.combined(with: .opacity))
-                            
+
                             Spacer()
                         }
                     }
-                    
+
                     if !driveViewModel.isSelectingRoute && !driveViewModel.isSearchingLocally {
                         SpeedHUDPill(isLandscape: isLandscape)
                             .padding(.bottom, geo.safeAreaInsets.bottom + 16)
@@ -78,6 +110,7 @@ public struct MapWithHUDView: View {
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: driveViewModel.isNavigating)
             .animation(.easeInOut(duration: 0.25), value: driveViewModel.isMapDetached)
+            .animation(.easeInOut(duration: 0.3), value: driveViewModel.nearbyAmenities.count)
         }
     }
 }
@@ -549,5 +582,186 @@ fileprivate struct RouteSelectionCard: View {
             }
         }
         .glassStyle(cornerRadius: 24)
+    }
+}
+
+// MARK: - Look Around Preview Card
+//
+// SwiftUI's LookAroundPreview is the native MapKit view that consumes an
+// MKLookAroundScene and shows a draggable 360° street-level preview. We surface
+// it here so the user sees their destination before they pull into the
+// parking lot — same affordance Apple Maps gives on the destination detail card.
+//
+// Falls back to gracefully hiding when the user's POI has no Look Around
+// coverage (Apple returns nil for suburban / no-data zones).
+@available(iOS 16.0, *)
+fileprivate struct LookAroundPreviewCard: View {
+    let scene: MKLookAroundScene
+    @State private var isCollapsed: Bool = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "binoculars.fill")
+                    .foregroundColor(DesignSystem.cyan)
+                Text("LOOK AROUND")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundColor(DesignSystem.cyan)
+                Spacer()
+                Button(action: { isCollapsed.toggle() }) {
+                    Image(systemName: isCollapsed ? "chevron.up" : "chevron.down")
+                        .foregroundColor(.white.opacity(0.7))
+                        .padding(6)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+
+            if !isCollapsed {
+                LookAroundPreview(initialScene: scene)
+                    .frame(height: 140)
+                    .cornerRadius(14)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+            }
+        }
+        .background(DesignSystem.bgPanel)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(DesignSystem.cyan.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: DesignSystem.cyan.opacity(0.25), radius: 14, y: 4)
+    }
+}
+
+// MARK: - Navigation Shortcuts Row
+//
+// Three pill buttons shown under the navigation card while a destination is
+// active:
+//   - "Look Around" — pushes the LookAroundPreview overlay card above the HUD
+//   - "Apple Maps"   — MKMapItem.openInMaps(launchOptions:) hands the trip off
+//                      to Apple Maps with full traffic + Look Around the
+//                      moment the user wants it.
+//   - "Gas / Food"  — MKLocalSearch category query (gas / cafe / parking / etc.)
+//                      with results rendered in NearbyAmenitiesCard below.
+fileprivate struct NavigationShortcutsRow: View {
+    @EnvironmentObject var driveViewModel: DriveViewModel
+    let destination: MKMapItem
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                if #available(iOS 16.0, *), driveViewModel.upcomingLookAroundScene != nil || driveViewModel.destinationLookAroundScene != nil {
+                    Button(action: {
+                        Task { await driveViewModel.loadLookAroundForDestination() }
+                    }) {
+                        Label("Refresh Look Around", systemImage: "binoculars")
+                            .labelStyle(.titleAndIcon)
+                            .font(.system(size: 13, weight: .bold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .foregroundColor(.white)
+                            .background(DesignSystem.cyan.opacity(0.25))
+                            .cornerRadius(18)
+                    }
+                }
+                Button(action: {
+                    driveViewModel.openInAppleMaps(destination)
+                }) {
+                    Label("Open in Apple Maps", systemImage: "arrow.up.right.square")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 13, weight: .bold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .foregroundColor(.white)
+                        .background(Color.white.opacity(0.12))
+                        .cornerRadius(18)
+                }
+                Menu {
+                    Button("Gas") { Task { await driveViewModel.searchNearby(category: .gasStation) } }
+                    Button("Coffee") { Task { await driveViewModel.searchNearby(category: .cafe) } }
+                    Button("Food") { Task { await driveViewModel.searchNearby(category: .restaurant) } }
+                    Button("Parking") { Task { await driveViewModel.searchNearby(category: .parking) } }
+                    Button("Hospital") { Task { await driveViewModel.searchNearby(category: .hospital) } }
+                } label: {
+                    Label("Find Nearby", systemImage: "magnifyingglass.circle")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 13, weight: .bold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .foregroundColor(.white)
+                        .background(Color.white.opacity(0.12))
+                        .cornerRadius(18)
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+}
+
+// MARK: - Nearby Amenities Card
+//
+// Inline list of the most recent MKLocalSearch category results. Tapping a
+// row either reroutes to that MKMapItem or hands it off to Apple Maps.
+fileprivate struct NearbyAmenitiesCard: View {
+    @EnvironmentObject var driveViewModel: DriveViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(driveViewModel.nearbyAmenitiesQuery.uppercased())
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundColor(DesignSystem.cyan)
+                Spacer()
+                Button(action: { driveViewModel.nearbyAmenities = [] }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.white.opacity(0.6))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+
+            ForEach(Array(driveViewModel.nearbyAmenities.prefix(4).enumerated()), id: \.offset) { _, item in
+                Button(action: {
+                    driveViewModel.openInAppleMaps(item)
+                    // Drop the rest of the list after handing one off to
+                    // Apple Maps so it doesn't float over the map forever.
+                    driveViewModel.nearbyAmenities = []
+                }) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "mappin.circle.fill")
+                            .foregroundColor(DesignSystem.cyan)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.name ?? "Unnamed place")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                            if let addr = item.placemark.title {
+                                Text(addr)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.5))
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.up.right.square")
+                            .foregroundColor(.white.opacity(0.5))
+                            .font(.system(size: 13))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                }
+                Divider().background(Color.white.opacity(0.1)).padding(.horizontal, 14)
+            }
+
+            Color.clear.frame(height: 8)
+        }
+        .background(DesignSystem.bgPanel)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(DesignSystem.cyan.opacity(0.25), lineWidth: 1)
+        )
     }
 }
