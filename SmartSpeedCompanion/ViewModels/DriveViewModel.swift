@@ -1015,7 +1015,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         case .pharmacy:    return "Pharmacy"
         case .atm:         return "ATM"
         case .bank:        return "Bank"
-        case .gasStation, .chargingStation: return "Charge"
+        case .evCharger:  return "Charge"
         default:           return "Nearby"
         }
     }

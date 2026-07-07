@@ -106,7 +106,7 @@ public struct LiveMapView: UIViewRepresentable {
     private func applyPOIFilter(_ show: Bool, to map: MKMapView) {
         if show {
             map.pointOfInterestFilter = MKPointOfInterestFilter(including: [
-                .gasStation, .parking, .hospital, .police, .restaurant, .cafe, .pharmacy, .atm
+                .gasStation, .parking, .hospital, .police, .restaurant, .cafe, .pharmacy, .atm, .evCharger
             ])
         } else {
             // MKPointOfInterestFilter(including: []) hides all POI glyphs.
@@ -647,7 +647,7 @@ public struct LiveMapView: UIViewRepresentable {
                         UIColor(DesignSystem.neonGreen)
                     ]
                     let stops: [CGFloat] = [0.0, 1.0]
-                    renderer.setColors(colors, locations: stops.map { NSNumber(value: Double($0)) })
+                    renderer.setColors(colors, locations: stops)
                     renderer.lineWidth = 7.0
                     renderer.lineCap = .round
                     renderer.lineJoin = .round
