@@ -3,15 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Speedio - Privacy Policy</title>
+  <meta name="theme-color" content="#111111">
+  <title>Speedio Privacy Policy</title>
+  <meta name="description" content="How Speedio collects, uses, and protects your data.">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #f8f9fa;
-      color: #333;
+      color: #222;
       line-height: 1.7;
       padding: 40px 20px;
+      -webkit-text-size-adjust: 100%;
     }
     .container {
       max-width: 720px;
@@ -21,74 +24,173 @@
       border-radius: 12px;
       box-shadow: 0 1px 4px rgba(0,0,0,0.08);
     }
-    h1 { font-size: 28px; margin-bottom: 24px; color: #111; }
+    @media (max-width: 600px) {
+      body { padding: 20px 12px; }
+      .container { padding: 28px 20px; }
+    }
+    h1 { font-size: 28px; margin-bottom: 8px; color: #111; }
     h2 { font-size: 20px; margin: 32px 0 12px; color: #222; }
+    h3 { font-size: 16px; margin: 20px 0 8px; color: #333; }
     p { margin-bottom: 16px; }
     ul { margin: 0 0 16px 24px; }
     li { margin-bottom: 6px; }
-    a { color: #007aff; text-decoration: none; }
+    code { background: #f1f3f5; padding: 1px 6px; border-radius: 4px; font-size: 0.92em; }
+    a { color: #007aff; text-decoration: none; word-break: break-word; }
     a:hover { text-decoration: underline; }
-    .date { color: #888; font-size: 14px; margin-bottom: 32px; }
+    .meta { color: #6b7280; font-size: 14px; margin-bottom: 32px; }
+    .callout {
+      background: #f4f8ff;
+      border-left: 4px solid #007aff;
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin: 16px 0 24px;
+      font-size: 15px;
+    }
+    .callout p:last-child { margin-bottom: 0; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Privacy Policy</h1>
-    <p class="date">Last updated: July 5, 2026</p>
+    <p class="meta">Effective: July 6, 2026</p>
 
-    <p>Speedio ("we", "our", or "us") is committed to protecting your privacy. This policy explains what information we collect and how it is used.</p>
+    <p>Speedio ("we", "our", or "us") is committed to protecting your privacy. This policy explains what information Speedio collects, how it is used, and the choices you have. It applies to the Speedio iOS application ("Speedio" or "the App") and any related services we operate.</p>
+    <p>If you do not agree with this policy, please do not install or use the App.</p>
 
-    <h2>Data We Collect</h2>
+    <h2>Summary</h2>
+    <div class="callout">
+      <p><strong>Speedio never sells your personal data and never shares it with advertisers.</strong></p>
+      <p>By default, using Speedio requires no account and no data leaves your device. If you opt in to drive recording, sensor data is stored on your device. If you additionally create an account, that data is also backed up to our cloud so you can see the same sessions on another device. Anything stored in the cloud is deleted when you request deletion of your account.</p>
+    </div>
+
+    <h2>Information We Collect</h2>
+
+    <h3>Account Information (only if you create an account)</h3>
+    <p>Creating an account is <strong>optional</strong>. If you do create one, we collect:</p>
+    <ul>
+      <li><strong>Email address</strong> &mdash; used to sign you in and to send important service notifications.</li>
+      <li><strong>Display name (username)</strong> &mdash; for in-app greetings and identity.</li>
+      <li><strong>Authentication provider metadata</strong> &mdash; your Firebase user ID, and, if you use Sign in with Apple, the email and name Apple returns the first time you sign in.</li>
+      <li><strong>Password</strong> &mdash; only if you create an email/password account. Passwords are stored by Firebase using salted one-way hashing; we never see your plaintext password.</li>
+    </ul>
+    <p>We do not request or collect a phone number, real name (other than what Apple returns), profile photo, or any government identifier.</p>
 
     <h3>Location Data</h3>
-    <p>Speedio uses GPS location to display your current speed, show speed limits, and enable CarPlay navigation. If you sign in and record a drive session, GPS coordinates are saved locally on your device. If you choose to sign in with an account, location data may also be synced to our secure cloud database to enable cross-device access and future features. You can stop recording at any time.</p>
-
-    <h3>Account Information</h3>
-    <p>If you create an account, we collect your email address and a username of your choice. This information is used only for authentication purposes.</p>
+    <p>Speedio uses GPS location exclusively to display your speed, your position on the map, posted speed limits and (in Arizona) nearby speed cameras, and to enable CarPlay navigation.</p>
+    <ul>
+      <li>Location is processed <strong>on-device</strong> to compute and display speed and to pick a current speed limit.</li>
+      <li>If you record a drive session, location readings (latitude, longitude, timestamp) are saved on the device. <strong>If you are signed in, those readings are also synced to our cloud database when the session ends</strong> so you can see the same session on another device. If you are not signed in, no cloud copy is ever created.</li>
+      <li>If you are signed in, your most recent location is also written to your account to support future cross-device features.</li>
+    </ul>
+    <p>You can disable Speedio's location access at any time in iOS Settings. Doing so will break the core speed display and navigation features.</p>
 
     <h3>Drive Session Data</h3>
-    <p>When you record a drive session, we capture speed readings including GPS coordinates, speed, and speed limit at one-second intervals. This data is stored on your device and, if you are signed in, may be synced to our cloud database. You can delete individual sessions or all data at any time within the app.</p>
+    <p>When you press <em>Record</em>, Speedio captures, once per second: timestamp, latitude, longitude, instantaneous speed, and the posted speed limit in effect at that instant. If your speed exceeds the limit at that instant, an <code>over-limit</code> flag is also recorded. The reverse-geocoded names of your start and end points are saved alongside the session.</p>
+    <p>Drive session data is stored in on-device SwiftData storage and, if you are signed in, also uploaded to our cloud database under your user ID.</p>
 
-    <h3>Settings Preferences</h3>
-    <p>App preferences (e.g., speed buffer, audio alerts, units) are stored locally and may be synced to your account if you are signed in, so your settings persist across devices.</p>
+    <h3>Settings &amp; Preferences</h3>
+    <p>Preferences such as your speed-buffer tolerance, audio-alert toggle, voice-navigation toggle, units (mph / km/h), and GPS accuracy mode are stored via iOS <code>UserDefaults</code> (the same <code>@AppStorage</code> system the App uses) on your device. If you are signed in, the same values are mirrored to your cloud profile so they follow you to other devices.</p>
 
-    <h3>Crash Detection</h3>
-    <p>Crash detection uses the device's motion coprocessor entirely on-device. No motion or accelerometer data is transmitted anywhere.</p>
+    <h3>Device &amp; App-Instance Identifiers</h3>
+    <p>Firebase automatically generates an app-instance identifier (a per-install random ID; no IDFA) when the SDK initializes, and may also receive device-class information needed to deliver its services. See <a href="https://firebase.google.com/support/privacy" target="_blank" rel="noopener">Firebase's privacy policy</a> for the details.</p>
 
-    <h2>How We Use Your Data</h2>
+    <h3>Crash Detection (On-Device Only)</h3>
+    <p>Speedio&#39;s Crash Detection feature uses the device&#39;s motion coprocessor entirely <strong>on-device</strong>. <strong>No motion, accelerometer, gyroscope, or crash-detected event data is ever transmitted anywhere by this feature.</strong></p>
+
+    <h2>How We Use Your Information</h2>
+    <p>We use the information above only for these purposes:</p>
     <ul>
-      <li>Display your current speed and speed limits on screen and in CarPlay</li>
-      <li>Provide turn-by-turn navigation and audio alerts</li>
-      <li>Record and display your drive session history (optionally backed up to your account)</li>
-      <li>Sync preferences across devices if you are signed in</li>
-      <li>Improve app performance and fix bugs</li>
+      <li>To display your current speed, posted speed limit, position on the map, and the CarPlay interface while you use Speedio.</li>
+      <li>To provide turn-by-turn navigation, voice prompts, and audio alerts you have enabled.</li>
+      <li>To record, store, and display your drive sessions locally and (when signed in) across your devices.</li>
+      <li>To honor your preferences (units, alert tones, GPS precision).</li>
+      <li>To authenticate you and protect your account from unauthorized access.</li>
+      <li>To diagnose bugs and improve app stability &mdash; not for advertising or marketing.</li>
     </ul>
+
+    <h2>What We Do Not Collect</h2>
+    <ul>
+      <li>No advertising identifiers (IDFA), no cross-app tracking, no fingerprinting.</li>
+      <li>No contacts, calendars, photos, microphone audio, or camera data.</li>
+      <li>No purchase or financial information &mdash; Speedio is free and contains no in-app purchases or subscriptions.</li>
+      <li>No marketing or behavioral advertising analytics.</li>
+    </ul>
+
+    <h2>Third-Party Services Your Data Touches</h2>
+    <p>To deliver the App&#39;s functionality, certain information is sent to the third-party and Apple-platform services below. <strong>We do not sell or rent any personal information to anyone, and we do not share your data with advertisers or analytics companies.</strong></p>
+
+    <h3>Firebase (Google)</h3>
+    <p>Firebase is used for account authentication and cloud storage of drive sessions, last-known location, user profile, and preferences. Although the FirebaseAnalytics SDK is bundled with the App (a transitive dependency of Firebase), <strong>analytics data collection is turned off</strong> via the <code>IS_ANALYTICS_ENABLED=false</code> key in the embedded <code>GoogleService-Info.plist</code>, and Speedio does not log any Firebase Analytics events. Service data handled by Firebase is detailed in <a href="https://firebase.google.com/support/privacy" target="_blank" rel="noopener">firebase.google.com/support/privacy</a>.</p>
+
+    <h3>Apple MapKit &amp; Geocoding (CoreLocation)</h3>
+    <p>For map display, address search, turn-by-turn navigation, and reverse-geocoding your start and end locations, Speedio uses Apple&#39;s MapKit framework and CoreLocation geocoder. These calls are subject to Apple&#39;s privacy practices, described in <a href="https://www.apple.com/legal/privacy/" target="_blank" rel="noopener">apple.com/legal/privacy</a>.</p>
+
+    <h3>Speed-Limit Data Sources</h3>
+    <ul>
+      <li><strong>ArcGIS HPMS Feature Server</strong> (<code>services6.arcgis.com</code>) &mdash; for posted speed limits on Arizona state highways. When Speedio looks up a speed limit near your current location, your coordinates are sent to this public ArcGIS endpoint. Coverage is Arizona-only.</li>
+      <li><strong>OpenStreetMap via the Overpass API</strong> (<code>overpass-api.de</code>) &mdash; for posted speed limits outside ArcGIS coverage (most U.S. roads and many international roads). Your coordinates are part of each live query. The Overpass instance is operated by the OpenStreetMap community.</li>
+    </ul>
+    <p>These endpoints receive only your current latitude/longitude and a standard user-agent string. No account or device identifier is shared with either service.</p>
+
+    <h3>Arizona 511 (<code>az511.com</code>)</h3>
+    <p>The Arizona Department of Transportation operates az511.com. Speedio can fetch its public speed-camera catalog so the App can warn you about known cameras on your route. No Speedio account is required to fetch this list, and nothing identifying you beyond your IP address (a normal part of any HTTPS request) is sent to az511.com.</p>
+
+    <h3>Apple CarPlay</h3>
+    <p>CarPlay is an Apple-provided framework, not a third-party data processor. When you use Speedio in CarPlay, the same on-device data described above is rendered in your car&#39;s display. Apple&#39;s privacy policy applies to the CarPlay framework itself.</p>
 
     <h2>Data Sharing</h2>
-    <p><strong>We do not share your personal data with any third parties.</strong> Your location data, drive sessions, and account information are never sold, rented, or shared with advertisers, analytics companies, or any other external party. Data synced to the cloud is stored securely and used solely to provide you with account-based features.</p>
+    <p><strong>We never sell, rent, or trade your personal information.</strong> The only entities that receive your data are the service providers listed above (Firebase, Apple platforms, ArcGIS, Overpass, az511.com), each receiving only the minimum data needed for the function you asked for. We do not share your account or drive data with third parties for marketing, advertising, profiling, or any commercial purpose.</p>
+    <p>We may disclose information only when compelled by valid legal process, or when necessary to protect the safety, rights, or property of our users or the public.</p>
 
-    <h2>Third-Party Services</h2>
-    <p>Speedio uses the following third-party services:</p>
+    <h2>Data Storage, Retention &amp; Deletion</h2>
     <ul>
-      <li><strong>Firebase (Google)</strong> — Used for authentication and cloud data storage (Firestore). Firebase Analytics is disabled. <a href="https://firebase.google.com/support/privacy" target="_blank">Firebase Privacy Policy</a></li>
-      <li><strong>Apple CarPlay</strong> — Provides in-car display of app content. Data handling is governed by <a href="https://www.apple.com/legal/privacy/" target="_blank">Apple's Privacy Policy</a>.</li>
+      <li><strong>On-device data</strong> &mdash; drive sessions and preferences remain on your device until you delete them (via the App&#39;s session list or by uninstalling the App). Reverse-geocoded location names are stored only at the start and end of each session, not for every reading.</li>
+      <li><strong>Crash-detection data</strong> &mdash; never persisted anywhere; detection is on-device and ephemeral.</li>
+      <li><strong>Cloud account data</strong> &mdash; retained while your account is active. To request deletion of your account and all associated cloud data (user record, drive sessions, last-known location, preferences), email us at the address below. We complete verified requests within <strong>30 days</strong>. We may retain only what is strictly necessary to comply with legal obligations (e.g. tax-record retention) and we will tell you what, if anything, we retain and why.</li>
+      <li><strong>Backups</strong> &mdash; reasonable backups of cloud data may persist for up to an additional 60 days after deletion before being purged.</li>
     </ul>
-    <p>The speed limit database is bundled with the app and does not require network access. No third-party analytics or advertising SDKs are used.</p>
 
-    <h2>Data Retention &amp; Deletion</h2>
-    <p>Drive sessions remain on your device until you delete them. Account-related cloud data can be deleted by contacting us. You can delete all recorded sessions at any time within the app settings.</p>
+    <h2>Security</h2>
+    <p>Account credentials are stored in iOS Keychain. Cloud data is transmitted over HTTPS using TLS. Account access requires the password or Apple ID for the account &mdash; we cannot bypass this even with server-side credentials. Despite these measures, no system is perfectly secure; please use a strong, unique password and protect your device.</p>
 
-    <h2>Your Choices</h2>
-    <p>You can control location access through your device Settings at any time. You can also sign out of your account to stop cloud syncing. Disabling location will limit core speed display and navigation features.</p>
+    <h2>Children&#39;s Privacy</h2>
+    <p>Speedio is designed for general audiences and is not directed to children under 13. We do not knowingly collect personal data from children under 13 (or under the age defined by your local law). If you believe a child has provided us with personal data, contact us and we will delete it.</p>
 
-    <h2>Children's Privacy</h2>
-    <p>Speedio is rated 4+ on the App Store and does not knowingly collect personal data from children under 13. If we become aware that a child has provided us with personal data, we will delete it.</p>
+    <h2>International Users</h2>
+    <p>Speedio is operated from the United States. If you use the App from outside the United States, you understand that your information will be transferred to, stored in, and processed in the United States and in the locations of our service providers listed above. Data-protection laws in those jurisdictions may differ from those of your home country.</p>
 
-    <h2>Changes</h2>
-    <p>We may update this policy. Changes will be reflected with an updated "Last updated" date.</p>
+    <h2>Your California Privacy Rights (CCPA / CPRA)</h2>
+    <p>If you are a California resident, you have the rights below under the California Consumer Privacy Act, as amended by the California Privacy Rights Act:</p>
+    <ul>
+      <li><strong>Right to Know</strong> &mdash; request a copy of the personal information we have collected about you in the past 12 months, including the categories of information, the sources, the business purposes, and the categories of recipients.</li>
+      <li><strong>Right to Delete</strong> &mdash; request deletion of the personal information we have collected about you, subject to limited exceptions (e.g. completing a transaction you requested, complying with a legal obligation, security incident investigation).</li>
+      <li><strong>Right to Correct</strong> &mdash; request correction of inaccurate personal information.</li>
+      <li><strong>Right to Opt Out of Sale or Sharing for Cross-Context Behavioral Advertising</strong> &mdash; Speedio does not sell or share your personal information for cross-context behavioral advertising, so there is nothing to opt out of. We do not currently honor universal opt-out signals, but because we never sell or share data for cross-context advertising, the practical effect of an opt-out signal would already be the default.</li>
+      <li><strong>Right to Limit Use of Sensitive Personal Information</strong> &mdash; California Civil Code &sect;1798.140(ae) classifies precise geolocation as sensitive personal information. Speedio collects precise geolocation and uses it solely to operate the core service (speed display, map, navigation, CarPlay, and drive recording) &mdash; not for any of the secondary sensitive-purpose uses enumerated in California Civil Code &sect;1798.121(a), such as inferring personal characteristics, targeted advertising, or sale. You may request that we further limit our use of this data to those core-service purposes by emailing us; we will respond within 15 business days.</li>
+      <li><strong>Right to Non-Discrimination</strong> &mdash; we will not deny service, charge a different price, or provide a lower quality of service for exercising any of these rights.</li>
+    </ul>
+    <p>To exercise any of these rights, email us at the address below. We will respond within <strong>45 days</strong> as required by California law (extendable by an additional 45 days with notice). You may designate an authorized agent to act on your behalf, subject to verification.</p>
+
+    <h2>Your Choices &amp; Controls</h2>
+    <ul>
+      <li><strong>Location</strong> &mdash; iOS Settings &rarr; Privacy &amp; Security &rarr; Location Services &rarr; Speedio.</li>
+      <li><strong>Motion &amp; Fitness</strong> &mdash; iOS Settings &rarr; Privacy &amp; Security &rarr; Motion &amp; Fitness.</li>
+      <li><strong>Notifications</strong> &mdash; iOS Settings &rarr; Notifications &rarr; Speedio.</li>
+      <li><strong>Account</strong> &mdash; sign out from the App&#39;s Settings. To delete your account and all associated cloud data, email us.</li>
+    </ul>
+
+    <h2>Changes to This Policy</h2>
+    <p>If we make material changes, we will update the &quot;Effective&quot; date above. For significant changes, we may also notify you in-app and via email associated with your account.</p>
 
     <h2>Contact</h2>
-    <p>Questions? Contact us at <a href="mailto:privacy@speedsense.app">privacy@speedsense.app</a></p>
+    <p>Privacy questions, deletion requests, and CCPA / California rights requests:</p>
+    <ul>
+      <li>Email: <a href="mailto:speedsenseapp@gmail.com?subject=Speedio%20Privacy">speedsenseapp@gmail.com</a></li>
+      <li>Subject line: <code>Speedio Privacy</code></li>
+      <li>We acknowledge deletion and rights requests within 10 business days and complete verified requests within 30 days (45 days where California law so requires).</li>
+    </ul>
+
+    <p class="meta">&copy; 2026 Speedio.</p>
   </div>
 </body>
 </html>
