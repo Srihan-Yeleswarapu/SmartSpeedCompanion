@@ -5,7 +5,7 @@
 # iOS app, for every named road in a given radius around a home address.
 #
 # Data sources (all live, all free, no API keys required):
-#   1. Overpass / OpenStreetMap   - queries OSM `highway` + `maxspeed` tags.
+#   1. Overpass / OpenStreetMap   - queries OSM `highway` + `name` + `ref` tags.
 #                                   Worldwide coverage.
 #   2. ArcGIS HPMS (layer 48)    - federal sample-panel data, SpeedLimit_2024.
 #                                   AZ-only (XMin -114.95, XMax -108.87,
@@ -15,7 +15,7 @@
 #
 # Usage:
 #   python speed_limit_compare.py "Phoenix, AZ" --cap 500
-#   python speed_limit_compare.py "123 Main St, Phoenix, AZ" --radius-mi 25 \
+#   python speed_limit_compare.py "123 Main St, Chandler, AZ" --radius-mi 25 \
 #       --sqlite ./SmartSpeedCompanion/Resources/ArizonaSpeedLimits.sqlite \
 #       --output-dir ./out
 #
@@ -23,14 +23,20 @@
 #   out/speed_limits_<safe_address>.csv
 #   out/speed_limits_<safe_address>.json
 #
-# Notes:
-#   - All distances are computed with the Haversine formula on an Earth
-#     radius of 6,378,137 m (matching the iOS `SpeedLimitProvider.swift`
-#     constants).
-#   - Per-road alignment uses OSM `way center` as the master sample point
-#     and matches ArcGIS polygons + SQLite bbox nearest vertices to that.
-#   - The script does NOT hammer any API per-road. Each provider is hit with
-#     exactly ONE bulk bounding-box query covering the entire radius.
+# Each output row is one OSM road with per-provider columns. Every match
+# is annotated with a `match_basis` of "ref", "name", or "spatial":
+#   - "ref"     : OSM road's `ref` tag matched the provider's SRNumber /
+#                 RouteId exactly (after normalization). HIGHEST confidence
+#                 this is the same physical road.
+#   - "name"    : the provider's normalized RouteId appears as a discrete
+#                 token in the OSM road's `name`. MEDIUM confidence.
+#   - "spatial" : name/ref matched nothing; we fell back to "nearest
+#                 feature within match_radius_m". LOW confidence -- the
+#                 comparison may be against a different road that happens
+#                 to be nearby.
+# The summary block reports true same-road agreements separately from
+# spatial coincidences so you don't draw "all three agree!" conclusions
+# from rows that were only ever spatially proximate.
 #
 # Tested with Python 3.10+. Pure stdlib + sqlite3.
 
@@ -38,6 +44,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -48,6 +55,7 @@ import urllib.request
 # --------------- Constants ---------------
 EARTH_RADIUS_M = 6_378_137.0
 DEFAULT_RADIUS_MI = 50.0
+DEFAULT_MATCH_RADIUS_M = 250.0   # OSM way centers can sit 150-300m from nearest ArcGIS sample vertex; tight any smaller silently drops valid real-road matches
 ARCGIS_AZ_BBOX = (-114.95, -108.87, 31.30, 37.03)  # (xmin, xmax, ymin, ymax)
 USER_AGENT = "Speedio-SpeedLimitCompare/1.0 (research; speedsenseapp@gmail.com)"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
@@ -56,7 +64,7 @@ ARCGIS_URL = (
     "https://services6.arcgis.com/clPWQMwZfdWn4MQZ/arcgis/rest/services/"
     "HPMS_2024_Data/FeatureServer/48/query"
 )
-OVERPASS_TIMEOUT_S = 30
+OVERPASS_TIMEOUT_S = 120  # overpass in-query timeout is 60s; allow headroom for the response to stream back
 ARCGIS_TIMEOUT_S = 15
 NOMINATIM_TIMEOUT_S = 10
 SQLITE_DEFAULT_BUFFER_DEG = 0.001  # tiny epsilon for SQL bbox JOIN safety
@@ -87,12 +95,17 @@ def parse_args():
                    help="Skip the ArcGIS HPMS network query.")
     p.add_argument("--no-overpass", action="store_true",
                    help="Skip the Overpass network query.")
-    p.add_argument("--match-radius-m", type=float, default=2000.0,
-                   help="For each OSM road, drop the ArcGIS/SQLite match if "
-                        "its nearest vertex/bbox edge is further than this "
-                        "from the OSM way center. Default 2km works well "
-                        "even for long state routes that don't tile "
-                        "perfectly across providers.")
+    p.add_argument("--match-radius-m", type=float, default=DEFAULT_MATCH_RADIUS_M,
+                   help="Max distance (meters) between an OSM way center and "
+                        "the nearest ArcGIS polyline vertex / SQLite bbox edge "
+                        "for a match to be considered at all. Default 250m "
+                        "is the same-road sweet spot. Widen to 500-1000m if "
+                        "you want more spatial-nearest coincidences as a "
+                        "fallback (Tier 3 will dominate); 250m is already "
+                        "narrow enough to skip pure-coincidence matches. Going "
+                        "below 150m risks dropping legitimate Tier 1/2 hits "
+                        "on long state routes where sample vertices are "
+                        "sparsely placed.")
     p.add_argument("--verbose", action="store_true",
                    help="Verbose logging.")
     return p.parse_args()
@@ -118,9 +131,9 @@ def meters_from_mi(mi: float) -> float:
 def bbox_around(lat: float, lon: float, radius_m: float):
     """Return (minx, maxx, miny, maxy) envelope around (lat,lon) that fully
     contains a circle of radius `radius_m`. Correctly applies cos(lat) to the
-    longitude axis so a 50-mile circle at 33°N isn't shortchanged in the E/W
-    direction (1° of longitude shrinks to ~93 km at 33°N from the standard
-    111 km at the equator)."""
+    longitude axis so a 50-mile circle at 33 N isn't shortchanged in the E/W
+    direction (1 deg of longitude shrinks to ~93 km at 33 N from the
+    standard 111 km at the equator)."""
     dlat = radius_m / 111_111.0
     dlon = radius_m / (111_111.0 * math.cos(math.radians(lat)))
     return (lon - dlon, lon + dlon, lat - dlat, lat + dlat)
@@ -132,8 +145,8 @@ def point_in_bbox(lat: float, lon: float, bbox) -> bool:
 
 
 def parse_maxspeed(raw: str):
-    """Same logic as `OverpassSpeedLimitProvider.parseMaxspeed(_:)` in the
-    Swift app: handles '25 mph', '40', '60 km/h', '50 kmh', 'ROAD TYPE: 30 mph'.
+    """Mirrors `OverpassSpeedLimitProvider.parseMaxspeed(_:)` in the Swift app:
+    handles '25 mph', '40', '60 km/h', '50 kmh', 'ROAD TYPE: 30 mph'.
     Returns mph as int, or None."""
     if raw is None:
         return None
@@ -157,9 +170,169 @@ def parse_maxspeed(raw: str):
     return int(round(n))
 
 
+def normalize_route_string(raw):
+    """Normalize route designation strings to a canonical form so OSM `ref`
+    and ArcGIS/SQLite designations can be compared.
+
+    Example transforms:
+        "  I 017                       0 "   ->  "I-17"
+        " US 060                       0 "   ->  "US-60"
+        " 087                       0 "      ->  "87"
+        " AZ 101                       0 "   ->  "AZ-101"
+        "I-10"                              ->  "I-10"
+        "US 60"                             ->  "US-60"
+
+    Rules:
+        1. Strip + collapse whitespace.
+        2. Drop a single trailing " 0" (the iOS geodatabase's direction/
+           terminus marker; always 0 in this dataset).
+        3. "<alpha-prefix> <numeric>" becomes "<UPPER-PREFIX>-<numeric>",
+           with leading zeros stripped from the numeric.
+        4. Pure numeric with leading zeros gets them stripped.
+        5. Anything else: return cleaned string verbatim.
+    """
+    if not isinstance(raw, str):
+        return ""
+    s = raw.strip()
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return ""
+    if s.endswith(" 0"):
+        s = s[:-2].strip()
+    elif s == "0":
+        return ""
+    m = re.match(r"^([A-Za-z]+)\s+0*(\d+)$", s)
+    if m:
+        prefix = m.group(1).upper()
+        num = m.group(2).lstrip("0") or "0"
+        return f"{prefix}-{num}"
+    m = re.match(r"^0*(\d+)$", s)
+    if m:
+        return m.group(1).lstrip("0") or "0"
+    return s
+
+
+def normalize_osm_refs(ref_tag):
+    """OSM `ref` may be a semicolon/comma-separated list (e.g. 'I-10;US-60'
+    on concurrent routings). Split and normalize each."""
+    if not ref_tag:
+        return set()
+    parts = re.split(r"[;,]\s*", ref_tag)
+    out = set()
+    for p in parts:
+        n = normalize_route_string(p)
+        if n:
+            out.add(n)
+    return out
+
+
+def _name_tokens(name):
+    """Tokenize a road name for whole-token matching. Allows hyphens so
+    'I-10', 'SR-101' become their own tokens. Lowercased for case-equal."""
+    if not name:
+        return set()
+    return {t.lower() for t in re.findall(r"[\w-]+", name.lower())}
+
+
+def _route_numeric_part(n):
+    """Extract the (possibly alpha-suffixed) numeric portion of a normalized
+    route designation. Lets Tier 2 token-match catch the common case where
+    OSM name says 'Interstate 17' (tokens: {'interstate', '17'}) but the
+    provider's designation is 'I-17' -- the numeric portion '17' is a token
+    in the name. With this, those roads get Tier 2 (same road by name)
+    instead of falling through to Tier 3 (spatial coincidence).
+
+    Examples:
+        'I-17'    -> '17'
+        'US-60'   -> '60'
+        '88'      -> '88'
+        'I-17N'   -> '17N'
+        'AZ-87A'  -> '87A'
+        ''        -> ''
+    """
+    if not n:
+        return ""
+    m = re.match(r"^([A-Za-z]*)-?(\d+[A-Za-z]?)$", n)
+    if m:
+        return m.group(2)
+    return n
+
+
+# Highway-type keywords whose presence in an OSM name token set is hard
+# evidence the road is a designated route (not a local street). Once we
+# see one of these in the name, Tier-2 numeric match is allowed -- but
+# we still gate the match on the provider's alpha-prefix family to
+# avoid cross-type collisions like SR-17 vs I-17.
+#   "I"-family: must see "interstate" in the OSM name
+#   "US"-family: must see one of {"us", "united states", "us highway", "us route"}
+#   state/county/etc.: generic type keywords (route / highway / state route /
+#     state highway / freeway / expressway / turnpike / parkway) let through
+HIGHWAY_TYPE_KEYWORDS_NEED_PREFIX_MATCH = {
+    "interstate":         "I",
+    "interstate highway": "I",
+    "us":                 "US",
+    "united states":      "US",
+    "us highway":         "US",
+    "us route":           "US",
+}
+GENERIC_TYPE_KEYWORDS = {
+    "state route", "state highway", "route", "highway",
+    "freeway", "expressway", "turnpike", "parkway",
+}
+
+
+def _tier2_numeric_match_allowed(provider_n_norm, osm_name_tokens):
+    """Decide whether the Tier-2 numeric-portion match is safe to attempt.
+    The risk without this gate: SR-17 (state route, northern Arizona) and
+    I-17 (interstate, Phoenix-Flagstaff) BOTH have '17' as the numeric
+    portion. Without family discrimination, Tier 2 would pair them as the
+    same road. With this gate:
+        OSM name 'Interstate 17'        + provider 'I-17'  -> allowed
+            (strict: 'interstate' in tokens, provider prefix 'I' matches 'I' family)
+        OSM name 'Arizona State Route 17' + provider 'I-17'  -> rejected
+            (provider prefix 'I' would not match any keyword family in tokens,
+            so generic-keyword fallback rejects I/US prefixes outright)
+        OSM name 'State Route 17'      + provider 'SR-17' -> allowed
+            (generic: 'state route' in tokens, provider prefix 'SR' is non-I/US)
+        OSM name 'US Highway 60'       + provider 'SR-60' -> REJECTED
+            (strict negative: 'us' in tokens, provider prefix 'SR' != 'US' family)
+        OSM name 'Interstate 17'       + provider 'SR-17' -> rejected
+            (strict negative: 'interstate' in tokens, 'SR' != 'I' family)
+        OSM name 'US 60'               + provider 'US-60' -> allowed (strict positive)
+        OSM name 'Grand Avenue'        + provider '87'    -> rejected (no type keyword)
+    """
+    if not provider_n_norm or not osm_name_tokens:
+        return False
+    n_low = provider_n_norm.lower()
+    # Provider alpha prefix: "I-17" -> "I", "US-60" -> "US", "AZ-87" -> "AZ",
+    # "87" -> "" (pure numeric).
+    m = re.match(r"^([A-Za-z]+)-", n_low)
+    provider_prefix = (m.group(1).upper() if m else "")
+    # 1. NEGATIVE family check: if the OSM name mentions a strict family
+    #    keyword ('us', 'interstate', etc.), the provider's alpha prefix MUST
+    #    belong to that family -- otherwise reject outright. This blocks the
+    #    generic-keyword fallback (next) from pairing e.g. 'US Highway 60'
+    #    with 'SR-60' just because 'highway' is a generic type word.
+    for kw, family in HIGHWAY_TYPE_KEYWORDS_NEED_PREFIX_MATCH.items():
+        if kw in osm_name_tokens and provider_prefix != family:
+            return False
+    # 2. STRICT positive: name mentions the family AND provider is in it.
+    for kw, family in HIGHWAY_TYPE_KEYWORDS_NEED_PREFIX_MATCH.items():
+        if kw in osm_name_tokens and provider_prefix == family:
+            return True
+    # 3. GENERIC positive: route/highway/-type word in name AND provider
+    #    prefix is set to a non-I, non-US family (state, county, etc.).
+    #    'Grand Avenue' has no generic type word so this never fires; this
+    #    is the path that lets 'State Route 202' <-> 'AZ-202' pair up.
+    for kw in GENERIC_TYPE_KEYWORDS:
+        if kw in osm_name_tokens and provider_prefix != "" \
+                and provider_prefix not in ("I", "US"):
+            return True
+    return False
+
+
 # --------------- HTTP helpers ---------------
 def _http_get_json(url: str, params=None, timeout=15, headers=None):
-    """GET request returns parsed JSON. Raises on non-2xx or network error."""
     if params:
         url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={
@@ -173,7 +346,6 @@ def _http_get_json(url: str, params=None, timeout=15, headers=None):
 
 
 def _http_post_form(url: str, form_data: dict, timeout=30, headers=None):
-    """POST application/x-www-form-urlencoded. Returns parsed JSON."""
     body = urllib.parse.urlencode(form_data).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers={
         "User-Agent": USER_AGENT,
@@ -188,11 +360,6 @@ def _http_post_form(url: str, form_data: dict, timeout=30, headers=None):
 
 # --------------- Geocoding ---------------
 def geocode_nominatim(address: str, verbose=False):
-    """Returns dict with at least keys: lat, lon, display_name. Nominatim
-    usage policy: no key, max 1 req/sec, must identify via User-Agent.
-    Sleeps 1s up-front as politeness; this script only makes one geocode
-    call, so it's a no-op for the user but keeps us polite if this is
-    ever wrapped by a batch driver."""
     params = {"q": address, "format": "json", "limit": 1, "addressdetails": 1}
     if verbose:
         print(f"[geocode] Nominatim: {address!r}")
@@ -211,28 +378,28 @@ def geocode_nominatim(address: str, verbose=False):
 # --------------- Overpass ---------------
 def query_overpass_bbox(lat: float, lon: float, radius_m: float, max_roads: int,
                         verbose=False) -> list:
-    """Single bulk Overpass query returning every named `highway` way within
-    `radius_m` of (lat, lon). Result passes include `name` tag if present, the
-    OSM `way id`, the highway class, and a center lat/lon (Overpass `out center`).
+    """Single bulk Overpass query returning every named `highway` way whose
+    bbox intersects a square envelope around (lat, lon). Each road has its
+    `name`, `ref`, `maxspeed`, and `highway` tags plus a center sample point.
 
-    Overpass server-side throttle is 2 req/sec/IP; with one query per run,
-    we never approach it, but we honor 429 with a 60s backoff window.
-
-    Returns: list of dicts (sorted by distance from (lat,lon), so truncation
-    to `max_roads` keeps the most-relevant ones):
-      {osm_id:int, name:str, highway:str, maxspeed_raw:str|None,
-       maxspeed_mph:int|None, lat:float, lon:float}
+    Implementation notes (learned the hard way against the live public server):
+      * Use the BBOX filter (`way(SWlat,SWlon,NElat,NElon)`), NOT `around:`.
+        The `around:` filter is unreliable for large radii (~>25 km).
+      * The trailing integer on `out ... N;` is a HARD element-count limit
+        -- `out tags center 1;` returns exactly one element. We use
+        `out tags center;` (no integer) for "all elements".
+      * The server returns 200 OK with a soft-fail `remark` field on
+        partial / timed-out / QAL-exhausted results -- we surface it.
+      * Throttle is 2 req/sec/IP; we honor 429 with a 60s backoff + 1 retry.
     """
-    radius_m_int = int(round(radius_m))
-    # Filter to ways that have BOTH `highway` (so we don't pick up coastlines,
-    # railways) and `name` (so unnamed residentials don't bloat output).
+    minx, maxx, miny, maxy = bbox_around(lat, lon, radius_m)
     query = (
-        f'[out:json][timeout:25];\n'
-        f'way(around:{radius_m_int},{lat:.6f},{lon:.6f})[highway][name];\n'
-        f'out tags center 1;\n'
+        f"[out:json][timeout:60];\n"
+        f"way({miny:.6f},{minx:.6f},{maxy:.6f},{maxx:.6f})[highway][name];\n"
+        f"out tags center;\n"
     )
     if verbose:
-        print(f"[overpass] radius={radius_m_int}m, cap={max_roads}")
+        print(f"[overpass] bbox=({miny:.4f},{minx:.4f},{maxy:.4f},{maxx:.4f}), cap={max_roads}")
     try:
         data = _http_post_form(OVERPASS_URL, {"data": query}, timeout=OVERPASS_TIMEOUT_S)
     except urllib.error.HTTPError as e:
@@ -242,6 +409,8 @@ def query_overpass_bbox(lat: float, lon: float, radius_m: float, max_roads: int,
             data = _http_post_form(OVERPASS_URL, {"data": query}, timeout=OVERPASS_TIMEOUT_S)
         else:
             raise
+    if data.get("remark"):
+        print(f"[overpass] SERVER REMARK: {data['remark']}")
     elements = (data.get("elements") or [])
     roads = []
     for el in elements:
@@ -251,39 +420,28 @@ def query_overpass_bbox(lat: float, lon: float, radius_m: float, max_roads: int,
         name = tags.get("name") or tags.get("ref")
         if not name:
             continue
-        # Get center
         center = el.get("center") or {}
         if "lat" not in center and "lon" not in center:
-            # Some elements come with the way itself uncentered; skip (we asked
-            # for `out center` so this should be rare).
             continue
-        raw = tags.get("maxspeed")
+        raw_ms = tags.get("maxspeed")
         roads.append({
             "osm_id": el["id"],
             "name": str(name),
+            "ref": tags.get("ref", "") or "",
             "highway": tags.get("highway", ""),
-            "maxspeed_raw": raw,
-            "maxspeed_mph": parse_maxspeed(raw) if raw else None,
+            "maxspeed_raw": raw_ms,
+            "maxspeed_mph": parse_maxspeed(raw_ms) if raw_ms else None,
             "lat": float(center["lat"]),
             "lon": float(center["lon"]),
         })
     if verbose:
         print(f"[overpass] raw element count: {len(elements)}, named: {len(roads)}")
-    # Sort by distance from center so the --cap truncation keeps the
-    # most-relevant (closest to home) roads rather than an arbitrary slice.
     roads.sort(key=lambda r: haversine_m(lat, lon, r["lat"], r["lon"]))
     return roads[:max_roads]
 
 
 # --------------- ArcGIS HPMS ---------------
 def _arcgis_query_envelope(minx, maxx, miny, maxy, offset=0, count=2000):
-    """One ArcGIS polygon-envelope query. Returns (features, exceededTransferLimit).
-    Public ArcGIS service: no key, default `maxRecordCount` is typically 2000;
-    if exceededTransferLimit is true, caller paginates with offset.
-
-    Honors 429 with a 60s backoff and one retry, mirroring the Overpass
-    pattern -- it's the same public ArcGIS service gRPC/HTTP behavior.
-    Honors 5xx with a 10s backoff once."""
     geom = json.dumps({"xmin": minx, "ymin": miny, "xmax": maxx, "ymax": maxy})
     params = {
         "f": "json",
@@ -312,15 +470,12 @@ def _arcgis_query_envelope(minx, maxx, miny, maxy, offset=0, count=2000):
                 time.sleep(10)
                 continue
             raise
-    return ([], False)  # unreachable but well-typed
+    return ([], False)
 
 
 def query_arcgis_bbox(minx, maxx, miny, maxy, verbose=False):
-    """All ArcGIS HPMS features whose envelope intersects the given bbox.
-    Returns: (features_list, truncated_bool)
-    `truncated` is True when the 50k safety cap fired -- caller should
-    surface this in metadata so the user knows the result is a sample.
-    Auto-paginates via resultOffset."""
+    """Bulk ArcGIS HPMS feature fetch across the envelope. Returns
+    (features_list, truncated_bool). Auto-paginates via resultOffset."""
     features, offset = [], 0
     truncated = False
     while True:
@@ -332,7 +487,6 @@ def query_arcgis_bbox(minx, maxx, miny, maxy, verbose=False):
         if verbose:
             print(f"[arcgis] pagination: {offset} features so far...")
         if offset > 50_000:
-            # Hard safety stop; AZ statewide index is ~tens of thousands.
             print("[arcgis] WARNING: hit 50k safety cap, truncating")
             truncated = True
             break
@@ -358,26 +512,9 @@ def query_arcgis_bbox(minx, maxx, miny, maxy, verbose=False):
 
 # --------------- Local AZ SQLite ---------------
 def query_sqlite_bbox(sqlite_path: str, minx, maxx, miny, maxy, verbose=False) -> list:
-    """Mirrors the SQL filter used by `ArizonaSpeedLimitService.queryDatabase`,
-    but expanded to a bounding box rather than a single (lat,lon) + buffer.
-
-    SQL is the same as the iOS app:
-        SELECT a.SpeedLimit, b.minx, b.maxx, b.miny, b.maxy, a.RouteId
-        FROM SpeedLimit_2024 a
-        JOIN st_spindex__SpeedLimit_2024_SHAPE b ON a.OBJECTID = b.pkid
-        WHERE ? <= b.maxx AND ? >= b.minx
-          AND ? <= b.maxy AND ? >= b.miny
-
-    Bind values are: (minx-buf, maxx+buf, miny-buf, maxy+buf) so the predicate
-    selects any segment whose bbox intersects our query bbox (with a small
-    buffer epsilon, matching the Swift `gridPrecision` 0.02-cell behavior).
-    Filters `SpeedLimit > 0` (matches app's `guard segment.limit > 0`).
-
-    Note on the SQL textual order: the WHERE clause reads ? against b.maxx
-    then b.minx then b.maxy then b.miny -- so the FIRST bind is matched
-    against the SHAPE's max-longitude. So we pass minx-buf first."""
-    # Schema probe up-front: better to fail loudly with a clear message than
-    # to die mid-query with `no such table: SpeedLimit_2024` halfway through.
+    """Mirrors `ArizonaSpeedLimitService.queryDatabase` semantics but expanded
+    to a bbox query. SQL string + bind order identical to the iOS app. Schema
+    probe runs up-front so a wrong table set fails loudly."""
     required_tables = ("SpeedLimit_2024", "st_spindex__SpeedLimit_2024_SHAPE")
     sql = (
         "SELECT a.SpeedLimit, b.minx, b.maxx, b.miny, b.maxy, a.RouteId "
@@ -393,7 +530,7 @@ def query_sqlite_bbox(sqlite_path: str, minx, maxx, miny, maxy, verbose=False) -
         cur = conn.cursor()
         cur.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name IN (%s, %s)" % ("?", "?"),
+            "AND name IN (?, ?)",
             required_tables,
         )
         present = {row[0] for row in cur.fetchall()}
@@ -404,14 +541,7 @@ def query_sqlite_bbox(sqlite_path: str, minx, maxx, miny, maxy, verbose=False) -
                 f"{', '.join(missing)}. Is this the app's "
                 "ArizonaSpeedLimits.sqlite file?"
             )
-        # Match the iOS bind order so behavior is provably identical:
-        # ?1 -> b.maxx  (we want the longitude_min of our bbox = minx - buf,
-        #                ANY bbox whose maxx is >= that string qualifies)
-        # ?2 -> b.minx  (we want the longitude_max of our bbox = maxx + buf)
-        # ?3 -> b.maxy  (we want the latitude_min  of our bbox = miny - buf)
-        # ?4 -> b.miny  (we want the latitude_max  of our bbox = maxy + buf)
-        cur.execute(sql, (minx - buf, maxx + buf,
-                          miny - buf, maxy + buf))
+        cur.execute(sql, (minx - buf, maxx + buf, miny - buf, maxy + buf))
         out = []
         for row in cur.fetchall():
             sp, mx0, mx1, my0, my1, rid = row
@@ -429,16 +559,17 @@ def query_sqlite_bbox(sqlite_path: str, minx, maxx, miny, maxy, verbose=False) -
 
 
 # --------------- Per-road alignment ---------------
-def _arcgis_nearest_arc_feature(road_lat, road_lon, features):
-    """Return (best_feature_dict, distance_m) for the closest path-vertex across
-    all features, ignoring intersection geometry. Mirrors the Swift
-    `ArcGISHPMSSpeedLimitProvider.bestFeatureIndex` scoring style."""
-    best_f, best_d = None, None
+def _arcgis_candidates_with_dist(road_lat, road_lon, features, max_dist):
+    """[(feature, distance_m)] for ArcGIS features whose nearest polyline
+    vertex is within max_dist meters, sorted by distance asc.
+    Mirrors the Swift `ArcGISHPMSSpeedLimitProvider.bestFeatureIndex`
+    scoring style."""
+    out = []
     for f in features:
         paths = f.get("paths") or []
         if not paths:
-            # No geometry -- skip rather than guess.
             continue
+        best = None
         for path in paths:
             for pair in path:
                 if not isinstance(pair, list) or len(pair) < 2:
@@ -446,19 +577,21 @@ def _arcgis_nearest_arc_feature(road_lat, road_lon, features):
                 lon2 = pair[0]
                 lat2 = pair[1]
                 d = haversine_m(road_lat, road_lon, lat2, lon2)
-                if best_d is None or d < best_d:
-                    best_d = d
-                    best_f = f
-    if best_f is None:
-        return None, None
-    return best_f, best_d
+                if best is None or d < best:
+                    best = d
+        if best is not None and best <= max_dist:
+            out.append((f, best))
+    out.sort(key=lambda fd: fd[1])
+    return out
 
 
-def _sqlite_nearest_row(road_lat, road_lon, rows):
-    """Distance from (lat,lon) to nearest vertex on the segmented bbox (we have
-    no polylines for SQLite, only bounding boxes -- so use a point-to-bbox
-    distance fallback like the Swift `RoadSegment.distance(to:)`)."""
-    best_r, best_d = None, None
+def _sqlite_candidates_with_dist(road_lat, road_lon, rows, max_dist):
+    """[(row, distance_m)] for SQLite rows whose bbox is within max_dist.
+    Distance uses the Swift-compatible point-to-bbox formula
+    (`RoadSegment.distance(to:)` in iOS). d=0.0 means point is inside the
+    segment bbox; matches at d=0.0 are NOT guaranteed same-road and rely on
+    the match_basis column to disambiguate."""
+    out = []
     for r in rows:
         dx = max(0.0, r["minx"] - road_lon, road_lon - r["maxx"])
         dy = max(0.0, r["miny"] - road_lat, road_lat - r["maxy"])
@@ -468,74 +601,140 @@ def _sqlite_nearest_row(road_lat, road_lon, rows):
             lat_m = dy * 111111.0
             lon_m = dx * 111111.0 * math.cos(road_lat * math.pi / 180.0)
             d = math.sqrt(lat_m * lat_m + lon_m * lon_m)
-        if best_d is None or d < best_d:
-            best_d = d
-            best_r = r
-    return best_r, best_d
+        if d <= max_dist:
+            out.append((r, d))
+    out.sort(key=lambda rd: rd[1])
+    return out
 
 
-def align(roads, arcgis_features, sqlite_rows, match_radius_m=2000.0,
+def _tiered_pick(candidates, osm_ref_set, osm_name_tokens, provider_key):
+    """Pick the highest-confidence match from `candidates` [(item, dist), ...].
+    Returns (item, dist, basis, normalized_route) or None.
+
+    IMPORTANT INVARIANT -- callers must not treat basis == "spatial" as
+    evidence the provider is talking about the same physical road. "spatial"
+    means: no ref matched, no name matched, we fell back to nearest feature
+    inside match_radius_m. Two roads 50m apart whose OSM/HPMS tag sets
+    disagree will get matched this way; the mph columns compare may show
+    a "disagreement" that is in fact a coincidence.
+
+    Tier 1: provider's normalized route string is in the OSM `ref` set
+            (exact match after normalization). Highest confidence.
+    Tier 2: provider's normalized route OR its numeric portion is a
+            whole-token of the OSM road's `name`. Catches the common case
+            where `name="Interstate 17"` and provider's designation is
+            `I-17` -- the numeric portion "17" is a name token even though
+            the full "I-17" is not.
+    Tier 3: spatial nearest (lowest confidence, EXPLICITLY spatial-only).
+
+    `provider_key` tells us which raw field to read on each candidate:
+        "sr_number"  -> ArcGIS feature["sr_number"]
+        "route_id"   -> SQLite row["route_id"]
+    """
+    def _normalize(item):
+        return normalize_route_string(item.get(provider_key) or "")
+    # Tier 1
+    for item, d in candidates:
+        n = _normalize(item)
+        if n in osm_ref_set:
+            return (item, d, "ref", n)
+    # Tier 2 -- whole-token match against OSM name (full canonical OR, with
+    # safety gate, numeric portion).
+    for item, d in candidates:
+        n = _normalize(item)
+        if not n:
+            continue
+        # Whole-string token match. Already safe: requires the canonical form
+        # to appear verbatim as a name token (e.g. 'US-60' in OSM name 'US-60').
+        if n.lower() in osm_name_tokens:
+            return (item, d, "name", n)
+        # Numeric-portion match is dangerous in isolation (SR-17 vs I-17),
+        # so we require a "highway type" keyword present in the OSM name AND
+        # the provider's alpha prefix to be in the matching family.
+        numeric = _route_numeric_part(n).lower()
+        if numeric and numeric in osm_name_tokens \
+                and _tier2_numeric_match_allowed(n, osm_name_tokens):
+            return (item, d, "name", n)
+    # Tier 3 -- EXPLICITLY "this is NOT a same-road match, only a spatial coincidence"
+    if candidates:
+        item, d = candidates[0]
+        return (item, d, "spatial", _normalize(item))
+    return None
+
+
+def align(roads, arcgis_features, sqlite_rows, match_radius_m=DEFAULT_MATCH_RADIUS_M,
            dropped_out_of_range=None):
-    """For each OSM road, find the nearest ArcGIS feature and SQLite row.
-    Drops matches beyond `match_radius_m` -- the match is unlikely to mean
-    the same physical road past this range. Drops are counted into
-    `dropped_out_of_range` if provided so the caller can surface in metadata.
+    """For each OSM road (master record), determine the matching tier against
+    each provider and write enriched rows.
 
-    Returns: list[dict] (one row per OSM road)."""
+    Returns list[dict]: one row per OSM road; per-provider columns include
+    speed limit + match metadata + a `match_basis` ("ref"/"name"/"spatial")
+    so callers can distinguish real same-road agreements from spatial
+    coincidences in their summaries."""
     if dropped_out_of_range is None:
         dropped_out_of_range = {"arcgis": 0, "sqlite": 0}
     enriched = []
     for road in roads:
-        row = {
-            "road_name":              road["name"],
-            "highway_type":           road["highway"],
-            "osm_way_id":             road["osm_id"],
-            "sample_lat":             f"{road['lat']:.6f}",
-            "sample_lon":             f"{road['lon']:.6f}",
-            "overpass_maxspeed_raw":  road["maxspeed_raw"] or "",
-            "overpass_mph":           road["maxspeed_mph"] if road["maxspeed_mph"] else "",
-            "arcgis_mph":             "",
-            "arcgis_sr_number":       "",
-            "arcgis_direction":       "",
-            "arcgis_object_id":       "",
-            "arcgis_match_meters":    "",
-            "sqlite_mph":             "",
-            "sqlite_route_id":        "",
-            "sqlite_match_meters":    "",
-        }
-        if arcgis_features:
-            arcgis_match, arcgis_dist = _arcgis_nearest_arc_feature(
-                road["lat"], road["lon"], arcgis_features
-            )
-            if arcgis_match and (arcgis_dist is None or arcgis_dist <= match_radius_m):
-                d_m = arcgis_dist or 0
-                row["arcgis_mph"]          = arcgis_match["speed_limit"]
-                row["arcgis_sr_number"]    = arcgis_match["sr_number"] or ""
-                row["arcgis_direction"]    = arcgis_match["direction"] or ""
-                row["arcgis_object_id"]    = arcgis_match["object_id"] or ""
-                row["arcgis_match_meters"] = f"{d_m:.1f}"
-            elif arcgis_match:
-                dropped_out_of_range["arcgis"] += 1
-        if sqlite_rows:
-            sqlite_match, sqlite_dist = _sqlite_nearest_row(
-                road["lat"], road["lon"], sqlite_rows
-            )
-            if sqlite_match and (sqlite_dist is None or sqlite_dist <= match_radius_m):
-                d_m = sqlite_dist or 0
-                row["sqlite_mph"]          = sqlite_match["speed_limit"]
-                row["sqlite_route_id"]    = sqlite_match["route_id"] or ""
-                row["sqlite_match_meters"] = f"{d_m:.1f}"
-            elif sqlite_match:
-                dropped_out_of_range["sqlite"] += 1
+        osm_ref_set = normalize_osm_refs(road.get("ref", ""))
+        osm_name_tokens = _name_tokens(road.get("name", ""))
+        arcgis_cands = _arcgis_candidates_with_dist(
+            road["lat"], road["lon"], arcgis_features, match_radius_m
+        )
+        sqlite_cands = _sqlite_candidates_with_dist(
+            road["lat"], road["lon"], sqlite_rows, match_radius_m
+        )
 
-        # Match status
+        arcgis_pick = _tiered_pick(arcgis_cands, osm_ref_set,
+                                    osm_name_tokens, "sr_number")
+        sqlite_pick = _tiered_pick(sqlite_cands, osm_ref_set,
+                                    osm_name_tokens, "route_id")
+
+        row = {
+            "road_name":                    road["name"],
+            "highway_type":                 road["highway"],
+            "osm_way_id":                   road["osm_id"],
+            "osm_ref":                      road.get("ref", "") or "",
+            "sample_lat":                   f"{road['lat']:.6f}",
+            "sample_lon":                   f"{road['lon']:.6f}",
+            "overpass_maxspeed_raw":        road["maxspeed_raw"] or "",
+            "overpass_mph":                 road["maxspeed_mph"] if road["maxspeed_mph"] else "",
+            "arcgis_mph":                   "",
+            "arcgis_sr_number":             "",
+            "arcgis_sr_number_normalized":  "",
+            "arcgis_direction":             "",
+            "arcgis_object_id":             "",
+            "arcgis_match_meters":          "",
+            "arcgis_match_basis":           "",
+            "sqlite_mph":                   "",
+            "sqlite_route_id":              "",
+            "sqlite_route_id_normalized":   "",
+            "sqlite_match_meters":          "",
+            "sqlite_match_basis":           "",
+            "providers_present":            "overpass",
+        }
+        if arcgis_pick:
+            f, d, basis, norm = arcgis_pick
+            row["arcgis_mph"]                  = f["speed_limit"]
+            row["arcgis_sr_number"]            = f.get("sr_number") or ""
+            row["arcgis_sr_number_normalized"] = norm
+            row["arcgis_direction"]            = f.get("direction") or ""
+            row["arcgis_object_id"]            = f.get("object_id") or ""
+            row["arcgis_match_meters"]         = f"{d:.1f}"
+            row["arcgis_match_basis"]          = basis
+        if sqlite_pick:
+            r, d, basis, norm = sqlite_pick
+            row["sqlite_mph"]                  = r["speed_limit"]
+            row["sqlite_route_id"]             = r.get("route_id") or ""
+            row["sqlite_route_id_normalized"]  = norm
+            row["sqlite_match_meters"]         = f"{d:.1f}"
+            row["sqlite_match_basis"]          = basis
+
         parts = ["overpass"]
         if row["arcgis_mph"] != "":
             parts.append("arcgis")
         if row["sqlite_mph"] != "":
             parts.append("sqlite")
         row["providers_present"] = "+".join(parts)
-
         enriched.append(row)
     return enriched
 
@@ -549,12 +748,14 @@ def safe_filename(s: str) -> str:
 
 def write_csv(rows, path):
     cols = [
-        "road_name", "highway_type", "osm_way_id",
+        "road_name", "highway_type", "osm_way_id", "osm_ref",
         "sample_lat", "sample_lon",
         "overpass_maxspeed_raw", "overpass_mph",
-        "arcgis_mph", "arcgis_sr_number", "arcgis_direction", "arcgis_object_id",
-        "arcgis_match_meters",
-        "sqlite_mph", "sqlite_route_id", "sqlite_match_meters",
+        "arcgis_mph", "arcgis_sr_number", "arcgis_sr_number_normalized",
+        "arcgis_direction", "arcgis_object_id", "arcgis_match_meters",
+        "arcgis_match_basis",
+        "sqlite_mph", "sqlite_route_id", "sqlite_route_id_normalized",
+        "sqlite_match_meters", "sqlite_match_basis",
         "providers_present",
     ]
     with open(path, "w", encoding="utf-8", newline="") as f:
@@ -566,31 +767,24 @@ def write_csv(rows, path):
                 if v is None:
                     v = ""
                 s = str(v)
-                # Quote anything containing comma, quote, or newline.
-                if any(ch in s for ch in [',', '"', '\n']):
+                if any(ch in s for ch in [",", '"', "\n"]):
                     s = '"' + s.replace('"', '""') + '"'
                 cells.append(s)
             f.write(",".join(cells) + "\n")
 
 
 def write_json(rows, path, meta):
-    payload = {
-        "metadata": meta,
-        "rows": rows,
-    }
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+        json.dump({"metadata": meta, "rows": rows}, f, indent=2)
 
 
 # --------------- Main ---------------
 def run(args):
-    # 1. Validate args.
     if args.cap <= 0:
         raise SystemExit("--cap must be > 0")
     if args.radius_mi <= 0:
         raise SystemExit("--radius-mi must be > 0")
 
-    # 2. Geocode.
     geo = geocode_nominatim(args.address, verbose=args.verbose)
     lat, lon = geo["lat"], geo["lon"]
     print(f"[geo] {geo['display_name']}  ->  ({lat:.6f}, {lon:.6f})")
@@ -598,7 +792,6 @@ def run(args):
     in_az = point_in_bbox(lat, lon, ARCGIS_AZ_BBOX)
     print(f"[bbox] radius={args.radius_mi}mi ({radius_m:.0f}m)  in_az={in_az}")
 
-    # 3. Bulk Overpass.
     overpass_roads = []
     if not args.no_overpass:
         overpass_roads = query_overpass_bbox(
@@ -606,7 +799,6 @@ def run(args):
         )
         print(f"[overpass] {len(overpass_roads)} named roads returned (cap={args.cap})")
 
-    # 4. Bulk ArcGIS (if in AZ and not disabled).
     arcgis_features = []
     arcgis_truncated = False
     if not args.no_arcgis and in_az:
@@ -618,7 +810,6 @@ def run(args):
     elif not args.no_arcgis and not in_az:
         print("[arcgis] SKIPPED: address is outside AZ HPMS coverage")
 
-    # 5. Local SQLite (if --sqlite and in AZ).
     sqlite_rows = []
     if args.sqlite:
         if not in_az:
@@ -631,22 +822,58 @@ def run(args):
                                             verbose=args.verbose)
             print(f"[sqlite] {len(sqlite_rows)} rows from {args.sqlite}")
 
-    # 6. Align per road.
     if not overpass_roads:
         print("[align] No overpass roads to align; exiting.")
         return
-    dropped = {"arcgis": 0, "sqlite": 0}
     rows = align(overpass_roads, arcgis_features, sqlite_rows,
-                 match_radius_m=args.match_radius_m,
-                 dropped_out_of_range=dropped)
-    if (dropped["arcgis"] or dropped["sqlite"]):
-        print(f"[align] dropped out-of-range matches: arcgis={dropped['arcgis']}, sqlite={dropped['sqlite']}")
+                 match_radius_m=args.match_radius_m)
 
-    # 7. Write outputs.
     os.makedirs(args.output_dir, exist_ok=True)
     fname = safe_filename(geo["display_name"])
     csv_path  = os.path.join(args.output_dir, f"speed_limits_{fname}.csv")
     json_path = os.path.join(args.output_dir, f"speed_limits_{fname}.json")
+
+    # Honest summary stats -- aggregated PER-PROVIDER so a row that has
+    # Tier 1 from one provider and Tier 3 (spatial) from another is treated
+    # as Tier 1 in the row count, AND its mph values are gated per-provider
+    # when deciding whether to count as "same-road agreement".
+    counts = {
+        "total_roads":                       len(rows),
+        "overpass_only_no_provider_hit":     0,
+        "tier1_ref_match":                   0,  # at least one provider matched at Tier 1
+        "tier2_name_match_only":             0,  # no Tier 1 hits; at least one Tier 2 hit
+        "tier3_spatial_only_coincidence":    0,  # ALL contributing providers were spatial-only
+        "true_same_road_agreement":          0,  # every mph-providing provider was Tier 1 or 2 + all agree
+    }
+    for r in rows:
+        arb = r.get("arcgis_match_basis", "") or ""
+        srb = r.get("sqlite_match_basis", "") or ""
+        arcgis_real = arb in ("ref", "name")
+        sqlite_real = srb in ("ref", "name")
+        has_ref     = (arb == "ref" or srb == "ref")
+        has_name    = (not has_ref) and (arb == "name" or srb == "name")
+        has_any_provider_data = (r["arcgis_mph"] != "" or r["sqlite_mph"] != "")
+        all_contributing_spatial = (
+            has_any_provider_data
+            and not arcgis_real and not sqlite_real
+        )
+        if r["providers_present"] == "overpass":
+            counts["overpass_only_no_provider_hit"] += 1
+            continue  # no further classification needed
+        if has_ref:
+            counts["tier1_ref_match"] += 1
+        elif has_name:
+            counts["tier2_name_match_only"] += 1
+        elif all_contributing_spatial:
+            counts["tier3_spatial_only_coincidence"] += 1
+        # Per-provider same-road agreement: every mph value on this row must
+        # come from a Tier 1/Tier 2 provider, AND all mph values equal.
+        mphs = [r["overpass_mph"]] if r["overpass_mph"] != "" else []
+        if arcgis_real: mphs.append(r["arcgis_mph"])
+        if sqlite_real: mphs.append(r["sqlite_mph"])
+        if len(mphs) >= 2 and len(set(mphs)) == 1 and (arcgis_real or sqlite_real):
+            counts["true_same_road_agreement"] += 1
+
     meta = {
         "address": args.address,
         "resolved": geo["display_name"],
@@ -666,8 +893,9 @@ def run(args):
                 len(overpass_roads) >= args.cap and args.cap > 0
             ),
         },
-        "drops": {"matches_out_of_range": dropped},
+        "drops": {"matches_out_of_range": 0},  # legacy field; preserved for downstream tooling
         "row_count": len(rows),
+        "summary_by_match_basis": counts,
         "generated_at_unix": int(time.time()),
     }
     write_csv(rows, csv_path)
@@ -675,22 +903,18 @@ def run(args):
     print(f"[write] CSV  ->  {csv_path}")
     print(f"[write] JSON ->  {json_path}")
 
-    # 8. Summary stats.
-    counts = {"overpass_only": 0, "overpass+arcgis": 0, "overpass+sqlite": 0,
-              "all_three": 0}
-    for r in rows:
-        p = r["providers_present"]
-        if p == "overpass":
-            counts["overpass_only"] += 1
-        elif p == "overpass+arcgis":
-            counts["overpass+arcgis"] += 1
-        elif p == "overpass+sqlite":
-            counts["overpass+sqlite"] += 1
-        elif p == "overpass+arcgis+sqlite":
-            counts["all_three"] += 1
-    print("[summary] providers breakdown:")
-    for k, v in counts.items():
-        print(f"          {k:20s} {v}")
+    total = counts["total_roads"]
+    def _pct(n):
+        if total == 0:
+            return "(n/a)"
+        return f"({100.0 * n / total:5.1f}%)"
+    print("[summary] equality-of-comparison counts:")
+    print(f"          total_roads                        {counts['total_roads']:5d}  {f'(n/a)' if total == 0 else '(100.0%)'}")
+    print(f"          overpass_only_no_provider_hit      {counts['overpass_only_no_provider_hit']:5d}  {_pct(counts['overpass_only_no_provider_hit'])}")
+    print(f"          tier1_ref_match                    {counts['tier1_ref_match']:5d}  {_pct(counts['tier1_ref_match'])}")
+    print(f"          tier2_name_match_only              {counts['tier2_name_match_only']:5d}  {_pct(counts['tier2_name_match_only'])}")
+    print(f"          tier3_spatial_only_coincidence     {counts['tier3_spatial_only_coincidence']:5d}  {_pct(counts['tier3_spatial_only_coincidence'])}")
+    print(f"          true_same_road_agreement           {counts['true_same_road_agreement']:5d}  {_pct(counts['true_same_road_agreement'])}")
 
 
 def main():
