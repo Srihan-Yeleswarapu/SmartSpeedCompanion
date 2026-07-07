@@ -176,16 +176,18 @@ public struct LiveMapView: UIViewRepresentable {
             
             // ─── OVERRIDES ──────────────────────────────────────────────────────
             
-            // Turn proximity override (OVERRIDES speed-based zoom)
-            // We use a slight overlap to prevent bouncing exactly at the threshold
+            // Turn proximity override (OVERRIDES speed-based zoom).
+            // TestFlight v2.1.4: zoom in once turn is within 1000 ft (~315 m,
+            // with overlap to avoid threshold jitter) and stay until made.
             if distanceToTurn < 125 {
                 targetAltitude = 380
                 zoomReason = "turn-near"
-            } else if distanceToTurn < 400 {
-                // Smoothly bring the altitude down as we approach the turn
-                let minTurnAlt = 550.0
+            } else if distanceToTurn < 315 {
+                // minTurnAlt = 400 so city base (800) drops 400m > 300m diff,
+                // ensuring the stability-engine actually fires setCamera().
+                let minTurnAlt = 400.0
                 targetAltitude = min(targetAltitude, minTurnAlt)
-                zoomReason += "+turn-appr"
+                zoomReason += "+turn-appr-1kft"
             }
             
             // Destination approach (closer = lower and more top-down)
