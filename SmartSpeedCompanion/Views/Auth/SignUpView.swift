@@ -154,6 +154,10 @@ public struct SignUpView: View {
         let usernameCopy = username
         let emailCopy = email
         let passwordCopy = password
+        // No `resetOnboardingFunnel()` call needed here — when
+        // `AuthenticationManager.signUp(...)` succeeds, it posts the
+        // `.userDidSignUp` notification and `AppState` (via the
+        // observer wired in its `init`) resets the funnel automatically.
         Task { @MainActor in
             do {
                 try await authManager.signUp(username: usernameCopy, email: emailCopy, password: passwordCopy)

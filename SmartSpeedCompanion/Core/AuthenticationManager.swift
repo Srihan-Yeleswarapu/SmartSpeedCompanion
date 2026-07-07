@@ -3,6 +3,7 @@ import AuthenticationServices
 import FirebaseAuth
 import FirebaseFirestore
 import FirebaseCore
+import SwiftData
 import UIKit // For device info if needed
 
 public class AuthenticationManager: ObservableObject {
@@ -93,13 +94,20 @@ public class AuthenticationManager: ObservableObject {
         }
 
         // Surface the new session to the rest of the app on the main thread.
+        // `AppState` listens for the `.userDidSignUp` notification and runs
+        // its onboarding-funnel reset inline. Posting here (rather than
+        // having each call site remember) means any future sign-up path
+        // — magic link, SMS OTP, anonymous upgrade, SSO — automatically
+        // gets the same behavior without coupling `AuthenticationManager`
+        // to `AppState` directly.
         await MainActor.run {
             self.isAuthenticated = true
             self.currentUserEmail = email
             self.saveUIDToKeychain(uid: authResult.user.uid)
+            NotificationCenter.default.post(name: .userDidSignUp, object: nil)
         }
     }
-    
+
     public func signIn(email: String, password: String) async throws {
         guard FirebaseApp.app() != nil else { throw AuthError.firebaseNotConfigured }
         guard isValidEmail(email) else { throw AuthError.invalidEmail }
@@ -196,6 +204,14 @@ public class AuthenticationManager: ObservableObject {
                     self?.isAuthenticated = true
                     self?.currentUserEmail = user.email
                     self?.saveUIDToKeychain(uid: user.uid)
+                    // Same notification contract as `signUp(...)` — see the
+                    // comment in that method for why we post here instead
+                    // of calling `resetOnboardingFunnel` directly. Posting
+                    // from a `DispatchQueue.main.async` block is safe
+                    // because NotificationCenter is thread-safe to post
+                    // from any thread, and the observer in `AppState.init`
+                    // already uses `queue: .main`.
+                    NotificationCenter.default.post(name: .userDidSignUp, object: nil)
                     completion(.success(()))
                 }
             }
@@ -213,6 +229,195 @@ public class AuthenticationManager: ObservableObject {
             }
         } catch {
             print("Error signing out: \(error)")
+        }
+    }
+    
+    // MARK: - Account Deletion (Apple App Store Guideline 5.1.1(v))
+    
+    /// Permanently deletes the user's Firebase Auth account, then optionally wipes the
+    /// associated Firestore documents and on-device SwiftData sessions.
+    ///
+    /// Order of operations matters here:
+    /// 1. **Firebase Auth delete FIRST** — this is what Apple App Store Guideline
+    ///    5.1.1(v) actually requires (the account itself must be destroyed). It is
+    ///    also the only step that can throw `requiresRecentLogin`, which we
+    ///    propagate up so the caller can show an in-app re-authentication sheet.
+    /// 2. **Firestore cleanup SECOND** — performed as best-effort after the Auth
+    ///    user is destroyed. Failures here are logged.
+    /// 3. **Local SwiftData wipe THIRD** — best-effort. The auth-state listener
+    ///    in `checkAuthStatus()` will fire `isAuthenticated = false` automatically
+    ///    after step 1, which redirects the root view away from the Settings tab.
+    ///
+    /// Marked `@MainActor` so calls from SwiftUI `Task { ... }` bodies don't need
+    /// extra isolation hops when they synchronously read `isAuthenticated` /
+    /// `currentUserEmail` immediately after this returns.
+    @MainActor
+    public func deleteAccount() async throws {
+        guard FirebaseApp.app() != nil else { throw AuthError.firebaseNotConfigured }
+        guard let user = Auth.auth().currentUser else { throw AuthError.userNotFound }
+
+        // Snapshot the UID before we destroy the user object, so the post-delete
+        // cleanup can still target `users/{uid}` even after `currentUser` is nil.
+        let uid = user.uid
+
+        // 1. Firebase Auth delete — may throw `requiresRecentLogin` if the user
+        //    hasn't signed in within the last ~1 hour. Map that to our typed case.
+        do {
+            try await user.delete()
+        } catch let nsError as NSError {
+            guard let code = AuthErrorCode(rawValue: nsError.code) else { throw nsError }
+            switch code {
+            case .requiresRecentLogin:
+                throw AuthError.requiresRecentLogin
+            default:
+                throw nsError
+            }
+        }
+
+        // 2 & 3. Track whether each backend-cleanup attempt succeeded so we can
+        // surface `partialDeletion` to the caller when BOTH fail. The Auth account
+        // is already gone at this point regardless of outcome (Apple 5.1.1(v) is
+        // satisfied either way), so we log and continue on individual failures
+        // but report a typed error when neither cleanup path completed.
+        var firestoreCleanupOK = true
+        do {
+            try await deleteFirestoreUserData(uid: uid)
+        } catch {
+            firestoreCleanupOK = false
+            DebugLogger.shared.log("Account delete: Firestore cleanup FAILED for uid \(uid) (account already deleted): \(error.localizedDescription)")
+        }
+
+        var localCleanupOK = true
+        do {
+            try await clearLocalData()
+        } catch {
+            localCleanupOK = false
+            DebugLogger.shared.log("Account delete: Local cleanup FAILED (account already deleted): \(error.localizedDescription)")
+        }
+
+        if !firestoreCleanupOK || !localCleanupOK {
+            throw AuthError.partialDeletion
+        }
+
+        // The auth-state listener in `checkAuthStatus()` is already wired to
+        // set `isAuthenticated = false` when the Auth user disappears, so we
+        // do NOT need to manually publish that here. Doing so would cause a
+        // brief flash of "signed out" before the listener settles.
+    }
+    
+    /// Re-authenticates the current Firebase user with the supplied email/password
+    /// credential. Call this to refresh the recent-login window when
+    /// `deleteAccount()` throws `AuthError.requiresRecentLogin`.
+    ///
+    /// After this succeeds, re-invoke `deleteAccount()` — Firebase will accept the
+    /// deletion because the user has just been verified.
+    public func reauthenticate(email: String, password: String) async throws {
+        guard FirebaseApp.app() != nil else { throw AuthError.firebaseNotConfigured }
+        guard let user = Auth.auth().currentUser else { throw AuthError.userNotFound }
+        guard isValidEmail(email) else { throw AuthError.invalidEmail }
+        guard !password.isEmpty else { throw AuthError.incorrectPassword }
+        
+        let credential = EmailAuthProvider.credential(withEmail: email, password: password)
+        do {
+            try await user.reauthenticate(with: credential)
+        } catch let nsError as NSError {
+            // Mirror the disambiguation policy used by `signIn(...)` so the UI
+            // gets a typed `AuthError` instead of an opaque `NSError`.
+            guard let code = AuthErrorCode(rawValue: nsError.code) else { throw nsError }
+            switch code {
+            case .userNotFound, .invalidCredential:
+                // Surface as `userNotFound` — the Auth user obviously exists
+                // (we have `currentUser`), so a Firebase no-account error here
+                // indicates the supplied credentials don't belong to anyone.
+                throw AuthError.userNotFound
+            case .wrongPassword:
+                throw AuthError.incorrectPassword
+            default:
+                throw nsError
+            }
+        }
+    }
+    
+    /// Convenience: re-authenticate with email/password, then immediately delete
+    /// the account. Use after `deleteAccount()` throws `requiresRecentLogin`.
+    public func reauthenticateAndDeleteAccount(email: String, password: String) async throws {
+        try await reauthenticate(email: email, password: password)
+        try await deleteAccount()
+    }
+    
+    /// Deletes the user's Firestore profile doc and all subcollection rows.
+    ///
+    /// Sessions can number in the hundreds over many drives; each session doc
+    /// embeds a `"readings"` array of GPS points, so the parent doc itself
+    /// could be hundreds of KB. We batch the subcollection deletes (Firestore
+    /// write batches support up to 500 ops per commit) and then delete the
+    /// parent `users/{uid}` doc.
+    ///
+    /// Hard cap of `maxIterations * 500 = 10_000` session deletes — beyond
+    /// that we log and stop. Hundreds of drives at 1 Hz readings would
+    /// still only produce a few dozen actual session docs; 10k is generous.
+    private func deleteFirestoreUserData(uid: String) async throws {
+        let db = Firestore.firestore()
+        let sessionsRef = db.collection("users").document(uid).collection("sessions")
+
+        let maxIterations = 20
+        var iterations = 0
+        while true {
+            iterations += 1
+            if iterations > maxIterations {
+                DebugLogger.shared.log("Account delete: Firestore session cleanup hit cap (\(maxIterations) iterations). Stopping.")
+                break
+            }
+            let snapshot = try await sessionsRef.limit(to: 500).getDocuments()
+            if snapshot.documents.isEmpty { break }
+
+            let batch = db.batch()
+            for doc in snapshot.documents {
+                batch.deleteDocument(doc.reference)
+            }
+            try await batch.commit()
+
+            // If we got back fewer than the limit we requested, we're done.
+            if snapshot.documents.count < 500 { break }
+        }
+
+        // Finally, delete the parent profile doc.
+        try await db.collection("users").document(uid).delete()
+    }
+
+    /// Best-effort local device wipe:
+    /// 1. Removes the per-user UserDefaults entries the app owns
+    ///    (current search history). Note: we intentionally do NOT nuke
+    ///    `userBuffer` / `audioAlertsEnabled` / etc. — those are app-wide
+    ///    preferences keyed to the install, not the user, and wiping them
+    ///    would force the next person to re-tune every preference.
+    /// 2. Deletes every recorded `DriveSession` row from the shared
+    ///    SwiftData container. Cascade-delete on the `@Relationship`
+    ///    (`deleteRule: .cascade`) automatically removes the related
+    ///    `SpeedReading` rows, so we don't need to fetch them separately.
+    ///
+    /// Note: the iOS Keychain entry that caches the Firebase UID is wiped
+    /// automatically by the auth-state listener in `checkAuthStatus()` when
+    /// `currentUser` becomes nil — no manual `KeychainHelper.delete` here.
+    @MainActor
+    private func clearLocalData() async throws {
+        // 1. UserDefaults — remove per-user history items the next user
+        //    should not see. We deliberately leave `@AppStorage` keys alone
+        //    because those represent device-level, not user-level, prefs.
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "recentSearches")
+
+        // 2. SwiftData — fetch every recorded DriveSession and delete it.
+        //    The `@Relationship(deleteRule: .cascade)` on `DriveSession.readings`
+        //    cascades the delete to `SpeedReading` rows automatically.
+        let context = AppDelegate.sharedModelContainer.mainContext
+        let descriptor = FetchDescriptor<DriveSession>()
+        let sessions = try context.fetch(descriptor)
+        for session in sessions {
+            context.delete(session)
+        }
+        if context.hasChanges {
+            try context.save()
         }
     }
     
@@ -361,6 +566,17 @@ public enum AuthError: LocalizedError, Sendable {
     case firebaseNotConfigured
     case userNotFound
     case emailAlreadyInUse
+    /// Firebase Auth rejected `currentUser.delete()` because the user hasn't
+    /// signed in within the last ~1 hour. The caller MUST surface an in-app
+    /// re-authentication flow (not a mailto/customer-support bounce) to satisfy
+    /// Apple App Store Guideline 5.1.1(v).
+    case requiresRecentLogin
+    /// Account deletion completed for the Firebase Auth record, but the
+    /// trailing Firestore / local SwiftData cleanup could not finish. The
+    /// account itself IS destroyed — only residual metadata or local rows
+    /// may remain. App reviewers usually accept this, but the user is shown
+    /// a clear message so they know to manually prune if it persists.
+    case partialDeletion
 
     public var errorDescription: String? {
         switch self {
@@ -371,6 +587,8 @@ public enum AuthError: LocalizedError, Sendable {
         case .firebaseNotConfigured: return "Firebase is not configured. Please ensure GoogleService-Info.plist is included in the app bundle."
         case .userNotFound: return "No account found for this email. Sign up first."
         case .emailAlreadyInUse: return "You already have an account. Sign in instead."
+        case .requiresRecentLogin: return "For security, please sign in again to confirm account deletion."
+        case .partialDeletion: return "Your account was deleted, but some background cleanup did not finish. The data cannot be accessed without your login — manually prune any leftover history from the app or contact support."
         }
     }
 }

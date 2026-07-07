@@ -10,12 +10,11 @@ public struct AppRootView: View {
         Group {
             if !appState.authManager.initialAuthChecked {
                 initializingView
-            } else if appState.authManager.isAuthenticated {
-                // Returning authenticated user: skip onboarding, go straight to Drive.
-                DriveRootView()
-                    .environmentObject(driveViewModel)
             } else if !appState.hasSelectedState {
                 // First-run funnel: state → onboarding → "how Speedio works" → tutorial → auth.
+                // IMPORTANT: this branch is checked BEFORE `isAuthenticated` so that a
+                // freshly signed-up account (for which `signUp` resets the funnel flags
+                // to `false`) is routed into the funnel, not directly into Drive.
                 StateSelectionView()
             } else if !appState.hasCompletedOnboarding {
                 OnboardingView()
@@ -23,6 +22,10 @@ public struct AppRootView: View {
                 TutorialTransitionView()
             } else if !appState.hasCompletedTutorial {
                 TutorialView()
+            } else if appState.authManager.isAuthenticated {
+                // Returning authenticated user: skip onboarding, go straight to Drive.
+                DriveRootView()
+                    .environmentObject(driveViewModel)
             } else {
                 // Just finished the first-run funnel — default to Sign Up for new users,
                 // but to Sign In for anyone who has previously authenticated on this device.
