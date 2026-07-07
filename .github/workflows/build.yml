@@ -256,18 +256,6 @@ jobs:
             exit 1
           fi
 
-      - name: Upload to App Store Connect
-        run: |
-          IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
-          if [ -z "$IPA_PATH" ]; then
-            echo "ERROR: No .ipa file found in Export directory"
-            exit 1
-          fi
-          echo "Uploading IPA: $IPA_PATH"
-          echo "IPA size: $(wc -c < "$IPA_PATH") bytes"
-
-          xcrun altool --upload-app --file "$IPA_PATH" --type ios --show-progress -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}"
-
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         if: always()
