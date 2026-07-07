@@ -100,7 +100,19 @@ private struct AnalyticsContentView: View {
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
-        ScrollView {
+        // Defensive: if the session backing has been tombstoned by SwiftData
+        // during the same runloop iteration that this view is being
+        // recomputed (e.g. right after a tap-Delete in the picker sheet),
+        // return an inert view immediately. `@Model`'s `isDeleted` flips on
+        // as soon as `context.delete(session)` runs, and the contained
+        // `GeometryReader` otherwise tries to materialize computed
+        // properties like `percentWithinLimit`, triggering the underlying
+        // BackingData assertion (TestFlight regression, v2.1.4 b300,
+        // iPhone XR / iOS 18.7.2).
+        if session.isDeleted {
+            Color.clear
+        } else {
+            ScrollView {
             VStack(spacing: 24) {
                 // Session title banner
                 HStack {
@@ -182,6 +194,7 @@ private struct AnalyticsContentView: View {
             }
             .padding(.bottom, 30)
         }
+        } // end else: session is alive and bound to a valid SwiftData row
     }
 }
 
@@ -222,7 +235,12 @@ private struct SessionPickerSheet: View {
 
     // Starred sessions first, then by date descending
     private var sortedSessions: [DriveSession] {
-        sessions.sorted {
+        // Defensive: skip any sessions that have already been marked for
+        // deletion ahead of the next SwiftUI render. Without this filter,
+        // reading `$0.isStarred ?? false` on a tombstoned object below
+        // crashes SwiftData with `_FullFutureBackingData.getValue(forKey:)`
+        // assertion (regression observed on tap-Delete in v2.1.4 b300).
+        sessions.filter { !$0.isDeleted }.sorted {
             let s0 = $0.isStarred ?? false
             let s1 = $1.isStarred ?? false
             if s0 != s1 { return s0 }
@@ -348,6 +366,15 @@ private struct SessionRow: View {
     }
 
     var body: some View {
+        // Same defensive guard as AnalyticsContentView: skip the row's body
+        // if the underlying session has been marked for deletion. Without
+        // this, the Button label re-renders during the same tick that the
+        // context menu's tap-Delete fires, and reads `session.title` /
+        // `session.drivingScore` on a tombstoned object, which crashes
+        // SwiftData's `_FullFutureBackingData.getValue(forKey:)`.
+        if session.isDeleted {
+            EmptyView()
+        } else {
         Button {
             viewModel.selectSession(session)
         } label: {
@@ -442,6 +469,7 @@ private struct SessionRow: View {
                 Label("Delete", systemImage: "trash")
             }
         }
+        } // end else: session is alive and bound to a valid SwiftData row
     }
 
     private func scoreColor(_ score: Int) -> Color {

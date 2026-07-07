@@ -58,18 +58,20 @@ public final class AnalyticsViewModel: ObservableObject {
     
     public func deleteSession(_ session: DriveSession, context: ModelContext) {
         let sessionIdToDelete = session.id
-        
+
         // 1. Clear selection FIRST if it's the one being deleted.
-        // This ensures the UI detaches from the object before it's invalidated.
+        // CRITICAL: do NOT wrap this in `withAnimation`. The exit animation
+        // keeps `AnalyticsContentView` (with its `GeometryReader`) alive
+        // long enough for the SwiftData save() below to tombstone the row,
+        // and the next layout pass then reads `session.percentWithinLimit`
+        // on a deleted object, crashing SwiftData's BackingData.
         if selectedSession?.id == sessionIdToDelete {
-            withAnimation {
-                selectedSession = nil
-            }
+            selectedSession = nil
         }
-        
+
         // 2. Perform the deletion.
         context.delete(session)
-        
+
         do {
             try context.save()
         } catch {
@@ -86,7 +88,7 @@ public final class AnalyticsViewModel: ObservableObject {
     /// Deletes all non-starred sessions older than 30 days.
     public func purgeOldSessions(sessions: [DriveSession], context: ModelContext) {
         let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
-        for session in sessions {
+        for session in sessions where !session.isDeleted {
             let isStarred = session.isStarred ?? false
             if !isStarred && session.startTime < cutoff {
                 if selectedSession?.id == session.id { selectedSession = nil }
