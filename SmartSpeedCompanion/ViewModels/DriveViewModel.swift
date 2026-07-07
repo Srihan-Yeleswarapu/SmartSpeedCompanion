@@ -687,9 +687,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         // 2. TURN PROXIMITY: Calculate distance to the END of the current step (the upcoming turn)
         if pointCount > 0 {
-            let maneuverPoint = stepPolyline.points()[pointCount - 1].coordinate
-            let maneuverLocation = CLLocation(latitude: maneuverPoint.latitude, longitude: maneuverPoint.longitude)
-            let distanceToTurn = location.distance(from: maneuverLocation)            self.distanceToNextTurn = distanceToTurn
+            let maneuverPoint = stepPolyline.points()[pointCount - 1].coordinate                let maneuverLocation = CLLocation(latitude: maneuverPoint.latitude, longitude: maneuverPoint.longitude)
+                let distanceToTurn = location.distance(from: maneuverLocation)
+                self.distanceToNextTurn = distanceToTurn
 
             // Surface the maneuver coordinate so the map can drop an annotation
             // and Look-Around-At-Turn can be fetched on demand. CLLocationCoordinate2D

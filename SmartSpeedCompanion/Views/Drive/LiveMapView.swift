@@ -39,16 +39,18 @@ public struct LiveMapView: UIViewRepresentable {
         map.isZoomEnabled = true
         map.isScrollEnabled = true
 
-        // Hide the system pitch button — we expose our own MKPitchToggle
-        // anchored to a corner so the dark-mode glass theme stays consistent.
+        // Surface the system pitch toggle. MKPitchToggle does not exist
+        // in iOS MapKit (the SwiftUI analog is `MapPitchToggle(view:)`,
+        // not an MK-prefixed class), so the system-rendered button is the
+        // on-device native option — it theming-picks-up dark mode itself.
         if #available(iOS 16.0, *) {
-            map.pitchButtonVisibility = .hidden
+            map.pitchButtonVisibility = .visible
         }
 
-        // ALREADY CORE: Native tracking button (recenters the map).
-        if #available(iOS 17.0, *) {
-            map.showsUserTrackingButton = true
-        }
+        // MKUserTrackingButton is added as an explicit subview in
+        // setupNativeControls(for:) — we deliberately do NOT also set
+        // `map.showsUserTrackingButton = true` here, otherwise the system
+        // would add a duplicate at its default location.
 
         // Use native tracking with heading for best centering reliability.
         map.userTrackingMode = .followWithHeading
@@ -140,14 +142,9 @@ public struct LiveMapView: UIViewRepresentable {
         compass.translatesAutoresizingMaskIntoConstraints = false
         map.addSubview(compass)
 
-        // MKPitchToggle — Apple's native 2D ↔ 3D camera toggle surfaced as a
-        // glassy bling button. Replaces our previous custom button if any.
-        let pitchToggle = MKPitchToggle(mapView: map)
-        pitchToggle.translatesAutoresizingMaskIntoConstraints = false
-        map.addSubview(pitchToggle)
-
-        // MKUserTrackingButton — explicit recenter. `map.showsUserTrackingButton`
-        // is also true but an explicit instance lets us pin it where we want.
+        // MKUserTrackingButton — explicit recenter. The system one
+        // (`map.showsUserTrackingButton = true`) is disabled below so the
+        // user only sees this single pinned instance.
         let trackingButton = MKUserTrackingButton(mapView: map)
         trackingButton.translatesAutoresizingMaskIntoConstraints = false
         map.addSubview(trackingButton)
@@ -159,11 +156,8 @@ public struct LiveMapView: UIViewRepresentable {
             compass.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
             compass.bottomAnchor.constraint(equalTo: map.safeAreaLayoutGuide.bottomAnchor, constant: -180),
 
-            pitchToggle.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
-            pitchToggle.bottomAnchor.constraint(equalTo: compass.topAnchor, constant: -10),
-
             trackingButton.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
-            trackingButton.bottomAnchor.constraint(equalTo: pitchToggle.topAnchor, constant: -10)
+            trackingButton.bottomAnchor.constraint(equalTo: compass.topAnchor, constant: -10)
         ])
     }
     
