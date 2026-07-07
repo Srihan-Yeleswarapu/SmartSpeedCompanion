@@ -111,11 +111,10 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        UISupportedInterfaceOrientations~ipad:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationPortraitUpsideDown
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
+        # UISupportedInterfaceOrientations~ipad intentionally omitted — the app is iPhone-only
+        # (TARGETED_DEVICE_FAMILY=1 in settings.base). Including this key would be a no-op
+        # but removing it prevents App Store Connect ingestion from flagging a
+        # "iPad orientation present in iPhone-only binary" warning.
 
     settings:
       base:
@@ -127,6 +126,13 @@ targets:
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "Apple Distribution"
         PROVISIONING_PROFILE_SPECIFIER: "Speedio App Store"
+        # TARGETED_DEVICE_FAMILY=1 declares the binary as iPhone-only. This app is a
+        # CarPlay + Live Activities driving app — iPads do not run CarPlay and there is
+        # no iPad UI. With UIDeviceFamily=[1] the App Store Connect submission form
+        # stops requiring 12.9" iPad Pro screenshots and Apple only lists the build as
+        # installable on iPhone in the App Store. (1,2) is the Xcode default and was
+        # silently making ASC treat Speedio as a universal iOS app.
+        TARGETED_DEVICE_FAMILY: "1"
 
     # SpeedWidget and SpeedLiveActivity removed from dependencies
     # until iOS 26 / Xcode 16 runner is available on GitHub Actions
