@@ -1,18 +1,26 @@
 // SpeedLimitService.swift
 // Orchestrator that picks the best speed-limit answer for the user's current coord.
 //
-// Decision tree:
+// Decision tree (Phase 2 polish expanded the live-fast-path):
 //   1. Spatial-grid cache lookup -> hit short-circuits everything below.
+//   1.5. SQLite-fast-path -- if the user is within ~1 km of a known AZ road corridor
+//        (ArizonaSpeedLimitService.hasNearbyCoverage), try the local SQLite first.
+//        Success skips the network round-trip; snap failure falls through.
 //   2. If NetworkReachability.isConnected:
 //        Walk liveProviders in order (ArcGIS HPMS -> Overpass) -- first non-nil response wins.
 //        On network/parse failure for a provider, drop and try the next.
-//   3. If offline (or all live providers miss) -> ArizonaSpeedLimitService (SQLite fallback).
+//   3. SQLite fallback (offline, or all live providers missed) -- with ExpandedSearch
+//        retry and 20-miss grace window before dropping state to "No Data".
 //   4. SQLite miss raises missCount; at missThresholdBeforeClear consecutive misses we drop
 //      state to "No Data" rather than pinning the driver to a stale segment.
 //
-// @Published dataSource is now a typed SpeedLimitDataSource enum (was a bare String).
-// Existing UI consumers that read .rawValue continue to work because rawValues match the
-// old string keys.
+// Trade-off note: the 30-min memory cache TTL combined with sqlite-first means a
+// recently-installed sign change can be silently stale for up to 30 min in the same
+// 50 m cell. Acceptable for the polish pass -- background live verification can be
+// added later as shadow-verify if the staleness proves user-visible.
+//
+// @Published dataSource is a typed SpeedLimitDataSource enum. Step 1.5 surfaces the
+// same .localDB source as the existing sqlite-fallback path.
 
 import Foundation
 import CoreLocation
@@ -57,6 +65,30 @@ public class SmartSpeedLimitService: ObservableObject {
             apply(limit: cached.speedLimitMph,
                   source: sourceForProviderName(cached.providerName))
             return cached.speedLimitMph
+        }
+
+        // 1.5. SQLite-fast-path. Within a known ~1 km corridor, hit the local
+        // SQLite first to avoid the network round-trip. Snap failure falls
+        // through to live providers; the 30-min cache TTL bounds staleness.
+        if await ArizonaSpeedLimitService.shared.hasNearbyCoverage(
+            at: coordinate, heading: heading
+        ) {
+            if let sqliteLimit = try? await ArizonaSpeedLimitService.shared.updateSpeedLimit(
+                at: coordinate, heading: heading, currentSpeedMph: currentSpeedMph
+            ), sqliteLimit > 0 {
+                let resp = SpeedLimitResponse(
+                    speedLimitMph: sqliteLimit,
+                    roadKey: "local-sqlite",
+                    providerName: "AZ SQLite",
+                    detail: "Local SQLite lookup within 1 km corridor"
+                )
+                await cache.store(resp, at: coordinate)
+                apply(limit: sqliteLimit, source: .localDB)
+                return sqliteLimit
+            }
+            // Coverage exists but SQLite could not snap at the user's coord
+            // (heading mismatch, intersection gap, etc.). Fall through to live
+            // providers for fresher data.
         }
 
         // 2. Live provider chain (only when online).
@@ -137,9 +169,10 @@ public class SmartSpeedLimitService: ObservableObject {
 
     private func sourceForProviderName(_ name: String) -> SpeedLimitDataSource {
         switch name {
-        case "ArcGIS": return .liveArcGIS
-        case "Overpass": return .liveOverpass
-        default: return .noData
+        case "ArcGIS":    return .liveArcGIS
+        case "Overpass":  return .liveOverpass
+        case "AZ SQLite": return .localDB
+        default:          return .noData
         }
     }
 }
