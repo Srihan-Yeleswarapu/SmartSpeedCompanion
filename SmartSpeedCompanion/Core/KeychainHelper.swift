@@ -1,7 +1,10 @@
 import Foundation
 import Security
 
-class KeychainHelper {
+// Sendable because the class has no mutable state and Apple's SecItem* APIs
+// are documented thread-safe. Sources:
+//   https://developer.apple.com/documentation/security/keychain_services
+final class KeychainHelper: Sendable {
     static let standard = KeychainHelper()
     
     private init() {}

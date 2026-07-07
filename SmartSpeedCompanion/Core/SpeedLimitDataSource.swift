@@ -12,6 +12,10 @@
 import Foundation
 
 public enum SpeedLimitDataSource: String, Equatable, Codable, Sendable, CaseIterable {
+    /// Live data from HERE REST v8 `/v8/routes` with `return=speedLimit`. Highest
+    /// accuracy on signed arterials; uses user-supplied HERE Platform creds from
+    /// Keychain (HERECredentialStore). 250k requests/month FREE PERMANENTLY.
+    case liveHERE = "Live (HERE)"
     /// Live data from the ArcGIS HPMS FeatureServer (layer 48 — SpeedLimit_2024).
     case liveArcGIS = "Live (ArcGIS)"
     /// Live data from the OpenStreetMap Overpass API (queries the OSM `maxspeed` tag).

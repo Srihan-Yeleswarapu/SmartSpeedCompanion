@@ -7,8 +7,8 @@
 //        (ArizonaSpeedLimitService.hasNearbyCoverage), try the local SQLite first.
 //        Success skips the network round-trip; snap failure falls through.
 //   2. If NetworkReachability.isConnected:
-//        Walk liveProviders in order (ArcGIS HPMS -> Overpass) -- first non-nil response wins.
-//        On network/parse failure for a provider, drop and try the next.
+//        Walk liveProviders in order (HERE REST -> ArcGIS HPMS -> Overpass) -- first non-nil
+//        response wins. On network/parse failure for a provider, drop and try the next.
 //   3. SQLite fallback (offline, or all live providers missed) -- with ExpandedSearch
 //        retry and 20-miss grace window before dropping state to "No Data".
 //   4. SQLite miss raises missCount; at missThresholdBeforeClear consecutive misses we drop
@@ -41,13 +41,15 @@ public class SmartSpeedLimitService: ObservableObject {
 
     private let liveProviders: [SpeedLimitProvider]
     private let reachability = NetworkReachability.shared
-    private let cache = SpeedLimitResponseCache.shared
-
-    private init() {
+    private let cache = SpeedLimitResponseCache.shared    private init() {
+        // Order matters for accuracy on signed arterials: HERE REST relies on
+        // the user's HERE Platform creds (Keychain). 250k requests/month free
+        // permanently. Falls through on nil / 429 / 5xx / missing creds.
         self.liveProviders = [
+            HERERestSpeedLimitProvider(),
             ArcGISHPMSSpeedLimitProvider(),
             OverpassSpeedLimitProvider(),
-        ]
+        ]   
         // Preload any persisted entries from disk so the very first fetch can
         // avoid the network round-trip if the user is revisiting a road.
         Task { await cache.loadFromDisk() }
@@ -169,6 +171,7 @@ public class SmartSpeedLimitService: ObservableObject {
 
     private func sourceForProviderName(_ name: String) -> SpeedLimitDataSource {
         switch name {
+        case "HERE REST": return .liveHERE
         case "ArcGIS":    return .liveArcGIS
         case "Overpass":  return .liveOverpass
         case "AZ SQLite": return .localDB
