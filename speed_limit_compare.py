@@ -41,6 +41,7 @@
 # Tested with Python 3.10+. Pure stdlib + sqlite3.
 
 import argparse
+import http.client
 import json
 import math
 import os
@@ -60,6 +61,17 @@ ARCGIS_AZ_BBOX = (-114.95, -108.87, 31.30, 37.03)  # (xmin, xmax, ymin, ymax)
 USER_AGENT = "Speedio-SpeedLimitCompare/1.0 (research; speedsenseapp@gmail.com)"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Fallback chain for the public Overpass endpoints. Different operators have
+# different load profiles, so when one is throttling / 504-ing the next one
+# in the list usually succeeds within seconds. All endpoints use the same
+# QL syntax and Accept: application/json contract, so a single helper can
+# drive them all interchangeably.
+OVERPASS_MIRRORS = [
+    OVERPASS_URL,                                # primary
+    "https://overpass.kumi.systems/api/interpreter",     # Kumi Systems mirror
+    "https://lz4.overpass-api.de/api/interpreter",       # lz4-compressed primary
+    "https://overpass.openstreetmap.fr/api/interpreter", # OSM-FR mirror (stable)
+]
 ARCGIS_URL = (
     "https://services6.arcgis.com/clPWQMwZfdWn4MQZ/arcgis/rest/services/"
     "HPMS_2024_Data/FeatureServer/48/query"
@@ -376,6 +388,61 @@ def geocode_nominatim(address: str, verbose=False):
 
 
 # --------------- Overpass ---------------
+def _overpass_query_with_retries(url: str, query: str, verbose: bool = False):
+    """Try `url` once, then with backoff on transient errors. Returns
+    parsed JSON. Raises the LAST error if both attempts fail so the outer
+    mirror loop can decide whether to fall through to the next mirror.
+    Mirrors the existing ArcGIS retry pattern in `_arcgis_query_envelope`.
+
+    Transient errors caught (all result in retry once, then `break` to
+    fall through to next mirror):
+      * urllib.error.URLError / OSError: DNS failure, connect timeout
+        (socket.timeout is OSError-derived, NOT URLError in modern Python),
+        refused connection.
+      * http.client.HTTPException: RemoteDisconnected, BadStatusLine, etc.
+        (HTTPException-derived, NOT OSError).
+      * http.client.IncompleteRead: truncated response (Exception-derived
+        directly, NOT OSError or HTTPException).
+      * ValueError: json.JSONDecodeError (200 OK with non-JSON body) and
+        UnicodeDecodeError (response body has invalid UTF-8 bytes).
+
+    4xx-other-than-429 is NOT transient -- the query is malformed, so
+    the helper bare-`raise`s immediately and the outer loop propagates
+    without trying other mirrors.
+    """
+    last_err = None
+    for attempt in range(2):
+        try:
+            return _http_post_form(url, {"data": query}, timeout=OVERPASS_TIMEOUT_S)
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 429:
+                if attempt == 0:
+                    print(f"[overpass] {url} HIT 429, sleeping 60s then retrying once...")
+                    time.sleep(60)
+                    continue
+                break  # second 429 -> let mirror loop try the next URL
+            if 500 <= e.code < 600:
+                if attempt == 0:
+                    print(f"[overpass] {url} HIT {e.code}, sleeping 10s then retrying once...")
+                    time.sleep(10)
+                    continue
+                break  # second 5xx -> next mirror
+            raise  # 4xx other than 429 is a real bug, don't loop
+        except (urllib.error.URLError, OSError, http.client.HTTPException,
+                http.client.IncompleteRead, ValueError) as e:
+            # All transient -- let the mirror loop try the next URL on
+            # the second attempt.
+            last_err = e
+            if attempt == 0:
+                print(f"[overpass] {url} transient error ({type(e).__name__}: {e}), "
+                      f"sleeping 10s then retrying once...")
+                time.sleep(10)
+                continue
+            break
+    raise last_err
+
+
 def query_overpass_bbox(lat: float, lon: float, radius_m: float, max_roads: int,
                         verbose=False) -> list:
     """Single bulk Overpass query returning every named `highway` way whose
@@ -391,6 +458,9 @@ def query_overpass_bbox(lat: float, lon: float, radius_m: float, max_roads: int,
       * The server returns 200 OK with a soft-fail `remark` field on
         partial / timed-out / QAL-exhausted results -- we surface it.
       * Throttle is 2 req/sec/IP; we honor 429 with a 60s backoff + 1 retry.
+      * On 5xx (502/503/504) or any other transient error, we fall through
+        a chain of public Overpass mirrors (OVERPASS_MIRRORS) before giving
+        up. Each mirror gets one retry; if all fail, the last error raises.
     """
     minx, maxx, miny, maxy = bbox_around(lat, lon, radius_m)
     query = (
@@ -400,15 +470,31 @@ def query_overpass_bbox(lat: float, lon: float, radius_m: float, max_roads: int,
     )
     if verbose:
         print(f"[overpass] bbox=({miny:.4f},{minx:.4f},{maxy:.4f},{maxx:.4f}), cap={max_roads}")
-    try:
-        data = _http_post_form(OVERPASS_URL, {"data": query}, timeout=OVERPASS_TIMEOUT_S)
-    except urllib.error.HTTPError as e:
-        if e.code == 429:
-            print("[overpass] HIT 429, sleeping 60s then retrying once...")
-            time.sleep(60)
-            data = _http_post_form(OVERPASS_URL, {"data": query}, timeout=OVERPASS_TIMEOUT_S)
-        else:
-            raise
+    data = None
+    last_err: Exception = RuntimeError("no overpass mirror attempted")
+    for url in OVERPASS_MIRRORS:
+        try:
+            data = _overpass_query_with_retries(url, query, verbose=verbose)
+            if url != OVERPASS_MIRRORS[0]:
+                print(f"[overpass] recovered via mirror: {url}")
+            break
+        except (urllib.error.HTTPError, urllib.error.URLError,
+                OSError, http.client.HTTPException, http.client.IncompleteRead,
+                ValueError) as e:
+            # 4xx other than 429 means our QUERY is malformed, not that the
+            # server is sick. Three more mirrors will all return the same
+            # 400 with the same query -- waste of 30-120s of wall time.
+            # Re-raise immediately so the user sees the real error.
+            if isinstance(e, urllib.error.HTTPError) \
+                    and 400 <= e.code < 500 and e.code != 429:
+                print(f"[overpass] mirror {url} returned {e.code} "
+                      f"(query-level error, not transient) -- stopping")
+                raise
+            last_err = e
+            print(f"[overpass] mirror {url} failed: {e}")
+            continue
+    if data is None:
+        raise last_err
     if data.get("remark"):
         print(f"[overpass] SERVER REMARK: {data['remark']}")
     elements = (data.get("elements") or [])
