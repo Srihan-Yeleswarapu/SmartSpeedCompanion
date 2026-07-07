@@ -73,6 +73,13 @@ targets:
         CFBundleName: Speedio
         CFBundleDisplayName: Speedio
         CFBundleIdentifier: com.speedsense.app
+        # ITSAppUsesNonExemptEncryption: false declares that the app uses only standard,
+        # exempt encryption via Apple's OS-provided stack (TLS in URLSession, HTTPS in the
+        # Firebase SDK, HTTPS in our ArcGIS / Overpass providers, etc.). With this key
+        # present in the generated Info.plist, App Store Connect skips the post-upload
+        # export-compliance form on every future upload. Apple's spec:
+        # https://developer.apple.com/documentation/bundleresources/information-property-list/itsappusesnonexemptencryption
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen:
           UIColorName: LaunchBackground
         UIApplicationSceneManifest:
