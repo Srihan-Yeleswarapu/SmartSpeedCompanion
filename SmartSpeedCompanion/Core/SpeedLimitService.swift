@@ -7,7 +7,7 @@
 //        (ArizonaSpeedLimitService.hasNearbyCoverage), try the local SQLite first.
 //        Success skips the network round-trip; snap failure falls through.
 //   2. If NetworkReachability.isConnected:
-//        Walk liveProviders in order (HERE REST -> ArcGIS HPMS -> Overpass) -- first non-nil
+//        Walk liveProviders in order (ArcGIS HPMS -> Overpass) -- first non-nil
 //        response wins. On network/parse failure for a provider, drop and try the next.
 //   3. SQLite fallback (offline, or all live providers missed) -- with ExpandedSearch
 //        retry and 20-miss grace window before dropping state to "No Data".
@@ -43,15 +43,27 @@ public class SmartSpeedLimitService: ObservableObject {
     private let reachability = NetworkReachability.shared
     private let cache = SpeedLimitResponseCache.shared
 
+    // MARK: - HERE intentionally disabled (Phase 3 deferred)
+    //
+    // The HERE REST provider is implemented on disk:
+    //   - SmartSpeedCompanion/Core/HERERestSpeedLimitProvider.swift
+    //   - SmartSpeedCompanion/Core/HERECredentialStore.swift
+    //   - SpeedLimitDataSource.liveHERE enum case
+    //   - sourceForProviderName(_:) "HERE REST" -> .liveHERE mapping
+    // but is intentionally NOT instantiated in liveProviders above.
+    //
+    // Do NOT re-add HERERestSpeedLimitProvider() to liveProviders without
+    // verifying (a) the user's HERE credentials are loaded in Keychain via
+    // HERECredentialStore.saveCredentials(...), and (b) a working bootstrap UI
+    // exists for end users to paste their access_key_id / access_key_secret.
+    // Without those, the provider silently returns nil on every call and the
+    // chain just spends a network round-trip on every GPS update.
+
     private init() {
-        // Order matters for accuracy on signed arterials: HERE REST relies on
-        // the user's HERE Platform creds (Keychain). 250k requests/month free
-        // permanently. Falls through on nil / 429 / 5xx / missing creds.
         self.liveProviders = [
-            HERERestSpeedLimitProvider(),
             ArcGISHPMSSpeedLimitProvider(),
             OverpassSpeedLimitProvider(),
-        ]   
+        ]
         // Preload any persisted entries from disk so the very first fetch can
         // avoid the network round-trip if the user is revisiting a road.
         Task { await cache.loadFromDisk() }
