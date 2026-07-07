@@ -250,12 +250,7 @@ private struct SessionPickerSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Drag handle area
-            Capsule()
-                .fill(Color.gray.opacity(0.3))
-                .frame(width: 40, height: 4)
-                .padding(.top, 12)
-            
+            // Drag handle is provided by .presentationDragIndicator(.visible).
             // Sheet header
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
