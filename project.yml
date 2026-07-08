@@ -97,9 +97,15 @@ targets:
         NSLocationWhenInUseUsageDescription: "Speed Sense needs your location to monitor your speed."
         NSMotionUsageDescription: "Used to detect sudden deceleration for crash detection."
         NSSiriUsageDescription: "Use Siri to start and stop your drive sessions."
+        # CPSupportedTemplates must mirror what the CarPlay folder actually
+        # instantiates at runtime; ACS validates the declared set.
         CPSupportedTemplates:
           - CPMapTemplate
           - CPAlertTemplate
+          - CPSearchTemplate
+          - CPNavigationAlert
+          - CPListTemplate
+          - CPInformationTemplate
         UIRequiredDeviceCapabilities:
           - location-services
           - gps
