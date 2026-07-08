@@ -73,8 +73,15 @@ public final class LocationManager: NSObject, ObservableObject {
     
     /// Requests Always authorization, required for CarPlay background operation.
     public func requestAuthorization() {
+        // In the iOS Simulator the location-permission dialog is theatre
+        // (the mock-location path doesn't need it) and a "Don't Allow" tap
+        // silently breaks the flow. Skip the request entirely on simulator.
+        #if targetEnvironment(simulator)
+        return
+        #else
         manager.requestAlwaysAuthorization()
         DebugLogger.shared.log("LocationManager: Requesting Always Authorization.")
+        #endif
     }
     
     public func startUpdatingLocation() {

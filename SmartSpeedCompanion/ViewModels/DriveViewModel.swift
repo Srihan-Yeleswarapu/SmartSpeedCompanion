@@ -514,10 +514,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             self.nextManeuverImageName = getImageForManeuver(displayInstruction)
         }
 
-        // Display the route in a Live Activity on the lock screen
+        // Display the route in a Live Activity on the lock screen.
+        // Live Activities don't render in the iOS Simulator; gate the call
+        // so the simulator path is silent (matches the startSession gate).
+        #if !targetEnvironment(simulator)
         if #available(iOS 16.1, *) {
             LiveActivityManager.shared.startActivity(sessionStartDate: sessionStartTime ?? Date())
         }
+        #endif
     }
 
     /// Grabs coordinates along the route and pre-fetches speed limit data for those points.
