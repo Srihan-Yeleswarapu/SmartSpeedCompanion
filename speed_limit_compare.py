@@ -673,10 +673,17 @@ def _arcgis_candidates_with_dist(road_lat, road_lon, features, max_dist):
 
 def _sqlite_candidates_with_dist(road_lat, road_lon, rows, max_dist):
     """[(row, distance_m)] for SQLite rows whose bbox is within max_dist.
-    Distance uses the Swift-compatible point-to-bbox formula
-    (`RoadSegment.distance(to:)` in iOS). d=0.0 means point is inside the
-    segment bbox; matches at d=0.0 are NOT guaranteed same-road and rely on
-    the match_basis column to disambiguate."""
+    Distance uses the Swift-compatible point-to-bbox-edge formula
+    (`RoadSegment.distance(to:)` in iOS after the freeway-bbox fix).
+    d=0.0 means point is on or inside the segment bbox; matches at d=0.0
+    are NOT guaranteed same-road and rely on the match_basis column to
+    disambiguate.
+
+    Important: this returns the EDGE distance because that's what
+    `Distance(meters)` on the CSV row reports. The new SCORING-side
+    centerline-offset penalty is deliberately separated here so the
+    match_basis column keeps its deterministic ref / name / spatial
+    semantics untouched by the snap-logic change."""
     out = []
     for r in rows:
         dx = max(0.0, r["minx"] - road_lon, road_lon - r["maxx"])

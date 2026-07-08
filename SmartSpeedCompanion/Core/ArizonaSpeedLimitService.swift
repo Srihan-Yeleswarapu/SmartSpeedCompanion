@@ -38,20 +38,66 @@ public actor ArizonaSpeedLimitService {
         let maxy: Double
         let limit: Int
         let routeId: String?
-        
+
         var area: Double {
             return (maxx - minx) * (maxy - miny)
         }
-        
+
+        /// Point-to-bounding-box edge distance in meters. Used as the SPATIAL
+        /// GATE (`maxSnappingDistance`) so points physically inside the bbox
+        /// always pass without forcing us to parse the actual polyline.
+        /// DO NOT use this for scoring: a coord inside a 36km × 5km freeway
+        /// bbox would return 0, which would let a freeway out-score a tight
+        /// cross-street 15m away.
         func distance(to coord: CLLocationCoordinate2D) -> CLLocationDistance {
             let dx = max(0.0, minx - coord.longitude, coord.longitude - maxx)
             let dy = max(0.0, miny - coord.latitude, coord.latitude - maxy)
-            
+
             if dx == 0 && dy == 0 { return 0 }
-            
+
             // Geographic to meters approximation
             let latDist = dy * 111111.0
             let lonDist = dx * 111111.0 * cos(coord.latitude * .pi / 180.0)
+            return sqrt(latDist * latDist + lonDist * lonDist)
+        }
+
+        /// Offset (meters) from the bbox's inferred centerline. Used as the
+        /// SCORING PENALTY so a coord inside a giant freeway bbox that's
+        /// actually a few hundred meters off the freeway reports a centerline
+        /// offset rather than 0.
+        ///
+        /// Math: high-aspect-ratio bboxes (e.g., S 202 Santan Freeway:
+        /// dx=0.325°, dy=0.049° → aspectRatio ≈ 6.6) are modeled as corridors
+        /// whose centerline lies along the major axis. Square or nearly-square
+        /// bboxes are treated as 2-D areas, so a coord inside them returns 0
+        /// (matching the legacy behavior to keep small-area roads unchanged).
+        /// Continuous across the bbox edge: clamped at `h/2` or `w/2` so we
+        /// don't double-count the edge distance.
+        func centerlineOffset(to coord: CLLocationCoordinate2D) -> CLLocationDistance {
+            let w = maxx - minx
+            let h = maxy - miny
+            let cx = minx + w / 2.0
+            let cy = miny + h / 2.0
+
+            var inDx = 0.0
+            var inDy = 0.0
+
+            if w > h && w > 0 {
+                // Horizontal-dominant corridor. Centerline is `lat = cy`.
+                // Aspect-ratio factor: 1.0 for a perfect line, 0.0 for square.
+                let factor = 1.0 - (h / w)
+                inDy = min(abs(coord.latitude - cy), h / 2.0) * factor
+            } else if h > w && h > 0 {
+                // Vertical-dominant corridor. Centerline is `lon = cx`.
+                let factor = 1.0 - (w / h)
+                inDx = min(abs(coord.longitude - cx), w / 2.0) * factor
+            }
+            // Square / nearly-square bbox: factor ≈ 0 → no penalty. Preserves
+            // legacy "coord inside tight local-road bbox = distance 0" behavior,
+            // because those roads are exactly the ones whose snap is correct.
+
+            let latDist = inDy * 111111.0
+            let lonDist = inDx * 111111.0 * cos(coord.latitude * .pi / 180.0)
             return sqrt(latDist * latDist + lonDist * lonDist)
         }
     }
@@ -156,7 +202,12 @@ public actor ArizonaSpeedLimitService {
 
     /// Finds the legal speed limit for a given coordinate.
     /// Added heading awareness to prevent snapping to cross-streets or nearby parallel roads.
-    public func updateSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double? = nil, currentSpeedMph: Double? = nil, expandedSearch: Bool = false) async throws -> Int {
+    /// `roadName` (NEW) is the reverse-geocoded road name from RoadGeocoder. When
+    /// non-nil, the scoring uses RoadNameMatcher against each candidate's
+    /// `RouteId`/`SRNumber` and applies a large negative offset to any matching
+    /// candidate, so the user-on-West-Frye-Road case no longer snares the
+    /// nearest big-bbox freeway segment. Pass `nil` to disable.
+    public func updateSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double? = nil, currentSpeedMph: Double? = nil, roadName: String? = nil, expandedSearch: Bool = false) async throws -> Int {
         if !isLoaded {
             loadDataIfNeeded()
         }
@@ -176,81 +227,163 @@ public actor ArizonaSpeedLimitService {
         
         var closestLimit: Int?
         var closestRouteId: String?
-        var minScore: Double = Double.infinity 
-        
-        // --- PRECISION SNAPPING ---
+        var minScore: Double = Double.infinity        // --- PRECISION SNAPPING ---
         // Tightening snapping radius significantly to prevent jumping to nearby overpasses.
         // Surface streets are rarely more than 15-20m from the center line.
-        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 60.0 : 20.0 
-        
+        let maxSnappingDistance: CLLocationDistance = expandedSearch ? 60.0 : 20.0
+
+        // Scoring constants.
+        //   SCORE_BASE_OFFSET: an additive floor on `(distance)` so that heading
+        //     / velocity / hysteresis multipliers (× 0.15 .. × 40) retain enough
+        //     leverage to push the actual road above any cross-street that
+        //     happens to lie inside a huge infrastructure bbox. With 1.0 (the
+        //     old value) a single hitch point where the user is *truly* on the
+        //     freeway but the cross-street lies inside its corridor would have
+        //     flipped the answer — 25.0 raises the floor so that hitch is
+        //     correctly resolved by the heading/velocity multipliers.
+        //   CORRIDOR_PENALTY: uses RoadSegment.centerlineOffset(to:) to add the
+        //     perpendicular distance from the inferred centerline as a flat
+        //     score penalty. Replaces the old `area * 50.0` tie-breaker, which
+        //     was not strong enough to demote a freeway whose bbox already
+        //     contains the user's coord.
+        //   NAME_MATCH_BONUS_MAGNITUDE: when a reverse-geocoded road name is
+        //     available, RoadNameMatcher.score returns 0.0..1.0; we translate
+        //     that into `-magnitude * score` as an additive offset. 10000 is
+        //     chosen so any positive match (>= 0.5) decisively outscores any
+        //     pure-spatial candidate, even a 2-km ~plus-cross-street score.
+        let SCORE_BASE_OFFSET: Double = 25.0
+        static let NAME_MATCH_BONUS_MAGNITUDE: Double = 10000.0
+        // Mirrored to website/server.py for byte-for-byte parity.
+        // NAME_MATCH_SPATIAL_GATE_M (200 m) is the wider gate used when we
+        // are doing the name-first pass. It deliberately exceeds the legacy
+        // 20 m SNAP_RADIUS_M so imperfect ESRI geodatabase bboxes don't
+        // accidentally exclude the user's actual road.
+        // NAME_MATCH_THRESHOLD (0.5) is the minimum RoadNameMatcher.score
+        // for a candidate to qualify -- covers the matchScore hierarchy
+        // exactly (canonical, subset, numeric + strict-family, numeric +
+        // generic-type) and excludes 0.0 (no match).
+        let NAME_MATCH_SPATIAL_GATE_M: Double = 200.0
+        let NAME_MATCH_THRESHOLD: Double = 0.5
+        // Defense-in-depth: if the user is on a residential street but no
+        // road_name came back from reverse-geocode, a corridor (aspect > 3)
+        // whose centerlineOffset exceeds AMBIGUOUS_CORRIDOR_OFFSET_M
+        // (250 m) is treated as ambiguous. Its score gets a massive penalty
+        // (AMBIGUOUS_CORRIDOR_PENALTY) so a tight local-road candidate wins
+        // even when the ambiguous corridor is technically "closer" (dist=0
+        // because of mega-bbox engulfment). Mirrors Python server.py.
+        let AMBIGUOUS_CORRIDOR_ASPECT_RATIO: Double = 3.0
+        let AMBIGUOUS_CORRIDOR_OFFSET_M: Double = 250.0
+        let AMBIGUOUS_CORRIDOR_PENALTY: Double = 2000.0
+        let PASS2_LOCAL_ROAD_RADIUS_M: Double = 1000.0
+
+        // ---- PASS 1: name-first across the cache, wide gate ----
+        // When a reverse-geocoded road name is available, gate candidates by
+        // NAME_MATCH_SPATIAL_GATE_M (200 m, wider than the legacy 20 m
+        // spatial gate) and require at least NAME_MATCH_THRESHOLD (0.5) from
+        // RoadNameMatcher. The best name-matching candidate wins. If NONE
+        // qualifies (the user's known road has no SQL coverage near here),
+        // we DELIBERATELY reject SQLite entirely so the orchestrator falls
+        // through to live ArcGIS / Overpass. Falling back to pure-spatial in
+        // this case would let a freeway mega-bbox like S 202 vault to the
+        // top, which is the bug the user just hit ("on Arizona Ave but gets
+        // 65 mph from S 202 because S 202's corridor overlaps me").
+        if let providedRoadName = roadName {
+            var nameBestLimit: Int? = nil
+            var nameBestRouteId: String? = nil
+            var nameMinScore: Double = .infinity
+            for segment in segments {
+                guard segment.limit > 0 else { continue }
+                let dx = segment.maxx - segment.minx
+                let dy = segment.maxy - segment.miny
+                if sqrt(dx*dx + dy*dy) > 1.0 { continue }
+                let distance = segment.distance(to: coordinate)
+                guard distance <= NAME_MATCH_SPATIAL_GATE_M else { continue }
+                let nameMatch = RoadNameMatcher.score(
+                    geocodedName: providedRoadName,
+                    sqliteRouteId: segment.routeId
+                )
+                guard nameMatch >= NAME_MATCH_THRESHOLD else { continue }
+                // Pre-hysteresis score (we still apply the bias last).
+                var score = (distance + SCORE_BASE_OFFSET)
+                score += segment.centerlineOffset(to: coordinate)
+                score -= Self.NAME_MATCH_BONUS_MAGNITUDE * nameMatch
+                let hysteresis: Double
+                if let lastId = self.lastSegmentId, segment.routeId == lastId {
+                    hysteresis = 0.15
+                } else {
+                    hysteresis = 1.0
+                }
+                score *= hysteresis
+                if score < nameMinScore {
+                    nameMinScore = score
+                    nameBestLimit = segment.limit
+                    nameBestRouteId = segment.routeId
+                }
+            }
+            if let matched = nameBestLimit, matched > 0 {
+                self.lastSegmentId = nameBestRouteId
+                DebugLogger.shared.log("AZ Data: name-first hit \(matched) on \(nameBestRouteId ?? \"unknown road\") (geocoded '\(providedRoadName)')")
+                return matched
+            }
+            // No name-matching candidate within the 200 m gate. REJECT SQLite
+            // so the SpeedLimitService orchestrator falls through to ArcGIS +
+            // Overpass. This is the fix for "driving on Arizona Avenue, the
+            // SQLite has nothing for me, so it was lying with S 202's 65 mph".
+            DebugLogger.shared.log("AZ Data: no SQL coverage for geocoded '\(providedRoadName)' within \(Int(NAME_MATCH_SPATIAL_GATE_M)) m -> REJECT SQLite")
+            throw URLError(.resourceUnavailable)
+        }
+
+        // ---- PASS 2: spatial-only fallback (no reverse-geocoded name) ----
+        // Same defense-in-depth as Python: ambiguous mega-bbox corridors
+        // (high aspect ratio + centerline offset > 250 m) get a +2000 score
+        // penalty so a tight local road wins regardless of dist=0 engulfment.
         for segment in segments {
             guard segment.limit > 0 else { continue }
-            
-            // Check bounding box size (ignore generic county-wide polygons)
             let dx = segment.maxx - segment.minx
             let dy = segment.maxy - segment.miny
-            let diagonalDegrees = sqrt(dx*dx + dy*dy)
-            
-            // RELAXED: Highway segments in AZ can be very long (50+ miles). 
-            // 0.1 was ~7 miles. 1.0 (~70 miles) is safer for interstates.
-            if diagonalDegrees > 1.0 { continue }
-            
+            if sqrt(dx*dx + dy*dy) > 1.0 { continue }
             let distance = segment.distance(to: coordinate)
-            guard distance <= maxSnappingDistance else { continue }
-            
-            // --- HEADING AWARENESS LOGIC ---
+            let offset = segment.centerlineOffset(to: coordinate)
+            let minDim = min(dx, dy)
+            let maxDim = max(dx, dy)
+            let isCorridor = minDim > 0.0 &&
+                maxDim > AMBIGUOUS_CORRIDOR_ASPECT_RATIO * minDim
+            let isAmbiguous = isCorridor && offset > AMBIGUOUS_CORRIDOR_OFFSET_M
+            // Gate: ambiguous corridors see the legacy 20 m snap gate; other
+            // candidates see the wider 1000 m gate so local roads can beat
+            // engulfing mega-bbox corridors.
+            let effectiveRadius = isAmbiguous
+                ? maxSnappingDistance
+                : PASS2_LOCAL_ROAD_RADIUS_M
+            guard distance <= effectiveRadius else { continue }
+
             var scoreMultiplier: Double = 1.0
-            
             if let carHeading = heading {
-                // A segment is vertically oriented if it is significantly taller than it is wide
                 let isNorthSouth = dy > (dx * 1.5)
                 let isEastWest = dx > (dy * 1.5)
-                
-                // If the bounding box is nearly square, it's a local/small intersection segment 
-                // and we should be very cautious about using its simplified heading.
                 let isHighlyDirectional = isNorthSouth || isEastWest
-                
                 if isHighlyDirectional {
                     let roadHeading = isNorthSouth ? 0.0 : 90.0
                     let diff = abs(carHeading.truncatingRemainder(dividingBy: 180) - roadHeading)
                     let normalizedDiff = min(diff, 180 - diff)
-                    
-                    if normalizedDiff > 40 {
-                        scoreMultiplier *= 40.0 // Massive penalty for cross-streets
-                    } else if normalizedDiff > 20 {
-                        scoreMultiplier *= 5.0  // Significant penalty for general misalignment
-                    }
+                    if normalizedDiff > 40 { scoreMultiplier *= 40.0 }
+                    else if normalizedDiff > 20 { scoreMultiplier *= 5.0 }
                 }
             }
-
-            // --- VELOCITY MATCHING (EXIT RAMP PROTECTION) ---
-            // Increase penalty for velocity mismatch to avoid jumping to highway from surface road or vice-versa.
             if let currentSpdMph = currentSpeedMph {
                 let speedDiff = abs(Double(segment.limit) - currentSpdMph)
-                if speedDiff > 30 {
-                    scoreMultiplier *= 25.0 // Brutally penalize huge mismatches (surface vs freeway)
-                } else if speedDiff > 15 {
-                    scoreMultiplier *= 6.0  // Significant penalty for plausible ramp mismatches
-                } else if speedDiff < 5 {
-                    scoreMultiplier *= 0.7  // Bonus for roads where we are matched to the expected flow
-                }
+                if speedDiff > 30 { scoreMultiplier *= 25.0 }
+                else if speedDiff > 15 { scoreMultiplier *= 6.0 }
+                else if speedDiff < 5 { scoreMultiplier *= 0.7 }
             }
-            
-            // Score Calculation
-            // We use a base distance offset of 1.0m to ensure heading/velocity 
-            // multipliers still work effectively when distance is 0 (directly on the road).
-            var score = (distance + 1.0) * scoreMultiplier
-            
-            // Apply current road bias AFTER multipliers to make it very hard to switch 
-            // away from the road we are already on while crossing intersections.
+
+            var score = (distance + SCORE_BASE_OFFSET) * scoreMultiplier
+            score += offset
+            if isAmbiguous { score += AMBIGUOUS_CORRIDOR_PENALTY }
+            // No name bonus: this is the no-roadName path.
             if let lastId = self.lastSegmentId, segment.routeId == lastId {
-                score *= 0.15 // Aggressive 85% bias towards sticking to the same road (hysteresis)
+                score *= 0.15
             }
-            
-            // TIE-BREAKER: Tiny area weight to prefer more specific segments 
-            // ONLY when distance and heading are nearly identical.
-            score += (segment.area * 50.0) 
-            
             if score < minScore {
                 minScore = score
                 closestLimit = segment.limit

@@ -100,11 +100,13 @@ public struct DeveloperTabView: View {
                             let currentSpeed = max(0, loc.speed * conversionFactor)
                             let currentSpeedMph = isMetric ? currentSpeed * 0.621371 : currentSpeed
                             let carHeading = loc.course >= 0 ? loc.course : nil
-                            
+                            let ident = await RoadGeocoder.shared.resolveRoadContext(at: loc.coordinate)
+
                             _ = await SmartSpeedLimitService.shared.updateSpeedLimit(
                                 at: loc.coordinate,
                                 heading: carHeading,
-                                currentSpeedMph: currentSpeedMph
+                                currentSpeedMph: currentSpeedMph,
+                                roadName: ident?.roadName
                             )
                         }
                     }) {

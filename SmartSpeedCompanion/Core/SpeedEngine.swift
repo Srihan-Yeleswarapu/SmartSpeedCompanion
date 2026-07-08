@@ -14,11 +14,16 @@ public final class SpeedEngine: ObservableObject {
     @AppStorage("measurementSystem") public var measurementSystem: String = "Imperial"
     
     private let speedLimitService = SmartSpeedLimitService.shared
+    private let roadGeocoder = RoadGeocoder.shared
     private var cancellables = Set<AnyCancellable>()
-    
+
     private var smoothedSpeed: Double = 0.0
-    private let smoothingFactor: Double = 0.4 
-    
+    private let smoothingFactor: Double = 0.4    // No own throttle on road-name resolution. `RoadGeocoder` carries its
+    // own 50m grid-cell cache (see SmartSpeedCompanion/Core/RoadGeocoder.swift)
+    // so a typical city drive costs ~1 geocode per block instead of per 1-Hz
+    // GPS ping, AND the cached road name is preserved across the 50m cells so
+    // the name-match bonus in ArizonaSpeedLimitService keeps firing.
+
     /// Minimum distance (meters) the user must travel before we re-query the speed limit provider.
     /// The orchestration now self-throttles via the SpeedLimitResponseCache (spatial-grid
     /// short-circuit) + per-provider dedup, so we can space out fetches far enough for the
@@ -96,12 +101,29 @@ public final class SpeedEngine: ObservableObject {
             let currentLimit = await speedLimitService.updateSpeedLimit(
                 at: location.coordinate,
                 heading: carHeading,
-                currentSpeedMph: currentMph
+                currentSpeedMph: currentMph,
+                roadName: await resolvedRoadName(at: location.coordinate)
             )
-            
+
             self.limit = currentLimit
             updateStatus(speed: self.speed, limit: Double(currentLimit))
         }
+    }
+
+    /// Returns the cached or freshly-resolved road name from `RoadGeocoder`
+    /// for the current coordinate.
+    ///
+    /// Implementation note: do NOT add a local throttle here. The previous
+    /// implementation short-circuited with `return nil` when the caller was
+    /// within 200m of the last geocode, which stripped the road name from
+    /// the SpeedLimit pipeline for entire city blocks and caused the snap
+    /// to fall back to spatial-only scoring -- which on roads like Arizona
+    /// Avenue in Chandler returns S 202's 65 mph mega-bbox instead of the
+    /// correct local-road answer. `RoadGeocoder` already throttles via its
+    /// own 50m grid cache; this method just delegates so the road name
+    /// flows through every fetch.
+    private func resolvedRoadName(at coordinate: CLLocationCoordinate2D) async -> String? {
+        return await roadGeocoder.resolveRoadContext(at: coordinate)?.roadName
     }
     
     private func updateStatus(speed: Double, limit: Double) {

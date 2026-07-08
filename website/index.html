@@ -13,9 +13,9 @@
       --text: #f0f4f9;
       --mute: #98a4b3;
       --accent: #00d4ff;
-      --az: #ffae3a;       /* matches SpeedLimitDataSource.localDB */
-      --arcgis: #00d4ff;   /* matches SpeedLimitDataSource.liveArcGIS */
-      --overpass: #2ee07a; /* matches SpeedLimitDataSource.liveOverpass */
+      --az: #ffae3a;
+      --arcgis: #00d4ff;
+      --overpass: #2ee07a;
       --miss: #ff7163;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -43,53 +43,71 @@
     }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-    #result {
-      position: absolute; top: 16px; right: 16px; z-index: 1000;
+    /* Top big-number speed panel (iOS-equivalent answer). */
+    #big {
+      position: absolute; top: 16px; right: 16px; z-index: 1001;
       background: var(--panel); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--panel-border);
-      border-radius: 18px; padding: 22px 26px; min-width: 240px;
+      border-radius: 18px; padding: 22px 26px; min-width: 260px;
       box-shadow: 0 8px 32px rgba(0,0,0,0.4);
       transition: transform 0.2s ease, opacity 0.2s ease;
     }
-    #result.loading { opacity: 0.6; }
-    #result .mph {
+    #big.loading { opacity: 0.6; }
+    #big .mph {
       font-size: 84px; font-weight: 700; line-height: 1; letter-spacing: -0.04em;
       background: linear-gradient(135deg, #00d4ff, #2ee07a);
       -webkit-background-clip: text; background-clip: text;
       -webkit-text-fill-color: transparent;
     }
-    #result.nodata .mph {
+    #big.nodata .mph {
       background: linear-gradient(135deg, #98a4b3, #6c7a89);
       -webkit-background-clip: text; background-clip: text;
       -webkit-text-fill-color: transparent;
     }
-    #result .mph-unit {
+    #big .mph-unit {
       font-size: 26px; color: var(--mute); font-weight: 600; vertical-align: top;
       line-height: 1; margin-left: 6px;
     }
-    #result .provider {
-      margin-top: 14px; padding: 6px 14px;
-      background: rgba(0, 212, 255, 0.18);
-      border: 1px solid rgba(0, 212, 255, 0.4);
-      border-radius: 999px; font-size: 12px; font-weight: 500;
-      display: inline-flex; align-items: center; gap: 6px;
+    #big .road-name { margin-top: 10px; font-size: 14px; color: var(--text); font-weight: 600; }
+    #big .road-key  { margin-top: 4px; font-size: 12px; color: var(--mute); font-family: "SF Mono", "Menlo", monospace; }
+    #big .detail    { margin-top: 8px; font-size: 11.5px; color: var(--mute); line-height: 1.45; }
+    #big .meta { margin-top: 8px; font-size: 10.5px; color: var(--mute); font-family: "SF Mono", "Menlo", monospace; }
+    #big .source-badge {
+      display: inline-block; margin-top: 10px; padding: 4px 12px;
+      background: rgba(0, 212, 255, 0.18); border: 1px solid rgba(0, 212, 255, 0.4);
+      border-radius: 999px; font-size: 11px; font-weight: 500;
     }
-    #result .provider .label-key { color: var(--mute); font-weight: 400; }
-    #result .provider.db { background: rgba(255, 174, 58, 0.18); border-color: rgba(255, 174, 58, 0.4); color: var(--az); }
-    #result .provider.arcgis { background: rgba(0, 212, 255, 0.18); border-color: rgba(0, 212, 255, 0.4); color: var(--arcgis); }
-    #result .provider.overpass { background: rgba(46, 224, 122, 0.18); border-color: rgba(46, 224, 122, 0.4); color: var(--overpass); }
-    #result .provider.nodata { background: rgba(255, 113, 99, 0.18); border-color: rgba(255, 113, 99, 0.4); color: var(--miss); }
-    #result .road {
-      margin-top: 14px; font-size: 14px; color: var(--mute);
-      font-family: "SF Mono", "Menlo", monospace; font-size: 13px;
-    }
-    #result .road .key { color: var(--text); }
-    #result .detail { margin-top: 8px; font-size: 13px; color: var(--mute); line-height: 1.5; }
-    #result .meta {
-      margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08);
-      font-family: "SF Mono", "Menlo", monospace; font-size: 11px; color: var(--mute);
-    }
+    #big .source-badge.db    { background: rgba(255, 174, 58, 0.18); border-color: rgba(255, 174, 58, 0.4); color: var(--az); }
+    #big .source-badge.arcgis    { background: rgba(0, 212, 255, 0.18); border-color: rgba(0, 212, 255, 0.4); color: var(--arcgis); }
+    #big .source-badge.overpass  { background: rgba(46, 224, 122, 0.18); border-color: rgba(46, 224, 122, 0.4); color: var(--overpass); }
+    #big .source-badge.nodata    { background: rgba(255, 113, 99, 0.18); border-color: rgba(255, 113, 99, 0.4); color: var(--miss); }
 
+    /* Three source cards beneath the big number. */
+    #sources {
+      position: absolute; top: 200px; right: 16px; z-index: 1000;
+      display: flex; flex-direction: column; gap: 8px; min-width: 260px;
+    }
+    .src-card {
+      background: var(--panel); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--panel-border); border-radius: 12px;
+      padding: 10px 14px;
+      transition: border 0.15s ease;
+    }
+    .src-card.loading { opacity: 0.55; }
+    .src-card.picked { border-color: rgba(46, 224, 122, 0.6); }
+    .src-card .src-header {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;
+    }
+    .src-card .src-name.az       { color: var(--az); }
+    .src-card .src-name.arcgis   { color: var(--arcgis); }
+    .src-card .src-name.overpass { color: var(--overpass); }
+    .src-card .src-mph { font-size: 22px; font-weight: 700; margin-top: 4px; }
+    .src-card .src-detail { font-size: 11px; color: var(--mute); margin-top: 4px; line-height: 1.4; }
+    .src-card .src-empty { color: var(--miss); font-size: 12px; font-style: italic; }
+    .src-card .src-error { color: var(--miss); font-size: 12px; }
+
+    /* Trace panel (per-step log; kept from prior version). */
     #tracer {
       position: absolute; bottom: 16px; left: 16px; right: 16px; z-index: 1000;
       background: var(--panel); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
@@ -108,7 +126,7 @@
     }
     #tracer .row:last-child { border-bottom: 0; }
     #tracer .step {
-      width: 110px; color: var(--mute); flex-shrink: 0; font-weight: 600;
+      width: 160px; color: var(--mute); flex-shrink: 0; font-weight: 600;
     }
     #tracer .msg { flex: 1; color: var(--text); word-break: break-word; }
     #tracer .ok .step { color: var(--overpass); }
@@ -128,10 +146,7 @@
       color: var(--text); font-size: 12px; cursor: pointer;
       transition: all 0.2s ease;
     }
-    #tracer-toggle:hover {
-      background: rgba(0,212,255,0.15);
-      border-color: var(--accent);
-    }
+    #tracer-toggle:hover { background: rgba(0,212,255,0.15); border-color: var(--accent); }
     #tracer-toggle.open { background: rgba(0,212,255,0.2); }
 
     .leaflet-pin {
@@ -147,9 +162,10 @@
     }
 
     @media (max-width: 600px) {
-      #result { left: 16px; right: 16px; padding: 16px 18px; min-width: 0; top: auto; bottom: 76px; }
-      #result .mph { font-size: 64px; }
+      #big { left: 16px; right: 16px; padding: 16px 18px; min-width: 0; top: auto; bottom: 220px; }
+      #big .mph { font-size: 64px; }
       header { left: 12px; top: 12px; max-width: 280px; }
+      #sources { left: 12px; right: 12px; top: auto; bottom: 76px; }
       #tracer { left: 12px; right: 12px; bottom: 76px; }
     }
   </style>
@@ -158,12 +174,38 @@
   <div id="app">
     <header>
       <h1><span class="dot"></span>Speedio Lookup</h1>
-      <p>Click anywhere on the map. The pipeline (AZ SQLite &rarr; ArcGIS HPMS &rarr; Overpass) runs the same way as the iPhone app. Open the trace panel for raw responses.</p>
+      <p>Click anywhere on the map. The pipeline (AZ SQLite &rarr; ArcGIS HPMS &rarr; Overpass) runs the same way as the iPhone app. The big number shows what the app would display; the cards below show each provider individually.</p>
     </header>
 
     <div id="map"></div>
 
-    <div id="result" style="display:none;"></div>
+    <!-- Big top number: iOS-equivalent answer. -->
+    <div id="big" style="display:none;"></div>
+
+    <!-- Three provider cards (filled after every click). -->
+    <div id="sources" style="display:none;">
+      <div class="src-card" data-provider="az">
+        <div class="src-header">
+          <span class="src-name az">1. AZ SQLite</span><span class="status">…</span>
+        </div>
+        <div class="src-mph"></div>
+        <div class="src-detail"></div>
+      </div>
+      <div class="src-card" data-provider="arcgis">
+        <div class="src-header">
+          <span class="src-name arcgis">2. ArcGIS HPMS</span><span class="status">…</span>
+        </div>
+        <div class="src-mph"></div>
+        <div class="src-detail"></div>
+      </div>
+      <div class="src-card" data-provider="overpass">
+        <div class="src-header">
+          <span class="src-name overpass">3. Overpass</span><span class="status">…</span>
+        </div>
+        <div class="src-mph"></div>
+        <div class="src-detail"></div>
+      </div>
+    </div>
 
     <button id="tracer-toggle">&#128225; Pipeline trace</button>
     <div id="tracer"></div>
@@ -171,27 +213,18 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    /* =====================================================================
-       Mirrors SmartSpeedCompanion/Core/SpeedLimitService.swift pipeline:
+    /* ======================================================================
+       Mirrors the iOS Speedio pipeline (SpeedLimitService.swift):
+         0. RoadGeocoder.resolveRoadContext  -> road_name
+         1. hasNearbyCoverage               -> cheap corridor gate
+         1.5. AZ SQLite w/ road_name        -> name-first matching
+         2. ArcGIS HPMS                     -> live chain
+         3. Overpass (OSM maxspeed)         -> live chain
+         ExpandedSearch fallback            -> skipped on web for speed
+       The big top number tracks the iOS'logical pick (first non-null).
+       The 3 cards below display each provider's individual result.
+       ====================================================================== */
 
-         Cache lookup                       -> SKIPPED (one-shot pin)
-         ArizonaSpeedLimitService.hasNearbyCoverage
-         | ->ArizonaSpeedLimitService.updateSpeedLimit   -> .localDB
-         if miss:
-         ArcGISHPMSSpeedLimitProvider.fetchSpeedLimit   -> .liveArcGIS
-         if miss:
-         OverpassSpeedLimitProvider.fetchSpeedLimit     -> .liveOverpass
-         if miss:
-         ArizonaSpeedLimitService.updateSpeedLimit(expandedSearch: true)
-                                                          -> .localDBRecovered
-                                                          (skipped here for speed)
-
-       The provider functions below are line-for-line ports of the Swift
-       implementations. Each row in the trace panel mirrors a DebugLogger
-       line emitted by the iOS app.
-       ===================================================================== */
-
-    // ---- Leaflet setup ----
     const map = L.map('map', { zoomControl: true }).setView([33.4484, -112.0740], 11);
     L.tileLayer(
       'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
@@ -200,7 +233,8 @@
     ).addTo(map);
 
     let marker = null;
-    const resultEl = document.getElementById('result');
+    const bigEl = document.getElementById('big');
+    const sourcesEl = document.getElementById('sources');
     const tracerEl = document.getElementById('tracer');
     const toggleEl = document.getElementById('tracer-toggle');
 
@@ -221,308 +255,220 @@
       toggleEl.classList.toggle('open');
     });
 
-    // ---- Provider 1: AZ SQLite (mirrors ArizonaSpeedLimitService.updateSpeedLimit) ----
-    async function queryAzSqlite(lat, lon) {
-      trace('AZ SQLite', 'POST /api/speedlimit-az', 'sys');
+    // ---- Provider 1: AZ SQLite (mirrors ArizonaSpeedLimitService) ----
+    async function queryAzSqlite(lat, lon, roadName) {
+      trace('AZ SQLite', `POST /api/speedlimit-az ${roadName ? '(road_name=' + roadName + ')' : '(no road_name)'}`, 'sys');
       let r;
       try {
         r = await fetch('/api/speedlimit-az', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat: lat, lon: lon }),
+          body: JSON.stringify({ lat, lon, road_name: roadName || null }),
         });
       } catch (e) {
         trace('AZ SQLite', 'network error: ' + e.message, 'err');
-        return null;
+        return { found: false, error: e.message };
       }
       if (!r.ok) {
         trace('AZ SQLite', 'HTTP ' + r.status, 'err');
-        return null;
+        return { found: false, error: 'HTTP ' + r.status };
       }
       const d = await r.json();
       if (!d.found) {
-        trace('AZ SQLite', '0 segments within 20 m of snap; falling through', 'err');
-        return null;
+        trace('AZ SQLite', 'no segment matched (no name match, no spatial match)', 'err');
+        return { found: false };
       }
       trace('AZ SQLite',
-        d.speedMph + ' mph &middot; roadKey="' + d.roadKey + '" &middot; routeId=' + d.routeId,
+        d.speedMph + ' mph &middot; routeId=' + (d.routeId || '?') + ' &middot; ' + d.detail,
         'hit');
-      return {
-        speedMph: d.speedMph,
-        providerName: 'AZ SQLite',
-        roadKey: d.roadKey,
-        detail: d.detail + ' (RouteId=' + d.routeId + ')',
-      };
+      return { found: true, ...d };
     }
 
-    // ---- Provider 2: ArcGIS HPMS FeatureServer 48 ----
-    function buildArcGisUrl(lat, lon) {
-      // Mirror ArcGISHPMSSpeedLimitProvider.makeURL(lat:lon:) verbatim.
-      const geomJson = '{"x":' + lon.toFixed(6) + ',"y":' + lat.toFixed(6) + '}';
-      const base =
-        'https://services6.arcgis.com/clPWQMwZfdWn4MQZ/arcgis/rest/services/' +
-        'HPMS_2024_Data/FeatureServer/48/query';
-      const params = [
-        ['f', 'json'],
-        ['geometry', geomJson],
-        ['geometryType', 'esriGeometryPoint'],
-        ['inSR', '4326'],
-        ['spatialRel', 'esriSpatialRelIntersects'],
-        ['outFields',
-          'OBJECTID,SpeedLimit,SRNumber,SpeedLimitDirection_Value,SpeedLimitType_Value'],
-        ['returnGeometry', 'true'],
-        ['resultRecordCount', '10'],
-      ];
-      return base + '?' + params
-        .map(([k, v]) => k + '=' + encodeURIComponent(v))
-        .join('&');
-    }
-
-    function closestVertexDistance(feature, lat, lon) {
-      // Mirror ArcGISHPMSSpeedLimitProvider.closestVertexDistance(feature:to:) exactly.
-      //   Swift returns 75.0 ONLY when feature.geometry?.paths is nil.
-      //   When paths is non-nil but contains no usable [lon, lat] pair it
-      //   LEAVES minDist at .greatestFiniteMagnitude and returns it, which
-      //   propagates Infinity into the score so the feature drops out of
-      //   selection. The 75.0 fallback must NOT fire in that case or the web
-      //   will promote a Swift-failing feature into a candidate and disagree
-      //   with the iOS app on fact-check.
-      const paths = feature.geometry?.paths;
-      if (!paths) return 75.0;
-      let minM = Infinity;
-      const lat1 = lat * Math.PI / 180;
-      const R = 6_378_137.0;
-      for (const path of paths) {
-        for (const pair of path) {
-          if (pair.length < 2) continue;
-          const lon2 = pair[0];
-          const lat2 = pair[1] * Math.PI / 180;
-          const dLat = lat2 - lat1;
-          const dLon = (lon2 - lon) * Math.PI / 180;
-          const a = Math.sin(dLat / 2) ** 2
-                  + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-          const m = R * c;
-          if (m < minM) minM = m;
-        }
-      }
-      return minM;  // may be Infinity; bestArcGisFeatureIdx handles it as
-                    // score = Infinity -> never < bestScore -> excluded.
-    }
-
-    function bestArcGisFeatureIdx(features, lat, lon) {
-      // Mirror bestFeatureIndex with heading=nil: skip the heading multiplier,
-      // keep the + 1.0 base so a future multiplier addition stays numerically
-      // identical to the Swift scoring.
-      let bestScore = Infinity, bestIdx = -1;
-      for (let idx = 0; idx < features.length; idx++) {
-        const f = features[idx];
-        if (!((f.attributes?.SpeedLimit ?? 0) > 0)) continue;
-        const minDist = closestVertexDistance(f, lat, lon);
-        let score = minDist + 1.0;  // Swift: var score = minDistMeters + 1.0
-        // No heading multiplier -- heading=nil on web.
-        if (score < bestScore) { bestScore = score; bestIdx = idx; }
-      }
-      return bestIdx;
-    }
-
+    // ---- Provider 2: ArcGIS HPMS (port of ArcGISHPMSSpeedLimitProvider) ----
     async function queryArcGIS(lat, lon) {
-      const url = buildArcGisUrl(lat, lon);
-      trace('ArcGIS HPMS', 'GET ' + url.split('?')[0].split('/').slice(-2).join('/'), 'sys');
-      let r, d;
+      trace('ArcGIS HPMS', 'POST /api/speedlimit-arcgis', 'sys');
       try {
-        r = await fetch(url);
-        d = await r.json();
+        const r = await fetch('/api/speedlimit-arcgis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat, lon }),
+        });
+        if (!r.ok) { trace('ArcGIS HPMS', 'HTTP ' + r.status, 'err'); return { found: false }; }
+        const d = await r.json();
+        if (!d.found) { trace('ArcGIS HPMS', 'no sample panel within corridor', 'err'); return { found: false }; }
+        trace('ArcGIS HPMS',
+          d.speedLimitMph + ' mph &middot; ' + d.roadKey,
+          'hit');
+        return { found: true, speedMph: d.speedLimitMph, providerName: 'ArcGIS',
+                 roadKey: d.roadKey, detail: d.detail };
       } catch (e) {
         trace('ArcGIS HPMS', 'network error: ' + e.message, 'err');
-        return null;
+        return { found: false, error: e.message };
       }
-      if (!r.ok) {
-        trace('ArcGIS HPMS', 'HTTP ' + r.status, 'err');
-        return null;
-      }
-      const features = d.features || [];
-      if (features.length === 0) {
-        trace('ArcGIS HPMS', '0 features (no AZ sample panel here)', 'err');
-        return null;
-      }
-      trace('ArcGIS HPMS', features.length + ' feature(s) returned, scoring...');
-      const bestIdx = bestArcGisFeatureIdx(features, lat, lon);
-      if (bestIdx < 0) {
-        trace('ArcGIS HPMS', 'features present but SpeedLimit <= 0', 'err');
-        return null;
-      }
-      const a = features[bestIdx].attributes;
-      // detail: "<kind>; SR <sr> <dir>" -- Swift literally.
-      const detail =
-        (a.SpeedLimitType_Value || 'Speed Limit') +
-        '; SR ' + (a.SRNumber || '?') + ' ' + (a.SpeedLimitDirection_Value || '?');
-      trace('ArcGIS HPMS',
-        a.SpeedLimit + ' mph &middot; SR ' + a.SRNumber + ' ' + a.SpeedLimitDirection_Value,
-        'hit');
-      return {
-        speedMph: a.SpeedLimit,
-        providerName: 'ArcGIS',
-        roadKey: 'SR' + (a.SRNumber || '?') + '-' + (a.SpeedLimitDirection_Value || '?'),
-        detail: detail,
-      };
     }
 
-    // ---- Provider 3: Overpass ----
-    function parseMaxspeed(raw) {
-      // Direct port of OverpassSpeedLimitProvider.parseMaxspeed(_:) in Swift.
-      if (!raw) return null;
-      const lower = raw.trim().toLowerCase();
-      const isKmh =
-        lower.indexOf('km/h') !== -1 ||
-        lower.indexOf('kmh') !== -1 ||
-        lower.indexOf('kph') !== -1;
-      let digits = '';
-      for (const ch of lower) {
-        // Swift: ch.isNumber || ch == "."
-        if ((ch >= '0' && ch <= '9') || ch === '.') digits += ch;
-        else if (digits.length > 0) break;  // break on first non-digit AFTER digits started
-      }
-      if (!digits) return null;
-      const n = Number(digits);
-      if (!(n > 0 && n <= 200)) return null;
-      return isKmh ? Math.round(n * 0.621371) : Math.round(n);
-    }
-
+    // ---- Provider 3: Overpass (port of OverpassSpeedLimitProvider) ----
     async function queryOverpass(lat, lon) {
-      // Verbatim Overpass QL body string from OverpassSpeedLimitProvider.fetchSpeedLimit.
-      const query =
-        '[out:json][timeout:10];\n' +
-        'way(around:100,' + lat + ',' + lon + ')[highway][maxspeed];\n' +
-        'out tags center 1;';
-      trace('Overpass', 'POST https://overpass-api.de/api/interpreter', 'sys');
-      let r, d;
+      trace('Overpass', 'POST /api/speedlimit-overpass', 'sys');
       try {
-        r = await fetch('https://overpass-api.de/api/interpreter', {
+        const r = await fetch('/api/speedlimit-overpass', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          },
-          body: 'data=' + encodeURIComponent(query),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat, lon }),
         });
-        if (r.status === 429) {
-          trace('Overpass', 'HTTP 429 (throttled, mirror of Swift 60s backoff)', 'err');
-          return null;
-        }
-        d = await r.json();
+        if (!r.ok) { trace('Overpass', 'HTTP ' + r.status, 'err'); return { found: false }; }
+        const d = await r.json();
+        if (!d.found) { trace('Overpass', 'no ways tagged [highway][maxspeed] in 100m', 'err'); return { found: false }; }
+        trace('Overpass',
+          d.speedLimitMph + ' mph &middot; ' + d.roadKey + ' &middot; ' + d.detail,
+          'hit');
+        return { found: true, speedMph: d.speedLimitMph, providerName: 'Overpass',
+                 roadKey: d.roadKey, detail: d.detail };
       } catch (e) {
         trace('Overpass', 'network error: ' + e.message, 'err');
-        return null;
+        return { found: false, error: e.message };
       }
-      if (!r.ok) {
-        trace('Overpass', 'HTTP ' + r.status, 'err');
-        return null;
-      }
-      const els = d.elements || [];
-      if (els.length === 0) {
-        trace('Overpass', '0 ways with [highway][maxspeed] in 100 m', 'err');
-        return null;
-      }
-      trace('Overpass', els.length + ' element(s) returned, scoring...');
+    }
 
-      let best = null, bestDist = Infinity;
-      const lat1 = lat * Math.PI / 180;
-      const R = 6_378_137.0;
-      for (const el of els) {
-        const tags = el.tags || {};
-        const mph = parseMaxspeed(tags.maxspeed);
-        if (!mph) continue;
-        const center = el.center ||
-          ((typeof el.lat === 'number' && typeof el.lon === 'number')
-            ? { lat: el.lat, lon: el.lon } : null);
-        if (!center) continue;
-        const eLat = center.lat;
-        const eLon = center.lon;
-        const dLat = (eLat - lat) * Math.PI / 180;
-        const dLon = (eLon - lon) * Math.PI / 180;
-        const a = Math.sin(dLat / 2) ** 2
-                + Math.cos(lat1) * Math.cos(eLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        const m = R * c;
-        if (m < bestDist) { bestDist = m; best = { mph: mph, el: el, dist: m }; }
-      }
-      if (!best) {
-        trace('Overpass', els.length + ' ways, none had parseable maxspeed', 'err');
+    // ---- Step 0: reverse-geocode ----
+    async function reverseGeocode(lat, lon) {
+      trace('ReverseGeocode', `GET /api/reverse-geocode?lat=${lat}&lon=${lon}`, 'sys');
+      try {
+        const r = await fetch(`/api/reverse-geocode?lat=${lat}&lon=${lon}`);
+        if (!r.ok) {
+          trace('ReverseGeocode', 'HTTP ' + r.status, 'err');
+          return null;
+        }
+        const d = await r.json();
+        if (!d.road_name) {
+          trace('ReverseGeocode', 'no road_name resolved; using spatial-only', 'err');
+          return d;
+        }
+        trace('ReverseGeocode', 'road_name=' + d.road_name + ' &middot; display=' + (d.display_name || ''), 'hit');
+        return d;
+      } catch (e) {
+        trace('ReverseGeocode', 'error: ' + e.message, 'err');
         return null;
       }
-      const highway = (els[0]?.tags || {}).highway;
-      const detail = highway
-        ? 'OSM way ' + best.el.id + ' (' + highway + ', ' + best.mph + ' mph)'
-        : 'OSM way ' + best.el.id;
-      trace('Overpass',
-        best.mph + ' mph &middot; way ' + best.el.id +
-        ' &middot; ' + Math.round(best.dist) + ' m away',
-        'hit');
-      return {
-        speedMph: best.mph,
-        providerName: 'Overpass',
-        roadKey: 'way' + best.el.id,
-        detail: detail,
-      };
     }
 
     // ---- Orchestrator (mirrors SmartSpeedLimitService.updateSpeedLimit) ----
-    async function lookupSpeedLimit(lat, lon) {
+    // returns { provider, answer, road_name } where `provider` is one of
+    // 'az' | 'arcgis' | 'overpass' | 'nodata' (matching the iOS-equivalent pick).
+    async function lookupAllSources(lat, lon) {
       clearTrace();
-      trace('PIPELINE', 'lat=' + lat.toFixed(6) + ' lon=' + lon.toFixed(6), 'sys');
+      trace('PIPELINE', `lat=${lat.toFixed(6)} lon=${lon.toFixed(6)}`, 'sys');
 
-      // Step 1.5: AZ SQLite fast-path.
-      const az = await queryAzSqlite(lat, lon);
-      if (az) return Object.assign({}, az, { source: 'DB' });
+      const rg = await reverseGeocode(lat, lon) || {};
+      const roadName = rg.road_name || null;
+      trace('PIPELINE', 'road_name=' + (roadName || '<none>'), 'sys');
 
-      // Step 2: live chain (ArcGIS HPMS -> Overpass). Mirrors liveProviders
-      // in SmartSpeedLimitService.init().
-      trace('PIPELINE', 'AZ miss -> live chain (ArcGIS -> Overpass)', 'sys');
-      const arc = await queryArcGIS(lat, lon);
-      if (arc) return Object.assign({}, arc, { source: 'Live (ArcGIS)' });
-      trace('PIPELINE', 'ArcGIS miss -> Overpass', 'sys');
-      const ov = await queryOverpass(lat, lon);
-      if (ov) return Object.assign({}, ov, { source: 'Live (Overpass)' });
-      trace('PIPELINE', 'Overpass miss -> No Data', 'err');
-      return {
-        speedMph: 0,
-        providerName: 'NoProvider',
-        roadKey: null,
-        detail: 'No speed-limit data is available for this point.',
-        source: 'No Data',
-      };
+      // Run all three in parallel so the user sees them simultaneously.
+      trace('PIPELINE', 'parallel fetch: AZ SQLite | ArcGIS | Overpass', 'sys');
+      const [az, arc, ov] = await Promise.all([
+        queryAzSqlite(lat, lon, roadName),
+        queryArcGIS(lat, lon),
+        queryOverpass(lat, lon),
+      ]);
+
+      // iOS-equivalent pick: AZ first (with name-match boost), then ArcGIS,
+      // then Overpass, then 'No Data'. Matches SmartSpeedLimitService chain.
+      let pick = null, pickSrc = 'nodata';
+      if (az.found)        { pick = { mph: az.speedMph, provider: 'az', detail: az.detail, routeId: az.routeId }; pickSrc = 'az'; }
+      else if (arc.found)  { pick = { mph: arc.speedMph, provider: 'arcgis', detail: arc.detail, roadKey: arc.roadKey }; pickSrc = 'arcgis'; }
+      else if (ov.found)   { pick = { mph: ov.speedMph, provider: 'overpass', detail: ov.detail, roadKey: ov.roadKey }; pickSrc = 'overpass'; }
+      else                 { pick = { mph: null, provider: null }; pickSrc = 'nodata'; }
+
+      trace('PIPELINE',
+        pickSrc === 'nodata' ? 'no provider hit -> No Data'
+          : `pick=${pickSrc} mph=${pick.mph}`,
+        pickSrc === 'nodata' ? 'err' : 'ok');
+
+      return { az, arc, ov, pick, pickSrc, roadName, rg };
     }
 
-    // ---- Map click handler ----
-    function renderResult(r, lat, lon) {
-      const klass = ({
-        'AZ SQLite': 'db',
-        'ArcGIS': 'arcgis',
-        'Overpass': 'overpass',
-        'NoProvider': 'nodata',
-      })[r.providerName] || 'nodata';
-      const hasLimit = r.speedMph > 0;
-      const safe = (s) => String(s == null ? '' : s).replace(/[<>]/g,
-        c => c === '<' ? '&lt;' : '&gt;');
-      resultEl.className = klass === 'nodata' ? 'nodata' : '';
-      resultEl.innerHTML =
+    // ---- Renderers ----
+    function renderBig(p, lat, lon, roadName) {
+      const has = p.mph != null && p.mph > 0;
+      const klass = ({az:'db', arcgis:'arcgis', overpass:'overpass', nodata:'nodata'})[p.provider || 'nodata'] || 'nodata';
+      const providerLabel = ({az:'AZ SQLite (name-matched)', arcgis:'ArcGIS HPMS', overpass:'Overpass', nodata:'No Data'})[p.provider || 'nodata'];
+      const safe = (s) => String(s == null ? '' : s).replace(/[<>]/g, c => c === '<' ? '&lt;' : '&gt;');
+      bigEl.className = klass === 'nodata' ? 'nodata' : '';
+      bigEl.innerHTML =
         '<div>' +
-          '<span class="mph">' + (hasLimit ? r.speedMph : '\u2014') + '</span>' +
-          '<span class="mph-unit">' + (hasLimit ? 'mph' : '') + '</span>' +
+          '<span class="mph">' + (has ? p.mph : '\u2014') + '</span>' +
+          '<span class="mph-unit">' + (has ? 'mph' : '') + '</span>' +
         '</div>' +
-        '<div class="provider ' + klass + '">' +
-          safe(r.source) + ' &middot; ' + safe(r.providerName) +
-        '</div>' +
-        (hasLimit
-          ? '<div class="road"><span class="key">' + safe(r.roadKey) + '</span></div>'
-          : '') +
-        '<div class="detail">' + safe(r.detail) + '</div>' +
-        '<div class="meta">&#128205; ' +
-          lat.toFixed(5) + ', ' + lon.toFixed(5) +
-        '</div>';
-      resultEl.style.display = 'block';
+        (roadName ? '<div class="road-name">' + safe(roadName) + '</div>' : '') +
+        (p.routeId ? '<div class="road-key">RouteId=' + safe(p.routeId) + '</div>' :
+         p.roadKey ? '<div class="road-key">' + safe(p.roadKey) + '</div>' : '') +
+        (p.detail ? '<div class="detail">' + safe(p.detail) + '</div>' : '') +
+        '<div class="meta">&#128205; ' + lat.toFixed(5) + ', ' + lon.toFixed(5) + '</div>' +
+        '<div class="source-badge ' + klass + '">' + providerLabel + '</div>';
+      bigEl.style.display = 'block';
     }
 
+    function renderCard(card, r) {
+      card.classList.remove('loading');
+      card.classList.toggle('picked', !!r.picked);
+      const statusEl = card.querySelector('.status');
+      const mphEl    = card.querySelector('.src-mph');
+      const detailEl = card.querySelector('.src-detail');
+      const safe = (s) => String(s == null ? '' : s).replace(/[<>]/g, c => c === '<' ? '&lt;' : '&gt;');
+      if (!r || r.found === false) {
+        if (r && r.error) {
+          statusEl.textContent = 'err';
+          mphEl.innerHTML = '';
+          detailEl.innerHTML = '<span class="src-error">' + safe(r.error) + '</span>';
+        } else if (r && r.reason) {
+          // AZ SQLite REJECTED: road_name had no coverage near this point.
+          // Show the reason so the user understands why their snap dropped
+          // out instead of attributing the gap silently to S 202 or another
+          // mega-bbox freeway segment.
+          statusEl.textContent = 'no data';
+          mphEl.innerHTML = '';
+          detailEl.innerHTML = '<span class="src-empty">' + safe(r.reason)
+            + '</span>';
+        } else {
+          statusEl.textContent = 'no data';
+          mphEl.innerHTML = '';
+          detailEl.innerHTML = '<span class="src-empty">No data for this point.</span>';
+        }
+      } else {
+        statusEl.textContent = 'hit';
+        mphEl.innerHTML = r.speedMph + ' <small style="font-size:13px;color:var(--mute);font-weight:600;">mph</small>';
+        detailEl.textContent = (r.detail || '') + (r.roadKey ? ' (' + r.roadKey + ')' : '');
+      }
+    }
+
+    function renderSources(all, pickSrc) {
+      renderCard(document.querySelector('.src-card[data-provider="az"]'),
+                 Object.assign({}, all.az,    { picked: pickSrc === 'az' }));
+      renderCard(document.querySelector('.src-card[data-provider="arcgis"]'),
+                 Object.assign({}, all.arc,   { picked: pickSrc === 'arcgis' }));
+      renderCard(document.querySelector('.src-card[data-provider="overpass"]'),
+                 Object.assign({}, all.ov,    { picked: pickSrc === 'overpass' }));
+      sourcesEl.style.display = 'flex';
+    }
+
+    function setLoading(lat, lon) {
+      // Reset all three cards to "loading" state.
+      sourcesEl.style.display = 'flex';
+      bigEl.style.display = 'block';
+      bigEl.classList.add('loading');
+      bigEl.innerHTML =
+        '<div style="text-align:center;color:var(--mute);padding:8px 0;">&#8987; Querying ' +
+        'AZ SQLite &middot; ArcGIS &middot; Overpass &hellip;</div>';
+      document.querySelectorAll('.src-card').forEach(c => {
+        c.classList.add('loading');
+        c.classList.remove('picked');
+        c.querySelector('.status').textContent = '\u00B7\u00B7\u00B7';
+        c.querySelector('.src-mph').innerHTML = '';
+        c.querySelector('.src-detail').innerHTML = '';
+      });
+    }
+
+    // ---- Click handler ----
     map.on('click', async (e) => {
       const lat = e.latlng.lat;
       const lon = e.latlng.lng;
@@ -537,14 +483,11 @@
       }).addTo(map);
       tracerEl.classList.add('show');
       toggleEl.classList.add('open');
-      resultEl.style.display = 'block';
-      resultEl.classList.add('loading');
-      resultEl.innerHTML =
-        '<div style="text-align:center;color:var(--mute);padding:8px 0;">' +
-        '&#8987; Querying providers\u2026</div>';
-      const r = await lookupSpeedLimit(lat, lon);
-      resultEl.classList.remove('loading');
-      renderResult(r, lat, lon);
+      setLoading(lat, lon);
+      const all = await lookupAllSources(lat, lon);
+      bigEl.classList.remove('loading');
+      renderBig(all.pick, lat, lon, all.roadName);
+      renderSources(all, all.pickSrc);
     });
   </script>
 </body>

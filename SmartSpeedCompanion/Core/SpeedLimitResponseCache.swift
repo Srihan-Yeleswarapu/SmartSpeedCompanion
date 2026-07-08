@@ -31,6 +31,7 @@ public actor SpeedLimitResponseCache {
         let lat: Double
         let lon: Double
         let cachedAt: Date
+        let roadName: String?
     }
 
     // MARK: - State
@@ -63,17 +64,22 @@ public actor SpeedLimitResponseCache {
     // MARK: - API
 
     /// Compute the spatial grid key for a coord (cheap; no network roundtrip).
-    public func gridKey(for coordinate: CLLocationCoordinate2D) -> String {
+    /// `roadName` is folded into the key hash so a cross-street snap within the
+    /// same 50m cell properly invalidates the cache (the West Frye → 07 PECOS
+    /// case: both cells cover the same lat/lon, but different roadName means
+    /// a different speed limit and the cache MUST miss).
+    public func gridKey(for coordinate: CLLocationCoordinate2D, roadName: String? = nil) -> String {
         let latKey = (coordinate.latitude / gridPrecision).rounded() * gridPrecision
         let lonKey = (coordinate.longitude / gridPrecision).rounded() * gridPrecision
-        return String(format: "g:%.4f,%.4f", latKey, lonKey)
+        let nameHash = roadName?.hashValue ?? 0
+        return String(format: "g:%.4f,%.4f_%d", latKey, lonKey, nameHash)
     }
 
     /// Look up a cached entry. Returns nil if missing, expired, or recorded coord is
     /// > 50m from the requested coord (Phase 2 dedupe tightening, was 80m).
-    public func lookup(at coordinate: CLLocationCoordinate2D) -> SpeedLimitResponse? {
-        let key = gridKey(for: coordinate)
-        guard let entry = memory[key], isFresh(entry) else { return nil }
+    public func lookup(at coordinate: CLLocationCoordinate2D, roadName: String? = nil) -> SpeedLimitResponse? {
+        let key = gridKey(for: coordinate, roadName: roadName)
+        guard let entry = memory[key], isFresh(entry), entry.roadName == roadName else { return nil }
         let recordedLoc = CLLocation(latitude: entry.lat, longitude: entry.lon)
         let queriedLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         // Phase 2 -- tighten from 80m to 50m so adjacent grid cells with mildly
@@ -90,14 +96,15 @@ public actor SpeedLimitResponseCache {
 
     /// Persist a response. Updates in-memory cache + writes the whole memory table to disk.
     /// Disk write is debounced: we collapse rapid stores via an async task.
-    public func store(_ response: SpeedLimitResponse, at coordinate: CLLocationCoordinate2D) async {
-        let key = gridKey(for: coordinate)
+    public func store(_ response: SpeedLimitResponse, at coordinate: CLLocationCoordinate2D, roadName: String? = nil) async {
+        let key = gridKey(for: coordinate, roadName: roadName)
         let entry = Entry(
             response: response,
             gridKey: key,
             lat: coordinate.latitude,
             lon: coordinate.longitude,
-            cachedAt: Date()
+            cachedAt: Date(),
+            roadName: roadName
         )
         memory[key] = entry
         if let idx = lruOrder.firstIndex(of: key) {
