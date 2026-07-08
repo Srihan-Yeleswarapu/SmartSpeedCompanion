@@ -52,7 +52,7 @@ public struct DriveRootView: View {
                 .toolbarBackground(DesignSystem.bgPanel, for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
             
-            #if DEVELOPER_BUILD
+            #if DEBUG || DEVELOPER_BUILD
             DeveloperTabView()
                 .tabItem {
                     Label("Developer", systemImage: "terminal.fill")

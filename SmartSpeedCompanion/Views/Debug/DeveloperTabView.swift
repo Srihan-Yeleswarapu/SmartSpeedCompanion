@@ -1,6 +1,6 @@
 import SwiftUI
 
-#if DEVELOPER_BUILD
+#if DEBUG || DEVELOPER_BUILD
 public struct DeveloperTabView: View {
     @StateObject private var logger = DebugLogger.shared
     @State private var autoScroll = true

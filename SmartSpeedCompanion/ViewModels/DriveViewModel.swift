@@ -215,6 +215,16 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         super.init()
         #if DEBUG || DEVELOPER_BUILD
         SimulationManager.shared.dataSource = self
+        // In iOS Simulator there is no real GPS. Auto-start the simulation
+        // loop so the app shows live data the moment the user hits Run.
+        // Phoenix, AZ is the existing default location. We also bump
+        // mockSpeed to 35 mph so the HUD shows a real-looking speed
+        // instead of 0; the user can override from the Developer tab.
+        #if targetEnvironment(simulator)
+        SimulationManager.shared.mockSpeed = 35
+        SimulationManager.shared.isSimulationActive = true
+        DebugLogger.shared.log("DriveViewModel: auto-started simulator loop (iOS Simulator detected).")
+        #endif
         #endif
         
         self.speechSynthesizer.delegate = self
@@ -311,12 +321,20 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             }
         
         // Start the Lock Screen Live Activity
+        // Live Activities don't render in the iOS Simulator; skip the call
+        // so the simulator path doesn't trip an ActivityKit no-op warning.
+        #if !targetEnvironment(simulator)
         LiveActivityManager.shared.startActivity(sessionStartDate: sessionStartTime ?? Date())
+        #endif
         updateLiveActivity()
     }
     
     /// Updates the Dynamic Island and Lock Screen widgets with real-time driving data.
     private func updateLiveActivity() {
+        // Live Activities don't render in the iOS Simulator. Calling the
+        // manager from a simulator emits ActivityKit no-op warnings every
+        // 1-second tick — gate the call so the simulator path is silent.
+        #if !targetEnvironment(simulator)
         if #available(iOS 16.1, *) {
             let state = SpeedActivityAttributes.ContentState(
                 speed: speed,
@@ -332,6 +350,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             )
             LiveActivityManager.shared.updateActivity(with: state)
         }
+        #endif
     }
     
     /// Stops recording the session and checks if it's worth saving (long enough).
@@ -362,7 +381,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         // Only stop Live Activity if navigation isn't using it too.
         if !isNavigating {
+            // Live Activities don't render in the iOS Simulator; the matching
+            // start call is gated, so gate the stop call to keep the path silent.
+            #if !targetEnvironment(simulator)
             LiveActivityManager.shared.endActivity()
+            #endif
             Task {
                 // Wipe speed limit cache to save memory once drive is over
                 await ArizonaSpeedLimitService.shared.clearCache()
@@ -562,7 +585,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
         
         if !isRecording {
+            // Live Activities don't render in the iOS Simulator; the matching
+            // start call is gated, so gate the stop call to keep the path silent.
+            #if !targetEnvironment(simulator)
             LiveActivityManager.shared.endActivity()
+            #endif
         }
     }
     

@@ -21,17 +21,25 @@ public final class LocationManager: NSObject, ObservableObject {
         manager.distanceFilter = kCLDistanceFilterNone
         manager.allowsBackgroundLocationUpdates = true // Requires 'location' in UIBackgroundModes
         manager.showsBackgroundLocationIndicator = true
-        
+
         // Navigation-grade heading
         manager.headingFilter = 2.0 // Update every 2 degrees
-        
+
         // Apply user-selected GPS accuracy (set before starting updates)
         applyAccuracyMode()
-        
+
         #if DEBUG || DEVELOPER_BUILD
         setupMockSubscription()
+        // In the iOS Simulator there is no real GPS. Auto-engage mock mode
+        // so the app is usable the moment the user hits Run. Real-device
+        // users still start in non-mock mode and toggle from the Developer
+        // tab. isMockMode defaults to false; we only flip it for simulator.
+        #if targetEnvironment(simulator)
+        self.isMockMode = true
+        DebugLogger.shared.log("LocationManager: auto-engaged mock mode (iOS Simulator detected).")
         #endif
-        
+        #endif
+
         DebugLogger.shared.log("LocationManager initialized.")
     }
     

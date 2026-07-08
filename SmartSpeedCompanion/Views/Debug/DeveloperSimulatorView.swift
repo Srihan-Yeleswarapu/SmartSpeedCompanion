@@ -229,11 +229,15 @@ struct MockMapView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: MKMapView, context: Context) {
+        // Skip the coord update while the user is mid-drag — otherwise the
+        // physics-driven mockCoordinate and the user's finger fight each
+        // other and the pin jumps. The `.ending` handler below writes the
+        // final coord to SimulationManager, so the simulation picks up the
+        // new position on the next 1 Hz tick.
+        guard !context.coordinator.isDragging else { return }
         // Find the draggable pin
         if let annotation = uiView.annotations.first(where: { $0.title == "SIMULATOR_DRAGGABLE" }) as? MKPointAnnotation {
-            // Only update if not currently dragging (to avoid fighting the user)
-            // But SimulationManager might update it via drive() logic, so we DO want to update it.
-            // However, we should check if the difference is significant.
+            // Only update if the difference is significant.
             if abs(annotation.coordinate.latitude - sim.mockCoordinate.latitude) > 0.000001 ||
                abs(annotation.coordinate.longitude - sim.mockCoordinate.longitude) > 0.000001 {
                 annotation.coordinate = sim.mockCoordinate
@@ -247,17 +251,21 @@ struct MockMapView: UIViewRepresentable {
     
     class Coordinator: NSObject, MKMapViewDelegate {
         var parent: MockMapView
-        
+        /// True while the user is mid-drag on the simulator pin. `updateUIView`
+        /// reads this to avoid fighting the user's finger with the physics
+        /// loop. Reset on `.ending` and `.canceling`.
+        var isDragging: Bool = false
+
         init(_ parent: MockMapView) {
             self.parent = parent
         }
-        
+
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation is MKUserLocation { return nil }
-            
+
             let identifier = "SimulatorPin"
             var view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
-            
+
             if view == nil {
                 view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
                 view?.isDraggable = true
@@ -266,17 +274,25 @@ struct MockMapView: UIViewRepresentable {
             } else {
                 view?.annotation = annotation
             }
-            
+
             return view
         }
-        
+
         func mapView(_ mapView: MKMapView, annotationView view: MKAnnotationView, didChange newState: MKAnnotationView.DragState, fromOldState oldState: MKAnnotationView.DragState) {
-            if newState == .ending {
+            switch newState {
+            case .dragging:
+                isDragging = true
+            case .ending:
+                isDragging = false
                 if let newCoord = view.annotation?.coordinate {
                     DispatchQueue.main.async {
                         self.parent.sim.mockCoordinate = newCoord
                     }
                 }
+            case .canceling:
+                isDragging = false
+            @unknown default:
+                isDragging = false
             }
         }
     }
