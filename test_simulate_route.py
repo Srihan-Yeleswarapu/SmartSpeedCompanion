@@ -200,19 +200,20 @@ def t18():
 
 # ---------- T19: select_way falls back to longest when no name match ----------
 def t19():
-    # A scores 0 (no name/ref/tokens/maxspeed; "construction" is not in
-    # HIGHWAY_TYPE_RANK). B scores 5 ("residential" rank). So B wins on
-    # its name-agnostic score, not just on length. This also exercises
-    # the highway-type-rank influence on selection.
+    # Both ways score 0 (no name/ref/tokens; "construction" is not in
+    # HIGHWAY_TYPE_RANK so the highway bonus is also 0). When both score 0,
+    # select_way falls through to `max(ways, key=len(w.coords))` and picks
+    # the longest polyline. This is the actual length-fallback path the
+    # test name claims to exercise.
     ways = [
         {"name": "A", "ref": "", "highway": "construction", "maxspeed_raw": "",
          "coords": [(0, 0)] * 3},
-        {"name": "B", "ref": "", "highway": "residential", "maxspeed_raw": "",
+        {"name": "B", "ref": "", "highway": "construction", "maxspeed_raw": "",
          "coords": [(0, 0)] * 20},
     ]
     pick = m.select_way(ways, "Z")  # no name hit
     assert pick is not None
-    assert pick["name"] == "B", f"expected fallback to B, got {pick['name']}"
+    assert pick["name"] == "B", f"expected fallback to B (longest), got {pick['name']}"
 
 
 # ---------- T20: select_way returns None on empty input ----------
