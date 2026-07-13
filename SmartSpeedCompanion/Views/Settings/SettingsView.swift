@@ -136,7 +136,10 @@ public struct SettingsView: View {
                 }
                 .listRowBackground(DesignSystem.bgPanel)
                 
-                Section(header: Text("ACCOUNT").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                // MARK: - SUPPORT section (always visible)
+                // Report Issue and Replay Tutorial are useful regardless of auth
+                // state, so they're surfaced to every user.
+                Section(header: Text("SUPPORT").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
                     Button(action: {
                         let email = "speedsenseapp@gmail.com"
                         let urlStr = "mailto:\(email)?subject=Speedio%20Issue%20Report"
@@ -147,36 +150,52 @@ public struct SettingsView: View {
                         Text("Report Issue")
                             .foregroundColor(.white)
                     }
-                    
+
                     Button(action: {
                         showingTutorial = true
                     }) {
                         Text("Replay Tutorial")
                             .foregroundColor(.white)
                     }
-                    
-                    Button(action: {
-                        appState.authManager.signOut()
-                    }) {
-                        Text("Sign Out")
-                            .foregroundColor(DesignSystem.alertRed)
-                    }
-
-                    // MARK: Delete Account — Apple App Store Guideline 5.1.1(v).
-                    // The two-stage confirmation is intentionally hard to trigger
-                    // by accident: first an alert listing what gets erased, then a
-                    // second alert requiring the user to literally type "DELETE".
-                    Button(action: {
-                        deleteConfirmText = ""
-                        reauthPassword = ""
-                        showDeleteNotice = true
-                    }) {
-                        Text("Delete Account")
-                            .foregroundColor(DesignSystem.alertRed)
-                    }
-                    .disabled(isDeleting)
                 }
                 .listRowBackground(DesignSystem.bgPanel)
+
+                // MARK: - ACCOUNT section (auth-required, gated)
+                // Sign-in / sign-up / cloud-sync UI is intentionally not surfaced
+                // to users (Apple App Store Guideline 5.1.1(v): apps may not
+                // require registration to access features that aren't
+                // account-based). The `AuthenticationManager`, sign-up/in views,
+                // and Firestore sync paths remain in the codebase — they're just
+                // not surfaced here. This section only renders when a Firebase
+                // session is already cached, so a returning user who created an
+                // account on a prior build can still sign out or invoke account
+                // deletion. The upcoming in-app-purchase rollout will re-surface
+                // this section unconditionally.
+                if appState.authManager.isAuthenticated {
+                    Section(header: Text("ACCOUNT").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                        Button(action: {
+                            appState.authManager.signOut()
+                        }) {
+                            Text("Sign Out")
+                                .foregroundColor(DesignSystem.alertRed)
+                        }
+
+                        // MARK: Delete Account — Apple App Store Guideline 5.1.1(v).
+                        // The two-stage confirmation is intentionally hard to trigger
+                        // by accident: first an alert listing what gets erased, then a
+                        // second alert requiring the user to literally type "DELETE".
+                        Button(action: {
+                            deleteConfirmText = ""
+                            reauthPassword = ""
+                            showDeleteNotice = true
+                        }) {
+                            Text("Delete Account")
+                                .foregroundColor(DesignSystem.alertRed)
+                        }
+                        .disabled(isDeleting)
+                    }
+                    .listRowBackground(DesignSystem.bgPanel)
+                }
             }
             .scrollContentBackground(.hidden)
             .background(DesignSystem.bgDeep.ignoresSafeArea())

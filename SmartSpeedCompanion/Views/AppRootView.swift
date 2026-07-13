@@ -22,21 +22,42 @@ public struct AppRootView: View {
                 TutorialTransitionView()
             } else if !appState.hasCompletedTutorial {
                 TutorialView()
-            } else if appState.authManager.isAuthenticated {
-                // Returning authenticated user: skip onboarding, go straight to Drive.
+            } else {
+                // Authentication is intentionally NOT a gate on the Drive UI (Apple
+                // App Store Guideline 5.1.1(v): apps may not require users to register
+                // to access features that aren't account-based — and the speedometer,
+                // alerts, navigation, and CarPlay surface are local-first and free to
+                // use). Every user — signed in or not — walks the same state →
+                // onboarding → transition → tutorial → Drive funnel.
+                //
+                // Account code paths (`AuthenticationManager`, `AuthView`,
+                // `SignInView`, `SignUpView`, Firestore sync, preference sync) are
+                // intentionally NOT removed from the codebase; they're just not
+                // surfaced here. The upcoming in-app-purchase rollout will reuse
+                // them, and a returning user with a cached Firebase session can
+                // still sign out / delete their account from Settings (gated on
+                // `isAuthenticated`).
                 DriveRootView()
                     .environmentObject(driveViewModel)
-            } else {
-                // Just finished the first-run funnel — default to Sign Up for new users,
-                // but to Sign In for anyone who has previously authenticated on this device.
-                AuthView(defaultToSignUp: !appState.hasEverAuthenticated)
             }
         }
-        // Track that the user has authenticated at least once, so a future sign-out
-        // lands back on the Sign In tab (instead of refreshing Sign Up for returning users).
-        // .onAppear reads current values (covers the cold-already-authenticated case
-        // where SwiftUI's .onChange has no transition to observe).
-        // .onChange covers any subsequent sign-in events during this session.
+        // Track that the user has authenticated at least once on this device.
+        // NOTE: today these modifiers are a forward-looking placeholder — the
+        // `AuthView(defaultToSignUp: !appState.hasEverAuthenticated)` branch
+        // that previously consumed this flag was removed when sign-up/sign-in
+        // UI was hidden for Apple App Store Guideline 5.1.1(v). We still keep
+        // the tracking because (a) Firebase auth state for any pre-existing
+        // cached session still drives the Sign Out / Delete Account buttons in
+        // Settings, and (b) the upcoming in-app-purchase rollout will re-surface
+        // the auth UI here and re-consume `hasEverAuthenticated` as a
+        // "returning vs. fresh" discriminator.
+        //
+        // The two captures below cover both timing cases:
+        //   - .onAppear reads current values synchronously (the cold case where
+        //     a returning user opens the app already signed in and SwiftUI's
+        //     .onChange has no transition to observe).
+        //   - .onChange covers any subsequent sign-in events that happen
+        //     during this app session (e.g., a future auth-gated flow).
         .onAppear {
             if appState.authManager.initialAuthChecked && appState.authManager.isAuthenticated {
                 appState.hasEverAuthenticated = true
