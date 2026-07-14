@@ -1,6 +1,8 @@
 // iOS 26+ WidgetKit
 import WidgetKit
-import SwiftUIstruct SpeedWidgetEntry: TimelineEntry {
+import SwiftUI
+
+struct SpeedWidgetEntry: TimelineEntry {
     let date: Date
     let speed: Int
     let limit: Int
