@@ -252,7 +252,7 @@ public actor ArizonaSpeedLimitService {
         //     chosen so any positive match (>= 0.5) decisively outscores any
         //     pure-spatial candidate, even a 2-km ~plus-cross-street score.
         let SCORE_BASE_OFFSET: Double = 25.0
-        static let NAME_MATCH_BONUS_MAGNITUDE: Double = 10000.0
+        let NAME_MATCH_BONUS_MAGNITUDE: Double = 10000.0
         // Mirrored to website/server.py for byte-for-byte parity.
         // NAME_MATCH_SPATIAL_GATE_M (200 m) is the wider gate used when we
         // are doing the name-first pass. It deliberately exceeds the legacy
@@ -306,7 +306,7 @@ public actor ArizonaSpeedLimitService {
                 // Pre-hysteresis score (we still apply the bias last).
                 var score = (distance + SCORE_BASE_OFFSET)
                 score += segment.centerlineOffset(to: coordinate)
-                score -= Self.NAME_MATCH_BONUS_MAGNITUDE * nameMatch
+                score -= NAME_MATCH_BONUS_MAGNITUDE * nameMatch
                 let hysteresis: Double
                 if let lastId = self.lastSegmentId, segment.routeId == lastId {
                     hysteresis = 0.15
@@ -322,7 +322,7 @@ public actor ArizonaSpeedLimitService {
             }
             if let matched = nameBestLimit, matched > 0 {
                 self.lastSegmentId = nameBestRouteId
-                DebugLogger.shared.log("AZ Data: name-first hit \(matched) on \(nameBestRouteId ?? \"unknown road\") (geocoded '\(providedRoadName)')")
+                DebugLogger.shared.log("AZ Data: name-first hit \(matched) on \(nameBestRouteId ?? "unknown road") (geocoded '\(providedRoadName)')")
                 return matched
             }
             // No name-matching candidate within the 200 m gate. REJECT SQLite
