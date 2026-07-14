@@ -90,7 +90,14 @@ struct SpeedWidgetEntryView : View {
             Text(unitShort)
                 .font(.caption.weight(.semibold))
                 .foregroundColor(color.opacity(0.75))
-            Text(entry.limit == 0 ? "Limit --" : "Limit \(limitDisplay) \(unitShort)")
+            // Type-inference safety: hoist the ternary out of the Text
+            // initializer so Swift's overload picker between
+            // Text(String) / Text(LocalizedStringKey) doesn't have to
+            // resolve "Limit --" vs "Limit X Y" in one step. Inlining
+            // can trigger a slow type-checker path on iOS 18.2 + Xcode
+            // 16.2; the local variable form compiles in O(1).
+            let limitText = entry.limit == 0 ? "Limit --" : "Limit \(limitDisplay) \(unitShort)"
+            Text(limitText)
                 .font(.caption2)
                 .foregroundColor(.gray)
                 .lineLimit(1)

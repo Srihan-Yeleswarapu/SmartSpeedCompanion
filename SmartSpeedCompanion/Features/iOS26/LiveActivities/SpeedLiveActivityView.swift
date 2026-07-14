@@ -69,9 +69,15 @@ struct SpeedLiveActivityView: Widget {
                                 .foregroundColor(.white.opacity(0.55))
                                 .lineLimit(1)
                         }
-                        Text(context.state.speedLimit == 0
-                             ? "LIMIT \u{2014}"
-                             : "LIMIT \(limitDisplay) \(unitShort)")
+                        // Type-inference safety: hoist the ternary out
+                        // of the Text initializer (identical reasoning
+                        // to the equivalent line in `SpeedWidget.swift`
+                        // — avoids Text(String) / Text(LocalizedStringKey)
+                        // overload resolution in a single expression).
+                        let limitText = context.state.speedLimit == 0
+                            ? "LIMIT \u{2014}"
+                            : "LIMIT \(limitDisplay) \(unitShort)"
+                        Text(limitText)
                             .font(.caption2.weight(.bold))
                             .foregroundColor(.gray)
                             .lineLimit(1)
