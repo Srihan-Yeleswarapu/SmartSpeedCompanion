@@ -13,19 +13,27 @@ struct BufferSliderView: View {
         f.unitOptions = .providedUnit
         f.numberFormatter.maximumFractionDigits = 0
         return f
-    }()
+    }()    var body: some View {
+        // TestFlight 2.1.4 feedback: the buffer chip value previously
+        // hard-coded "+X mph". The underlying `@AppStorage("userBuffer")`
+        // value is the raw mph (SpeedEngine thresholds are mph-stable),
+        // so we convert on render to honor Settings → UNITS.
+        let measurementSystem = SpeedFormatting.measurementSystem()
+        let displayBuffer = Int(SpeedFormatting.displayBuffer(
+            forMph: buffer,
+            measurementSystem: measurementSystem))
+        let bufferUnit = SpeedFormatting.unitLabelLong(measurementSystem: measurementSystem)
 
-    var body: some View {
         VStack(spacing: 8) {
             HStack {
                 Text("ALERT BUFFER")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(.gray)
                 Spacer()
-                Text("+\(Int(buffer)) mph")
+                Text("+\(displayBuffer) \(bufferUnit)")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(Color(hex: "#FFB800"))
-            }
+            }      
 
             ZStack(alignment: .leading) {
                 // Track background

@@ -18,7 +18,17 @@ public struct SpeedGaugeView: View {
                 context.stroke(trackPath, with: .color(Color(red: 1, green: 1, blue: 1, opacity: 0.05)), style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round))
                 
                 // Speed Arc
-                let maxSpeed: Double = 120.0
+                // The gauge has a fixed 0..270° sweep on the arc — only the
+                // maxSpeed reference value changes between units so the same
+                // needle angle covers 0-120 mph OR 0-193 km/h. 120 mph is the
+                // historical U.S. maximum; 193 km/h ≈ 120 mph × 1.60934, the
+                // equivalent German autobahn cap. `.rounded()` matches the
+                // rounding used by `SpeedFormatting.displayLimit(...)` so the
+                // two surfaces stay numerically consistent.
+                let measurementSystem = SpeedFormatting.measurementSystem()
+                let maxSpeed: Double = SpeedFormatting.isMetric(measurementSystem)
+                    ? (120.0 * SpeedFormatting.kmhPerMph).rounded()  // 193 km/h
+                    : 120.0
                 let speedRatio = min(max(viewModel.speed / maxSpeed, 0), 1)
                 
                 var speedPath = Path()
@@ -78,12 +88,16 @@ public struct SpeedGaugeView: View {
                     .offset(y: 30) // Match the gauge center offset (130-100)
             }
             
-            // Center Readout
+            // Center Readout — speed value + unit honor Settings → UNITS.
+            // `viewModel.speed` is already in the active display unit (the
+            // SpeedEngine converts mph→km/h before publishing), so this
+            // view only has to swap the trailing label.
             VStack(spacing: -5) {
                 Text("\(Int(viewModel.speed))")
                     .font(DesignSystem.displayFont)
                     .foregroundColor(.white)
-                Text("MPH")
+                Text(SpeedFormatting.unitLabelShort(
+                        measurementSystem: SpeedFormatting.measurementSystem()))
                     .font(DesignSystem.labelFont)
                     .foregroundColor(.gray)
             }

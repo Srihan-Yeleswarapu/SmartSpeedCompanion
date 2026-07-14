@@ -28,7 +28,13 @@ class CarPlayDashboardController {
     }
 
     private func updateButtons(speed: Double, limit: Int, status: SpeedStatus) {
-        let formattedSpeed = String(format: "%.0f mph", speed)
+        // TestFlight 2.1.4 feedback: dashboard subtitle previously hard-coded
+        // "%.0f mph". `viewModel.speed` is already in the active display unit
+        // (the SpeedEngine converts mph→km/h before publishing), so we only
+        // need to swap the unit label here via `SpeedFormatting`.
+        let system = SpeedFormatting.measurementSystem()
+        let unitLong = SpeedFormatting.unitLabelLong(measurementSystem: system)
+        let formattedSpeed = String(format: "%.0f %@", speed, unitLong)
         let speedShortcut: CPDashboardButton
 
         switch status {

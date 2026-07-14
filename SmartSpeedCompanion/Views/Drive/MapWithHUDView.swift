@@ -395,7 +395,11 @@ fileprivate struct SpeedHUDPill: View {
                         .fixedSize(horizontal: true, vertical: false)
                         .minimumScaleFactor(0.9)
                     
-                    Text(UserDefaults.standard.string(forKey: "measurementSystem") == "Metric" ? "KMH" : "MPH")
+                    // Tracer-bar unit label honors Settings → UNITS so the
+                    // SpeedHUDPill text under the safe/warning/over-limit
+                    // speed number matches the LIMIT sign to its left.
+                    Text(SpeedFormatting.unitLabelShort(
+                            measurementSystem: SpeedFormatting.measurementSystem()))
                         .font(.system(size: isLandscape ? 12 : 14, weight: .black))
                         .foregroundColor(.white.opacity(0.4))
                         .lineLimit(1)
@@ -454,15 +458,26 @@ fileprivate struct LimitSignView: View {
                     .frame(width: isLandscape ? 40 : 52, height: isLandscape ? 40 : 52)
 
                 VStack(spacing: 0) {
-                    let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
-                    let displayLimit = isMetric ? Int(Double(limit) * 1.60934) : limit
-                    Text(limit == 0 ? "--" : "\(displayLimit)")
+                    // LimitSignView is the most prominent speed-limit display
+                    // in the app. Routes through `SpeedFormatting` so there's
+                    // exactly one mph→display conversion path across the HUD,
+                    // widget, Live Activity, and CarPlay. (TestFlight 2.1.4
+                    // feedback: this view was already correct, but the inline
+                    // conversion made future drift bugs easy.)
+                    let limitUnit = SpeedFormatting.unitLabelShort(
+                        measurementSystem: SpeedFormatting.measurementSystem()
+                    )
+                    let limitValue = SpeedFormatting.displayLimit(
+                        forMph: limit,
+                        measurementSystem: SpeedFormatting.measurementSystem()
+                    )
+                    Text(limit == 0 ? "--" : "\(limitValue)")
                         .font(.system(size: isLandscape ? 17 : 21, weight: .black))
                         .foregroundColor(.black)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
 
-                    Text(UserDefaults.standard.string(forKey: "measurementSystem") == "Metric" ? "KMH" : "MPH")
+                    Text(limitUnit)
                         .font(.system(size: isLandscape ? 7 : 9, weight: .black))
                         .foregroundColor(Color(hex: "#FF3D71"))
                 }

@@ -19,29 +19,35 @@ public struct SpeedDisplayView: View {
                         Capsule().stroke(DesignSystem.colorForStatus(viewModel.status), lineWidth: 1.5)
                     )
                     .clipShape(Capsule())
-                    .opacity(viewModel.status == .over ? flashOpacity : 1.0)
-                
-                Spacer()
-                
-                // Speed Limit Chip
+                    .opacity(viewModel.status == .over ? flashOpacity : 1.0)                Spacer()
+
+                // Speed Limit Chip — value + unit honor Settings → UNITS.
+                // The chip deliberately inlines the unit (e.g. "65 MPH" / "105 KMH")
+                // so the conversion is unambiguous; without it a "105" while the
+                // user is in metric would just look like a typo of "10.5".
+                let measurementSystem = SpeedFormatting.measurementSystem()
+                let limitUnitShort = SpeedFormatting.unitLabelShort(measurementSystem: measurementSystem)
+                let limitUnitLong = SpeedFormatting.unitLabelLong(measurementSystem: measurementSystem)
+                let displayLimitValue = SpeedFormatting.displayLimit(forMph: viewModel.limit, measurementSystem: measurementSystem)
+                let displayBufferValue = Int(SpeedFormatting.displayBuffer(forMph: Double(viewModel.speedEngine.userBuffer), measurementSystem: measurementSystem))
                 HStack(spacing: 4) {
                     Text("LIMIT")
                         .font(DesignSystem.labelFont)
                         .foregroundColor(.gray)
-                    Text("\(viewModel.limit)")
+                    Text(viewModel.limit == 0 ? "--" : "\(displayLimitValue) \(limitUnitShort)")
                         .font(.title3.bold())
                         .foregroundColor(.white)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 1))
-                
-                // Buffer Chip
+
+                // Buffer Chip — same metric/imperial rule as LIMIT above.
                 HStack(spacing: 4) {
                     Text("BUFFER")
                         .font(DesignSystem.labelFont)
                         .foregroundColor(.gray)
-                    Text("+\(viewModel.speedEngine.userBuffer)")
+                    Text("+\(displayBufferValue) \(limitUnitLong)")
                         .font(.title3.bold())
                         .foregroundColor(DesignSystem.amber)
                 }

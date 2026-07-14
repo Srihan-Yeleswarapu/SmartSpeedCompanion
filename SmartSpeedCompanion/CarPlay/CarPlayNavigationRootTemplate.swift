@@ -30,15 +30,18 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         
         setupTemplate()
         bindViewModel()
-    }
-
-    @MainActor
+    }    @MainActor
     private func setupTemplate() {
-        // Navigation Bar Buttons (Top - Representing the 25% overlay conceptually)
-        speedButton = CPBarButton(title: "0 MPH") { _ in }
-        limitButton = CPBarButton(title: "LIMIT 0") { _ in }
+        // Navigation Bar Buttons (Top - Representing the 25% overlay conceptually).
+        // Placeholder labels honor Settings → UNITS so a metric user's first
+        // frame never flashes "0 MPH" before the publisher fires (TestFlight
+        // 2.1.4 feedback about MPH bleeding through the toggle).
+        let initialSystem = SpeedFormatting.measurementSystem()
+        let initialUnitShort = SpeedFormatting.unitLabelShort(measurementSystem: initialSystem)
+        speedButton = CPBarButton(title: "0 \(initialUnitShort)") { _ in }
+        limitButton = CPBarButton(title: "LIMIT 0 \(initialUnitShort)") { _ in }
         mapTemplate.leadingNavigationBarButtons = [speedButton]
-        mapTemplate.trailingNavigationBarButtons = [limitButton]
+        mapTemplate.trailingNavigationBarButtons = [limitButton]      
         
         // Map Buttons (Right Side)
         let searchButton = CPMapButton { [weak self] _ in
@@ -89,16 +92,26 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
 
     @MainActor
     private func updateHUD(speed: Double, limit: Int, status: SpeedStatus) {
-        speedButton.title = "\(Int(speed)) MPH"
-        limitButton.title = "LIMIT \(limit)"
-        
+        // Both bar buttons honor Settings → UNITS. `speed` is already
+        // in the active display unit (SpeedEngine converts mph→km/h before
+        // publishing); the limit is still stored in mph so we route it
+        // through `SpeedFormatting.displayLimit(forMph:…)` for the value.
+        let system = SpeedFormatting.measurementSystem()
+        let unitShort = SpeedFormatting.unitLabelShort(measurementSystem: system)
+        let displayLimit = SpeedFormatting.displayLimit(forMph: limit, measurementSystem: system)
+
+        speedButton.title = "\(Int(speed)) \(unitShort)"
+        limitButton.title = limit == 0
+            ? "LIMIT --"
+            : "LIMIT \(displayLimit) \(unitShort)"
+
         let circleColor: UIColor
         switch status {
         case .over: circleColor = UIColor(red: 1.0, green: 0.24, blue: 0.44, alpha: 1.0) // red
         case .warning: circleColor = UIColor(red: 1.0, green: 0.72, blue: 0.0, alpha: 1.0) // amber
         case .safe: circleColor = UIColor(red: 0.0, green: 1.0, blue: 0.62, alpha: 1.0) // green
         }
-        
+
         limitButton.image = statusCircleImage(color: circleColor, size: 20)
     }
     
@@ -121,22 +134,33 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
 
     @MainActor
     private func presentNavigationAlert(speed: Double, limit: Int) {
-        let diff = Int(speed) - limit
-        
+        // Diff is computed in display units: `speed` is already in the
+        // active display unit (SpeedEngine converts mph→km/h before
+        // publishing), so we subtract the DISPLAY-converted limit to keep
+        // both operands in the same unit. Otherwise a Metric user would
+        // see "Speeding +5 KMH" for a 70-km/h car against a 65-mph limit
+        // (which is actually under the limit, since 70 km/h ≈ 43 mph).
+        let system = SpeedFormatting.measurementSystem()
+        let unitShort = SpeedFormatting.unitLabelShort(measurementSystem: system)
+        let displayLimit = SpeedFormatting.displayLimit(forMph: limit, measurementSystem: system)
+        let diff = Int(speed) - displayLimit
+
         let action = CPAlertAction(title: "OK", style: .default) { [weak self] _ in
             Task { @MainActor in self?.isAlertPresented = false }
         }
-        
-        // Use CPNavigationAlert so the map is never blocked
+
+        // Use CPNavigationAlert so the map is never blocked. Both
+        // subtitle variants honor UNITS so the alert text never reads
+        // "Limit is 65 MPH" for a metric user.
         let alert = CPNavigationAlert(
-            titleVariants: ["⚠ SLOW DOWN", "Speeding +\(diff)"],
-            subtitleVariants: ["Limit is \(limit) MPH. Watch your speed."],
+            titleVariants: ["⚠ SLOW DOWN", "Speeding +\(diff) \(unitShort)"],
+            subtitleVariants: ["Limit is \(displayLimit) \(unitShort). Watch your speed."],
             image: nil,
             primaryAction: action,
             secondaryAction: nil,
             duration: 5.0
         )
-        
+
         isAlertPresented = true
         mapTemplate.present(navigationAlert: alert, animated: true)
     }
@@ -177,17 +201,20 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
     @MainActor
     public func showTurnByTurnList() {
         navigationManager.showManeuversList(interfaceController: interfaceController)
-    }
-
-    @MainActor
+    }    @MainActor
     private func presentSafetyReport() {
-        // Information Template for professional session summaries
-        
+        // Information Template for professional session summaries.
+        // CarPlay "Current Speed" detail honors Settings → UNITS too —
+        // the previous hardcoded "MPH" was caught by TestFlight 2.1.4
+        // feedback on the same mph/kmh toggle.
+        let system = SpeedFormatting.measurementSystem()
+        let unitShort = SpeedFormatting.unitLabelShort(measurementSystem: system)
+
         let items = [
-            CPInformationItem(title: "Current Speed", detail: "\(Int(viewModel.speed)) MPH"),
+            CPInformationItem(title: "Current Speed", detail: "\(Int(viewModel.speed)) \(unitShort)"),
             CPInformationItem(title: "Drive Time", detail: "\(Int(viewModel.sessionDuration / 60)) min"),
             CPInformationItem(title: "Status", detail: viewModel.status.rawValue.uppercased())
-        ]
+        ]      
         
         let report = CPInformationTemplate(
             title: "Safety Report",
