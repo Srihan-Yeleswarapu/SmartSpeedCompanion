@@ -7,7 +7,14 @@ on:
 
 jobs:
   build-and-testflight:
-    runs-on: macos-15
+    # `macos-15-large` gives 14GB RAM (vs the 7GB of the standard
+    # macos-15 runner). The Release-architecture swift-frontend is
+    # OOM-killed during the main app's whole-module-optimization type-
+    # check of 30+ Swift files when running on the 7GB runner; the
+    # 14GB headroom is enough to keep the default parallel build
+    # going without OOM. See CHANGELOG for the long sequence of fixes
+    # that culminated in this runner swap.
+    runs-on: macos-15-large
     timeout-minutes: 90
 
     steps:
@@ -224,7 +231,14 @@ jobs:
 
           echo "=== Archive verified ==="
           ls -la ./SmartSpeedCompanion.xcarchive/
-        timeout-minutes: 60
+        # Step-level timeout matched to the job-level 90 minutes. The
+        # previous 60-minute cap was a holdover from when builds were
+        # parallel; on `macos-15-large` with 30+ main-app files +
+        # Firebase + widget + signature collection, the build can
+        # plausibly exceed 60 min if SPM has to recompile a cache
+        # miss. A step-level cancel here would look like a real
+        # compile error in the log.
+        timeout-minutes: 90
 
       - name: Verify archive exists
         run: |
