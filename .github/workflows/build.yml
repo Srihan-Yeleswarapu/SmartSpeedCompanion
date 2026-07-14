@@ -84,42 +84,66 @@ jobs:
         run: |
           echo "=== Decoding provisioning profile ==="
 
-          # Step 1: Decode base64 -> raw bytes
+          # Step 1: Decode base64 -> raw bytes (PKCS#7 envelope)
           python3 -c "import base64; data = base64.b64decode(''.join('$PROVISIONING_PROFILE'.split())); open('/tmp/profile.mobileprovision.raw', 'wb').write(data); print(f'Raw file: {len(data)} bytes')"
 
-          # Step 2: Try security cms -D first (works if signature can be verified)
-          if security cms -D -in /tmp/profile.mobileprovision.raw -out /tmp/profile.mobileprovision 2>/dev/null; then
+          # Step 2: ALSO produce an unwrapped plist copy for metadata extraction only.
+          # DVTProvisioningProfileManager will only accept the raw PKCS#7 envelope,
+          # so /tmp/profile.mobileprovision (used downstream by the IPA export
+          # step) MUST remain the raw file — never write the plist to it.
+          if security cms -D -in /tmp/profile.mobileprovision.raw -out /tmp/profile.unwrapped.plist 2>/dev/null; then
             echo "[OK] Successfully unwrapped CMS/PKCS#7 envelope via security cms"
           else
             echo "[WARN] security cms -D failed - extracting embedded plist directly from DER structure"
-            # Step 2alt: Extract the embedded XML plist directly from DER/PKCS#7 structure
-            python3 -c "data=open('/tmp/profile.mobileprovision.raw','rb').read(); pos=data.find(b'<?xml'); print(f'Found XML plist at offset {pos}'); open('/tmp/profile.mobileprovision','wb').write(data[pos:]); print(f'Extracted plist size: {len(data)-pos} bytes')"
+            python3 -c "import plistlib,sys; d=open('/tmp/profile.mobileprovision.raw','rb').read(); s=d.find(b'<?xml'); e=d.find(b'</plist>',s); assert s>=0 and e>=0,b'no plist boundaries found'; pb=d[s:e+len(b'</plist>')]; p=plistlib.loads(pb); assert 'UUID' in p, b'plist missing required UUID property'; open('/tmp/profile.unwrapped.plist','wb').write(pb); print('[OK] extracted clean plist: %d bytes, UUID=%s, Name=%s' % (len(pb),p['UUID'],p.get('Name','?')))"
           fi
 
-          echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes"
+          # /tmp/profile.mobileprovision must be the RAW PKCS#7 — this is what
+          # xcodebuild's DVTProvisioningProfileManager expects later in the
+          # 'Build Archive' step AND what we'll later embed in the IPA.
+          cp /tmp/profile.mobileprovision.raw /tmp/profile.mobileprovision
+          echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes (raw PKCS#7)"
 
-          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
-          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
-          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
-          APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/profile.mobileprovision 2>/dev/null || echo "unknown")
+          # Metadata extraction uses the unwrapped plist (PlistBuddy can't
+          # read PKCS#7 binary).
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+          APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+
+          # Robust UUID extraction via plistlib (independent of PlistBuddy).
+          UUID_FROM_PLIST=$(python3 -c "import plistlib; print(plistlib.loads(open('/tmp/profile.unwrapped.plist','rb').read()).get('UUID',''))" 2>/dev/null || echo "")
+          if [ -n "$UUID_FROM_PLIST" ]; then
+            PROFILE_UUID="$UUID_FROM_PLIST"
+          fi
+
+          # Validate PROFILE_UUID is a real UUID-shaped string before using it as a filename.
+          if echo "$PROFILE_UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+            INSTALL_NAME="${PROFILE_UUID}.mobileprovision"
+          else
+            echo "[WARN] No valid UUID extracted - installing as profile.mobileprovision as fallback"
+            INSTALL_NAME="profile.mobileprovision"
+          fi
 
           echo "Profile Name: $PROFILE_NAME"
           echo "Profile UUID: $PROFILE_UUID"
           echo "Team ID: $TEAM_ID"
           echo "App ID: $APPID"
 
-          # Extract entitlements from provisioning profile for codesign
-          /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.mobileprovision > /tmp/entitlements.plist 2>/dev/null
+          # Extract entitlements from the unwrapped plist (codesign needs them).
+          /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.unwrapped.plist > /tmp/entitlements.plist 2>/dev/null
           if [ -s /tmp/entitlements.plist ]; then
             echo "[OK] Extracted entitlements from provisioning profile"
           else
             echo "[WARN] Could not extract entitlements from profile"
           fi
 
-          # Install to correct location
+          # Install the RAW PKCS#7 with the proper UUID-based filename so
+          # DVTProvisioningProfileManager loads it via Xcode's expected
+          # ~/Library/MobileDevice/Provisioning Profiles/<UUID>.mobileprovision path.
           PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PP_DIR"
-          cp /tmp/profile.mobileprovision "$PP_DIR/"
+          cp /tmp/profile.mobileprovision.raw "$PP_DIR/${INSTALL_NAME}"
           echo "Installed provisioning profile to: $PP_DIR"
           ls -la "$PP_DIR/"
 
