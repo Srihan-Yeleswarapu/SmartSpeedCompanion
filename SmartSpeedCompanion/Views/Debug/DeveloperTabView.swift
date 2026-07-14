@@ -4,9 +4,13 @@ import SwiftUI
 public struct DeveloperTabView: View {
     @StateObject private var logger = DebugLogger.shared
     @State private var autoScroll = true
-    
+
+    // MARK: - Geoapify API key state (DEBUG-only, opt-in network geocoder)
+    @State private var geoapifyKeyDraft: String = ""
+    @State private var geoapifyKeySavedAt: Date? = nil
+
     public init() {}
-    
+
     public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -14,10 +18,20 @@ public struct DeveloperTabView: View {
                 DeveloperSimulatorView(locationManager: AppDelegate.sharedDriveViewModel.locationManager)
                     .padding()
                     .background(DesignSystem.bgDeep)
-                
+
+                // GEOAPIFY API KEY row. Lets the developer paste their free-
+                // tier key without leaving the app; persisted in Keychain via
+                // `GeoapifyCredentialStore.saveApiKey(...)`. Silently disabled
+                // for builds where no key is set — network fallback cost is
+                // then zero and `RoadGeocoder` stays on the CLGeocoder chain.
+                geoapifyKeyRow
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .background(DesignSystem.bgDeep)
+
                 Divider()
                     .overlay(DesignSystem.cyan.opacity(0.1))
-                
+
                 ScrollViewReader { proxy in
                     List(logger.logs) { entry in
                         VStack(alignment: .leading, spacing: 4) {
@@ -82,9 +96,7 @@ public struct DeveloperTabView: View {
                         }
                         .foregroundColor(DesignSystem.alertRed)
                     }
-                }
-                
-                ToolbarItem(placement: .navigationBarLeading) {
+                }                ToolbarItem(placement: .navigationBarLeading) {
                     Button(action: {
                         Task { @MainActor in
                             let vm = AppDelegate.sharedDriveViewModel
@@ -92,9 +104,9 @@ public struct DeveloperTabView: View {
                                 DebugLogger.shared.log("Manual Fetch: No current location")
                                 return
                             }
-                            
+
                             DebugLogger.shared.log("Manual Fetch: Triggered at \(loc.coordinate.latitude), \(loc.coordinate.longitude)")
-                            
+
                             let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
                             let conversionFactor = isMetric ? 3.6 : 2.23694
                             let currentSpeed = max(0, loc.speed * conversionFactor)
@@ -115,6 +127,51 @@ public struct DeveloperTabView: View {
                 }
             }
             .background(DesignSystem.bgDeep.ignoresSafeArea())
+        }
+    }
+
+    // MARK: - Geoapify API key row
+    // Standalone computed view so the body stays readable. The TextField is
+    // plain (not Secure) so the developer can verify a clean paste of their
+    // key; keys are not high-secrecy for free-tier Geoapify.
+    private var geoapifyKeyRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Geoapify API key (network fallback for RoadGeocoder)")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                if GeoapifyCredentialStore.shared.hasApiKey() {
+                    Text("Configured")
+                        .foregroundColor(DesignSystem.neonGreen)
+                        .font(.caption2)
+                } else {
+                    Text("Not configured")
+                        .foregroundColor(.gray)
+                        .font(.caption2)
+                }
+            }
+            HStack {
+                TextField("Paste key from myprojects.geoapify.com", text: $geoapifyKeyDraft)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(.white)
+                Button("Save") {
+                    GeoapifyCredentialStore.shared.saveApiKey(geoapifyKeyDraft)
+                    geoapifyKeyDraft = ""
+                    geoapifyKeySavedAt = Date()
+                    DebugLogger.shared.log("Geoapify key saved (length=\(GeoapifyCredentialStore.shared.loadApiKey()?.count ?? 0))")
+                }
+                .disabled(geoapifyKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).count < 16)
+                if GeoapifyCredentialStore.shared.hasApiKey() {
+                    Button("Clear") {
+                        GeoapifyCredentialStore.shared.clearApiKey()
+                        DebugLogger.shared.log("Geoapify key cleared")
+                    }
+                    .foregroundColor(DesignSystem.alertRed)
+                }
+            }
         }
     }
 }
