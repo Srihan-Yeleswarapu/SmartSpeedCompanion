@@ -165,7 +165,18 @@ jobs:
           # diagnostic never reaches stdout). See "SILENT COMPILE FAILURE
           # REVEAL" below for the extraction step.
           set +e
-          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" CURRENT_PROJECT_VERSION="${CURRENT_BUILD}" -archivePath ./SmartSpeedCompanion.xcarchive -resultBundlePath ./build.xcresult
+          # `-jobs 1 -parallelizeTargets NO` force a serial compile pipeline.
+          # The default `nproc`-driven parallelism (8 parallel swift-frontend
+          # invocations on the 4-core/8-thread macos-15 GitHub runner, each
+          # consuming 1-2GB during the type-check of complex views) blew past
+          # the runner's 7GB memory budget. The Swift type-checker is then
+          # OOM-killed mid-SwiftCompile, xcodebuild exits 65 with no
+          # diagnostic on stdout, and no .xcresult is ever written. A
+          # serial pipeline trades build time (build will be ~2-3x slower)
+          # for a dramatic drop in peak memory usage; this is the
+          # documented fix for SwiftUI-heavy apps on memory-constrained
+          # CI runners.
+          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" CURRENT_PROJECT_VERSION="${CURRENT_BUILD}" -archivePath ./SmartSpeedCompanion.xcarchive -resultBundlePath ./build.xcresult -jobs 1 -parallelizeTargets NO
           BUILD_EXIT=$?
           set -e
 
