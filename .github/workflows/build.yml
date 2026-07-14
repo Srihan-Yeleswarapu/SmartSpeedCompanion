@@ -68,7 +68,12 @@ jobs:
 
           # Convert and import certificate
           openssl x509 -inform DER -in SmartSpeedCompanion/distribution.cer -out /tmp/distribution.pem
-          openssl pkcs12 -export -inkey SmartSpeedCompanion/SmartSpeedCompanion.key -in /tmp/distribution.pem -out /tmp/cert.p12 -passout pass:speedio123
+          # Force legacy PKCS12 algorithms (PBES1 + 3DES + SHA1 HMAC). OpenSSL 3.x
+          # defaults to PBES2 / AES-256 / SHA256 which `security import` on macOS
+          # rejects with "MAC verification failed during PKCS12 import (wrong password?)".
+          # The legacy crypto override restores cross-tool compatibility. These params
+          # are still recognized by OpenSSL 3.x without needing `-legacy`.
+          openssl pkcs12 -export -inkey SmartSpeedCompanion/SmartSpeedCompanion.key -in /tmp/distribution.pem -out /tmp/cert.p12 -passout pass:speedio123 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
           security import /tmp/cert.p12 -k build.keychain -P "speedio123" -T /usr/bin/codesign -T /usr/bin/security
 
           # Set partition list to allow codesign

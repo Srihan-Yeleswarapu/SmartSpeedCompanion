@@ -54,7 +54,11 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
 
           openssl x509 -inform DER -in SmartSpeedCompanion/distribution.cer -out /tmp/distribution.pem
-          openssl pkcs12 -export -inkey SmartSpeedCompanion/SmartSpeedCompanion.key -in /tmp/distribution.pem -out "$RUNNER_TEMP/build_certificate.p12" -passout pass:speedio123
+          # Force legacy PKCS12 algorithms (PBES1 + 3DES + SHA1 HMAC). OpenSSL 3.x
+          # defaults to PBES2 / AES-256 / SHA256 which `security import` on macOS
+          # rejects with "MAC verification failed during PKCS12 import (wrong password?)".
+          # The legacy crypto override restores cross-tool compatibility.
+          openssl pkcs12 -export -inkey SmartSpeedCompanion/SmartSpeedCompanion.key -in /tmp/distribution.pem -out "$RUNNER_TEMP/build_certificate.p12" -passout pass:speedio123 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
           security import "$RUNNER_TEMP/build_certificate.p12" -k "$RUNNER_TEMP/app-signing.keychain-db" -P "speedio123" -T /usr/bin/codesign -T /usr/bin/security
 
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
