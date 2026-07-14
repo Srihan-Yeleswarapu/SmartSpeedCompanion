@@ -17,7 +17,7 @@
 import Foundation
 import CoreLocation
 
-public struct RoadIdentification: Sendable, Equatable {
+public struct RoadIdentification: Sendable {
     public let roadName: String?    // e.g. "W Frye Rd"
     public let roadRef: String?     // e.g. "07" city prefix if discoverable
     public let city: String?        // e.g. "Chandler"
