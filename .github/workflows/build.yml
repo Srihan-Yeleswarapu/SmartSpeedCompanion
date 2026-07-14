@@ -7,14 +7,7 @@ on:
 
 jobs:
   build-and-testflight:
-    # `macos-15-large` gives 14GB RAM (vs the 7GB of the standard
-    # macos-15 runner). The Release-architecture swift-frontend is
-    # OOM-killed during the main app's whole-module-optimization type-
-    # check of 30+ Swift files when running on the 7GB runner; the
-    # 14GB headroom is enough to keep the default parallel build
-    # going without OOM. See CHANGELOG for the long sequence of fixes
-    # that culminated in this runner swap.
-    runs-on: macos-15-large
+    runs-on: macos-26
     timeout-minutes: 90
 
     steps:
@@ -174,46 +167,10 @@ jobs:
           echo "=== xcodebuild archive START at $(date -u +%H:%M:%SZ) ==="
 
           # Capture the real exit code without aborting on it.
-          # `-resultBundlePath` writes the .xcresult sidecar so we can
-          # diagnose silent-SwiftCompiler failures (xcodebuild 26.3 + SPM
-          # has a known behavior where the SwiftDriver step fails but the
-          # diagnostic never reaches stdout). See "SILENT COMPILE FAILURE
-          # REVEAL" below for the extraction step.
           set +e
-          # `-jobs 1` forces a serial compile pipeline (single
-          # swift-frontend at a time). The default `nproc`-driven
-          # parallelism (8 parallel swift-frontend invocations on the
-          # 4-core/8-thread macos-15 GitHub runner, each consuming
-          # 1-2GB during the type-check of complex views) blew past
-          # the runner's 7GB memory budget. The Swift type-checker is
-          # then OOM-killed mid-SwiftCompile, xcodebuild exits 65 with
-          # no diagnostic on stdout, and no .xcresult is ever written.
-          # A serial pipeline trades build time (build will be ~2-3x
-          # slower) for a dramatic drop in peak memory usage; this is
-          # the documented fix for SwiftUI-heavy apps on
-          # memory-constrained CI runners.
-          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" -archivePath ./SmartSpeedCompanion.xcarchive -resultBundlePath ./build.xcresult -jobs 1
+          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" -archivePath ./SmartSpeedCompanion.xcarchive
           BUILD_EXIT=$?
           set -e
-
-          # SILENT COMPILE FAILURE REVEAL ─ Force-extract Swift diagnostics
-          # from the .xcresult bundle regardless of build outcome. Recent
-          # xcodebuild 26.3 / Xcode 16.2 mix swallows compiler error output
-          # when SPM dependency resolution is interleaved with the main
-          # target build; this step writes the actual Swift diagnostic to
-          # stdout regardless of exit code, so the next CI run at least
-          # shows the underlying cause instead of just "SwiftDriver 2
-          # failures". Capped at 200 lines to keep the log readable.
-          if [ -d "./build.xcresult" ]; then
-            echo "=== SILENT COMPILE FAILURE REVEAL ==="
-            # xcodebuild 16.x requires the `object` subcommand for `get`; the
-            # old `--format text` invocation returns the usage line and nothing
-            # else. JSON is parsed by future helpers if needed; we just need
-            # the first 200 lines of the actual diagnostic payload.
-            xcrun xcresulttool get object --path ./build.xcresult --format json 2>&1 | head -200 || true
-          else
-            echo "=== SILENT COMPILE FAILURE REVEAL: skipped (no .xcresult produced) ==="
-          fi
 
           echo "=== xcodebuild DONE at $(date -u +%H:%M:%SZ); exit=${BUILD_EXIT} ==="
           echo "=== Archive directory check ==="
@@ -231,13 +188,6 @@ jobs:
 
           echo "=== Archive verified ==="
           ls -la ./SmartSpeedCompanion.xcarchive/
-        # Step-level timeout matched to the job-level 90 minutes. The
-        # previous 60-minute cap was a holdover from when builds were
-        # parallel; on `macos-15-large` with 30+ main-app files +
-        # Firebase + widget + signature collection, the build can
-        # plausibly exceed 60 min if SPM has to recompile a cache
-        # miss. A step-level cancel here would look like a real
-        # compile error in the log.
         timeout-minutes: 90
 
       - name: Verify archive exists
