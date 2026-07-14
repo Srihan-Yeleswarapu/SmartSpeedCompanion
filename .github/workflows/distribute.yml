@@ -174,7 +174,11 @@ jobs:
           # the matching note in build.yml for full rationale.
           if [ -d "./build.xcresult" ]; then
             echo "=== SILENT COMPILE FAILURE REVEAL ==="
-            xcrun xcresulttool get --path ./build.xcresult --format text 2>&1 | head -200 || true
+            # xcodebuild 16.x requires the `object` subcommand for `get`; the
+            # old `--format text` invocation returns the usage line and nothing
+            # else. JSON is parsed by future helpers if needed; we just need
+            # the first 200 lines of the actual diagnostic payload.
+            xcrun xcresulttool get object --path ./build.xcresult --format json 2>&1 | head -200 || true
           else
             echo "=== SILENT COMPILE FAILURE REVEAL: skipped (no .xcresult produced) ==="
           fi

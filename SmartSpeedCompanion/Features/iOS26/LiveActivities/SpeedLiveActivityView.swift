@@ -51,7 +51,9 @@ struct SpeedLiveActivityView: Widget {
     private func leftColumn(
         context: ActivityViewContext<SpeedActivityAttributes>,
         unitShort: String,
-        limitDisplay: String
+        // `SpeedFormatting.displayLimit` returns `Int`; the LIMIT caption
+        // below uses it inside `\(limitDisplay)` so the Int is fine.
+        limitDisplay: Int
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             statusPill(status: context.state.status)
@@ -78,7 +80,13 @@ struct SpeedLiveActivityView: Widget {
         }
     }
 
-    @ViewBuilder
+    // NOTE: deliberately NOT @ViewBuilder — the body mixes a `switch`
+    // statement with multiple `let` declarations and a single returned
+    // `Text`. @ViewBuilder would force `let label: String` to flow
+    // through `buildExpression` (which requires `View`), producing
+    // `'buildExpression' is unavailable: this expression does not
+    // conform to 'View'`. Plain `func ... -> some View` with an
+    // explicit `return` lets us treat the lets as ordinary locals.
     private func statusPill(status: String) -> some View {
         let label: String
         switch status {
@@ -87,7 +95,7 @@ struct SpeedLiveActivityView: Widget {
         default:        label = "SAFE"
         }
         let tint = colorForStatus(status)
-        Text(label)
+        return Text(label)
             .font(.system(size: 10, weight: .black, design: .monospaced))
             .foregroundColor(.white)
             .padding(.horizontal, 8)
@@ -154,8 +162,18 @@ struct SpeedLiveActivityView: Widget {
         )
 
         return DynamicIsland {
+            // Inlined (not via a private helper) so the
+            // `DynamicIslandExpandedContentBuilder` can see the actual
+            // `ConditionalContent<...>` type from the `if let` branch.
+            // When wrapped in an opaque `some View` helper, the
+            // `Expanded` generic parameter of `DynamicIslandExpandedRegion`
+            // could not be inferred.
             DynamicIslandExpandedRegion(.center) {
-                expandedCenter(context: context, unitShort: unitShort, limitDisplay: limitDisplay)
+                if let maneuver = context.state.nextManeuver {
+                    expandedWithManeuver(context: context, maneuver: maneuver)
+                } else {
+                    expandedWithoutManeuver(context: context, unitShort: unitShort, limitDisplay: limitDisplay)
+                }
             }
             DynamicIslandExpandedRegion(.bottom) {
                 expandedBottom(status: context.state.status)
@@ -169,18 +187,9 @@ struct SpeedLiveActivityView: Widget {
         }
     }
 
-    @ViewBuilder
-    private func expandedCenter(
-        context: ActivityViewContext<SpeedActivityAttributes>,
-        unitShort: String,
-        limitDisplay: String
-    ) -> some View {
-        if let maneuver = context.state.nextManeuver {
-            expandedWithManeuver(context: context, maneuver: maneuver)
-        } else {
-            expandedWithoutManeuver(context: context, unitShort: unitShort, limitDisplay: limitDisplay)
-        }
-    }
+    // `expandedCenter` was inlined into the `DynamicIslandExpandedRegion(.center)`
+    // closure above to satisfy `DynamicIslandExpandedContentBuilder`'s generic
+    // `Expanded` parameter inference — see the inline note at the call site.
 
     @ViewBuilder
     private func expandedWithManeuver(
@@ -217,7 +226,9 @@ struct SpeedLiveActivityView: Widget {
     private func expandedWithoutManeuver(
         context: ActivityViewContext<SpeedActivityAttributes>,
         unitShort: String,
-        limitDisplay: String
+        // See `leftColumn` for why this is `Int` (mirrors the actual
+        // return type of `SpeedFormatting.displayLimit`).
+        limitDisplay: Int
     ) -> some View {
         VStack {
             Text("\(Int(context.state.speed))")
