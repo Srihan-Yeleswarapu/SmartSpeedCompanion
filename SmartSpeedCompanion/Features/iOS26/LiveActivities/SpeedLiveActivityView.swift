@@ -118,19 +118,21 @@ struct SpeedLiveActivityView: Widget {
             .widgetBackground(DesignSystem.bgCard.opacity(0.8))
             
         } dynamicIsland: { context in
-            // IMPORTANT: We have to recompute these here, NOT share through
-            // a value captured by the outer `content:` closure. Swift's
-            // closure args to `ActivityConfiguration.init(...)` are
-            // SIBLING scopes — a `let` declared in `content:` does not
-            // leak into `dynamicIsland:`. Without this re-declaration the
-            // widget extension target fails to compile.
+            // Sibling-closure scope: `let`s from the outer `content:`
+            // closure do not leak into `dynamicIsland:` here, so the
+            // …DI locals must be re-declared. They also need an explicit
+            // `return` below because `dynamicIsland:` is a plain
+            // `(Context) -> DynamicIsland` parameter (NOT a result-
+            // builder like `content:`'s `@ViewBuilder`), and a multi-
+            // statement body with `let`s followed by a single expression
+            // breaks Swift's single-expression implicit-return rule.
             let measurementSystemDI = SpeedFormatting.measurementSystemFromAppGroup()
             let unitShortDI = SpeedFormatting.unitLabelShort(measurementSystem: measurementSystemDI)
             let limitDisplayDI = SpeedFormatting.displayLimit(
                 forMph: context.state.speedLimit,
                 measurementSystem: measurementSystemDI
             )
-            DynamicIsland {
+            return DynamicIsland {
                 // Expanded
                 DynamicIslandExpandedRegion(.center) {
                     if let maneuver = context.state.nextManeuver {
