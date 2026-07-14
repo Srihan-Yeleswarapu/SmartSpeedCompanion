@@ -376,8 +376,8 @@ public class SmartSpeedLimitService: ObservableObject {
         // Rule 2 -- physics override. The driver is moving at the new speed;
         // the answer matching physics wins regardless of an arguably false
         // geocode. Models highway on-ramp transitions cleanly.
-        if abs(outcome.limit - currentSpeedMph) <= Self.PHYSICS_TOLERANCE_MPH,
-           abs(prior.limit - currentSpeedMph) > Self.PHYSICS_PRIOR_MARGIN_MPH {
+        if abs(Double(outcome.limit) - currentSpeedMph) <= Double(Self.PHYSICS_TOLERANCE_MPH),
+           abs(Double(prior.limit) - currentSpeedMph) > Double(Self.PHYSICS_PRIOR_MARGIN_MPH) {
             lastStable = snapshot
             pendingSuspect = nil
             consecutiveSuspectCount = 0
