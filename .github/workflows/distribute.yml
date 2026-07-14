@@ -159,10 +159,25 @@ jobs:
           echo "=== Auto-derived build number: ${CURRENT_BUILD} ==="
 
           # Capture the real exit code without aborting on it.
+          # `-resultBundlePath` writes the .xcresult sidecar so we can
+          # diagnose silent-SwiftCompiler failures (xcodebuild 26.3 + SPM
+          # has a known behavior where the SwiftDriver step fails but the
+          # diagnostic never reaches stdout). See "SILENT COMPILE FAILURE
+          # REVEAL" below for the extraction step.
           set +e
-          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" CURRENT_PROJECT_VERSION="${CURRENT_BUILD}" -archivePath ./SmartSpeedCompanion.xcarchive
+          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" CURRENT_PROJECT_VERSION="${CURRENT_BUILD}" -archivePath ./SmartSpeedCompanion.xcarchive -resultBundlePath ./build.xcresult
           BUILD_EXIT=$?
           set -e
+
+          # SILENT COMPILE FAILURE REVEAL ─ Force-extract Swift diagnostics
+          # from the .xcresult bundle regardless of build outcome. See
+          # the matching note in build.yml for full rationale.
+          if [ -d "./build.xcresult" ]; then
+            echo "=== SILENT COMPILE FAILURE REVEAL ==="
+            xcrun xcresulttool get --path ./build.xcresult --format text 2>&1 | head -200 || true
+          else
+            echo "=== SILENT COMPILE FAILURE REVEAL: skipped (no .xcresult produced) ==="
+          fi
 
           echo "=== xcodebuild DONE at $(date -u +%H:%M:%SZ); exit=${BUILD_EXIT} ==="
           echo "=== Archive directory check ==="
