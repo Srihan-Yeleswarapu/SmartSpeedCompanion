@@ -26,8 +26,13 @@ jobs:
           fi
 
       - name: Select Xcode
+        # Auto-select the latest Xcode version. The macos-26 runner image
+        # ships Xcode 26.x as the default; older .app bundles like Xcode 16.2
+        # are not present. `distribute.yml` already uses this pattern.
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          echo "Selecting: $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
 
       - name: Install XcodeGen
