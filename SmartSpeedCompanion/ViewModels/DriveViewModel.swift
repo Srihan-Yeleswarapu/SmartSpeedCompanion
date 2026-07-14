@@ -5,6 +5,7 @@ import MapKit
 import ActivityKit
 import AVFoundation
 import UIKit
+import WidgetKit
 import FirebaseAuth
 import FirebaseFirestore
 
@@ -278,7 +279,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             .throttle(for: .milliseconds(500), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] location in
                 guard let self = self else { return }
-                self.speed = location.speedMPH
+                // NOTE: we deliberately do NOT write `self.speed = location.speedMPH`
+                // here. Two writers to `DriveViewModel.speed` (this GPS sink + the
+                // `spdEngine.$speed.assign(to: &$speed)` pipeline above) caused a
+                // unit-mismatch race that surfaced in the Live Activity / Widget
+                // (Metric user could see "65 KMH" when the display speed was 65
+                // mph). SpeedEngine is now the SOLE source of truth — it publishes
+                // the active display unit (km/h when metric, mph when imperial) so
+                // any view reading `viewModel.speed` always gets the right value.
                 self.currentHeading = location.course >= 0 ? location.course : nil
                 // Advance turn-by-turn guidance
                 if self.isNavigating {
@@ -293,6 +301,24 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 }
                 // Sync position to Firebase for potential multi-device/dashboard features
                 AuthenticationManager.shared.updateLastLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
+            }
+            .store(in: &cancellables)
+
+        // 4b. WIDGET SYNC: write `widgetSpeed` / `widgetLimit` / `widgetStatus`
+        // / unit mirror to the App-Group suite every 5 seconds regardless of
+        // recording/navigation state so the home-screen widget refreshes
+        // even when the user is just driving without a session. Kept separate
+        // from the Live Activity timer because (a) the Widget timeline reads
+        // from App-Group defaults, not from an `Activity`, and (b) we want
+        // the cadence to outlive the 1-Hz session-duration ticks that drive
+        // `updateLiveActivity()` — hammering `WidgetCenter.reloadAllTimelines()`
+        // from a 1-Hz timer exhausts WidgetKit's daily rate-limit budget.
+        Timer.publish(every: 5.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                #if !targetEnvironment(simulator)
+                self?.writeWidgetSnapshot()
+                #endif
             }
             .store(in: &cancellables)
     }
@@ -351,6 +377,37 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             LiveActivityManager.shared.updateActivity(with: state)
         }
         #endif
+        // NOTE: widget snapshot writes (speed/limit/status/unit mirror) are
+        // intentionally NOT called from this method. They live on a dedicated
+        // 5-second Timer in `DriveViewModel.init` so the cadence stays steady
+        // and `WidgetCenter.reloadAllTimelines()` isn't hammered by the 1-Hz
+        // session-timer path that also drives this method.
+    }
+
+    /// Mirrors the current drive state into `group.com.smartspeedcompanion.app`
+    /// for `SpeedWidget.Provider.getTimeline` to read. Cheap to call —
+    /// `UserDefaults.set(...)` is in-memory after the first write —
+    /// so we eagerly call from the 5-second Live Activity tick AND from
+    /// the 1-Hz session-duration tick below (see `sessionTimer`).
+    public func writeWidgetSnapshot() {
+        let suite = UserDefaults(suiteName: SpeedFormatting.appGroupSuite)
+        suite?.set(Int(speed), forKey: "widgetSpeed")
+        suite?.set(limit, forKey: "widgetLimit")
+        suite?.set(status.rawValue, forKey: "widgetStatus")
+        // Re-mirror the unit each call so an in-app UNITS toggle
+        // (Settings onChange writes once already, but a stale widget
+        // update from before that changeover self-heals on the next
+        // tick without requiring an app restart).
+        suite?.set(
+            SpeedFormatting.measurementSystem(),
+            forKey: SpeedFormatting.widgetMeasurementSystemAppGroupKey
+        )
+        // WidgetKit is iOS 14+ so it's safe to call unconditionally.
+        // `reloadAllTimelines()` is the official API that tells WidgetKit
+        // "your cached entries are stale, ask providers again" — without
+        // this call, the widget may show stale numbers for up to its
+        // natural refresh interval.
+        WidgetCenter.shared.reloadAllTimelines()
     }
     
     /// Stops recording the session and checks if it's worth saving (long enough).

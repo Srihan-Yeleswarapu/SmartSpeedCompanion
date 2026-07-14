@@ -40,7 +40,16 @@ targets:
       - path: SmartSpeedCompanion/Features/iOS26/CrashDetection
       - path: SmartSpeedCompanion/Features/iOS26/Siri
       - path: SmartSpeedCompanion/Features/iOS26/StandBy
+      # LiveActivities directory holds BOTH `LiveActivityManager` and
+      # `SpeedActivityAttributes` (compiled here so DriveViewModel can
+      # publish activities via ActivityKit) AND `SpeedLiveActivityView`
+      # (the `Widget` for Lock-Screen / Dynamic-Island rendering, which
+      # lives in the widget extension target below — Swift rejects two
+      # `@main` declarations per module so the rendering file is
+      # explicitly excluded from this target's sources).
       - path: SmartSpeedCompanion/Features/iOS26/LiveActivities
+        excludes:
+          - "**/SpeedLiveActivityView.swift"
       - path: SmartSpeedCompanion/Resources/Assets.xcassets
       # Explicitly declare DB as a resource to be copied into the app bundle
       - path: SmartSpeedCompanion/Resources/ArizonaSpeedLimits.sqlite
@@ -48,9 +57,11 @@ targets:
       - path: SmartSpeedCompanion/Configuration/GoogleService-Info.plist
         buildPhase: resources
 
-    # NOTE: LiveActivities and Widgets folders are excluded from main
-    # app sources for now — they compile as separate extension targets
-    # which are disabled below until Xcode 16 runner is available
+    # NOTE: The WidgetKit bundle (`SpeedWidget.swift` +
+    # `SpeedLiveActivityView.swift`) lives in its own
+    # `SmartSpeedCompanionWidget` extension target below. Including it
+    # in the main app target would compile two `@main` declarations in
+    # the same module, which Swift rejects.
 
     resources:
       - path: SmartSpeedCompanion/Resources/Assets.xcassets
@@ -112,6 +123,7 @@ targets:
           - CPNavigationAlert
           - CPListTemplate
           - CPInformationTemplate
+        NSSupportsLiveActivities: true
         UIRequiredDeviceCapabilities:
           - location-services
           - gps
@@ -146,8 +158,6 @@ targets:
         # silently making ASC treat Speedio as a universal iOS app.
         TARGETED_DEVICE_FAMILY: "1"
 
-    # SpeedWidget and SpeedLiveActivity removed from dependencies
-    # until iOS 26 / Xcode 16 runner is available on GitHub Actions
     dependencies:
       - package: Firebase
         product: FirebaseCore
@@ -157,12 +167,106 @@ targets:
         product: FirebaseFirestore
       - package: Firebase
         product: FirebaseAnalytics
+      # Embed the WidgetKit extension inside the main app bundle so iOS
+      # renders the home-screen / lock-screen widgets from the same .ipa.
+      # Without this dependency the extension target never lands in the
+      # main app's PlugIns folder on build and the .ipa reaches TestFlight
+      # without a widget bundle.
+      - target: SmartSpeedCompanionWidget
+
+  # ── WidgetKit Extension Target ─────────────────────────────────────
+  # Lives as a sibling of the main app target. Renders:
+  #   - Home-screen widget:     `SpeedWidget`              (small / rectangular)
+  #   - Lock-screen Live Activity: `SpeedLiveActivityView` (Dynamic Island + LS card)
+  # Shares App Group `group.com.smartspeedcompanion.app` with the main
+  # app so the widget timeline can read speed / limit / status / units
+  # written from `DriveViewModel.writeWidgetSnapshot()` and Settings.
+  # MANUAL SETUP: enable the App Group on App ID `com.speedsense.app`
+  # AND on the extension App ID `com.speedsense.app.SpeedWidget` at
+  # developer.apple.com, then re-download the `Speedio App Store`
+  # provisioning profile so the App Group entitlement embeds.
+  SmartSpeedCompanionWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+
+    # Source list is intentionally surgical — we list ONLY the files the
+    # widget compiles. Including `Core/` wholesale would pull in Firebase-
+    # using files (e.g. AppleMapsServerClient) and break the extension
+    # because the widget doesn't link Firebase. We compile
+    # SpeedStatus + DesignSystem + GlassView + Color+Theme explicitly
+    # because DesignSystem references SpeedStatus, and GlassView +
+    # Color+Theme are needed by our styling helpers.
+    #   - SpeedWidget.swift            → @main WidgetBundle (entry point)
+    #   - SpeedLiveActivityView.swift  → ActivityConfiguration for the LS card
+    #   - SpeedActivityAttributes.swift → ContentState Codable used by both
+    #   - SpeedFormatting.swift        → mph↔kmh helpers (also writes App Group mirror)
+    sources:
+      - path: SmartSpeedCompanion/Core/SpeedFormatting.swift
+      - path: SmartSpeedCompanion/Models/SpeedStatus.swift
+      - path: SmartSpeedCompanion/Extensions/Color+Theme.swift
+      - path: SmartSpeedCompanion/Views/Shared/DesignSystem.swift
+      - path: SmartSpeedCompanion/Views/Shared/GlassView.swift
+      - path: SmartSpeedCompanion/Features/iOS26/Widgets/SpeedWidget.swift
+      - path: SmartSpeedCompanion/Features/iOS26/LiveActivities/SpeedActivityAttributes.swift
+      - path: SmartSpeedCompanion/Features/iOS26/LiveActivities/SpeedLiveActivityView.swift
+
+    entitlements:
+      path: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanionWidget.entitlements
+
+    info:
+      path: SmartSpeedCompanion/Configuration/SmartSpeedCompanionWidget-Info.plist
+      properties:
+        # CFBundleVersion / ShortVersionString mirror the main app so
+        # App Store Connect reports consistent marketing / build numbers.
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundleDisplayName: Speedio Widget
+        # `XPC!` (4 chars) is the canonical package type for
+        # `*.appex` bundles; App Store Connect's validator rejects
+        # `APPL` or an empty type.
+        CFBundlePackageType: XPC!
+        NSSupportsLiveActivities: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+    settings:
+      base:
+        # Bundle id is the host-app's id with a `.SpeedWidget` suffix —
+        # iOS only embeds an extension into its parent app when the
+        # extension's bundle id is rooted at the parent's prefix.
+        PRODUCT_BUNDLE_IDENTIFIER: com.speedsense.app.SpeedWidget
+        INFOPLIST_FILE: SmartSpeedCompanion/Configuration/SmartSpeedCompanionWidget-Info.plist
+        CODE_SIGN_ENTITLEMENTS: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanionWidget.entitlements
+        # `../../Frameworks` is required so the extension can link the
+        # main app's installed Firebase frameworks from its own
+        # PlugIns lifestyle (WidgetKit extension binary lives at
+        # `App.app/PlugIns/Widget.appex/Widget`, two directories deep
+        # from `Frameworks/`).
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Distribution"
+        # Provisioning profile shared with the main app so App Store
+        # Connect's validator signs the .appex with the same team +
+        # capability set. A dedicated `SpeedWidget App Store` profile
+        # is recommended but not required for the first ship.
+        PROVISIONING_PROFILE_SPECIFIER: "Speedio App Store"
+        TARGETED_DEVICE_FAMILY: "1"
+        # `SKIP_INSTALL = true` is the canonical setting for
+        # application extensions — App Store Connect's package
+        # validator otherwise tries to install the .appex as a
+        # standalone app and rejects the submission.
+        SKIP_INSTALL: true
 
 schemes:
   SmartSpeedCompanion:
     build:
       targets:
         SmartSpeedCompanion: all
+        SmartSpeedCompanionWidget: all
     run:
       config: Debug
     archive:

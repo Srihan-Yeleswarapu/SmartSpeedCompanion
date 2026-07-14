@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Widget extension entitlements. The single App Group entry is the ONLY
+      entitlement the widget needs — it shares the same suite name as the
+      main app so `SpeedFormatting.writeMeasurementSystemToAppGroup(_:)`
+      and the widget timeline's reader (`SpeedWidget.Provider.getTimeline`)
+      see the same `group.com.smartspeedcompanion.app` defaults.
+
+      MANUAL SETUP NOTE for the developer running this build:
+        1. Log into developer.apple.com.
+        2. Certificates, Identifiers & Profiles → Identifiers.
+        3. Select App ID `com.speedsense.app`.
+        4. Under "App Groups" → add `group.com.smartspeedcompanion.app`.
+           Without this capability enabled on the App ID, the entitlements
+           file fails code-signing and TestFlight beta builds break.
+        5. Re-download the App Store provisioning profile
+           (`Speedio App Store`) so the App Group entitlement embeds.
+    -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.smartspeedcompanion.app</string>
+    </array>
+</dict>
+</plist>

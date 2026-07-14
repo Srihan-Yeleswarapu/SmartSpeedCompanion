@@ -8,56 +8,128 @@ import CoreLocation
 struct SpeedLiveActivityView: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SpeedActivityAttributes.self) { context in
-            // Lock Screen / StandBy
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("\(Int(context.state.speed))")
-                        .font(.system(size: 40, weight: .black, design: .rounded))
-                        .foregroundColor(colorForStatus(context.state.status))
-                    
-                    Text("LIMIT \(context.state.speedLimit) MPH")
-                        .font(.caption.bold())
-                        .foregroundColor(.gray)
-                }
-                Spacer()
-                
-                if context.state.isRecording {
-                    VStack(alignment: .trailing) {
-                        Text("REC")
-                            .font(.caption.bold())
-                            .foregroundColor(.red)
-                        Text(formatTime(context.state.sessionDuration))
-                            .font(.system(.body, design: .monospaced))
+            // Lock Screen / StandBy.
+            //
+            // TestFlight 2.1.4 feedback: the Live Activity previously hard-coded
+            // "LIMIT \(speedLimit) MPH" regardless of the user's UNITS setting.
+            // The Activity runs in a separate target and can't read the
+            // main app's standard UserDefaults, so we mirror the unit via
+            // `SpeedFormatting.measurementSystemFromAppGroup()` (mirror is
+            // written in `SettingsView.onChange(of: measurementSystem)`).
+            let measurementSystem = SpeedFormatting.measurementSystemFromAppGroup()
+            let unitShort = SpeedFormatting.unitLabelShort(measurementSystem: measurementSystem)
+            let limitDisplay = SpeedFormatting.displayLimit(
+                forMph: context.state.speedLimit,
+                measurementSystem: measurementSystem
+            )
+
+            // ── Top status edge ─────────────────────────────────────────────
+            // A 3pt stripe of the status color renders ABOVE the card content
+            // so users see SAFE/WARNING/OVER before they read the number.
+            // The bottom-bar from the previous build was hard to spot on a
+            // dark Lock Screen wallpaper — top-edge wins on visibility.
+            // ─────────────────────────────────────────────────────────────
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(colorForStatus(context.state.status))
+                    .frame(height: 3)
+
+                HStack(alignment: .center, spacing: 16) {
+                    // LEFT column: status pill + speed number + LIMIT caption.
+                    VStack(alignment: .leading, spacing: 4) {
+                        // Compact SAFE / WARNING / OVER LIMIT badge. Inlined
+                        // as a local `some View` so we keep Swift's stricter
+                        // `private` (file-scope) access on the helpers below
+                        // without adding a new method to `SpeedLiveActivityView`
+                        // solely for visual clarity.
+                        let pillLabel: String = {
+                            switch context.state.status {
+                            case "over":    return "OVER LIMIT"
+                            case "warning": return "WARNING"
+                            default:        return "SAFE"
+                            }
+                        }()
+                        let pillColor = colorForStatus(context.state.status)
+                        Text(pillLabel)
+                            .font(.system(size: 10, weight: .black, design: .monospaced))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(pillColor.opacity(0.85)))
+                            .overlay(Capsule().stroke(pillColor, lineWidth: 0.5))
+                            .accessibilityLabel(pillLabel)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("\(Int(context.state.speed))")
+                                .font(.system(size: 40, weight: .black, design: .rounded))
+                                .foregroundColor(colorForStatus(context.state.status))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                            Text(unitShort)
+                                .font(.system(size: 12, weight: .black))
+                                .foregroundColor(.white.opacity(0.55))
+                                .lineLimit(1)
+                        }
+                        Text(context.state.speedLimit == 0
+                             ? "LIMIT \u{2014}"
+                             : "LIMIT \(limitDisplay) \(unitShort)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundColor(.gray)
+                            .lineLimit(1)
                     }
-                } else if let maneuver = context.state.nextManeuver {
+
+                    Spacer(minLength: 8)
+
+                    // RIGHT column: REC pill + duration, OR maneuver summary.
                     VStack(alignment: .trailing, spacing: 4) {
-                        HStack(spacing: 4) {
-                            if let img = context.state.nextManeuverImageName {
-                                Image(systemName: img)
-                                    .foregroundColor(DesignSystem.cyan)
+                        if context.state.isRecording {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(DesignSystem.alertRed)
+                                    .frame(width: 6, height: 6)
+                                Text("REC")
+                                    .font(.caption.weight(.black))
+                                    .foregroundColor(DesignSystem.alertRed)
+                            }
+                            Text(formatTime(context.state.sessionDuration))
+                                .font(.system(.caption2, design: .monospaced).bold())
+                                .foregroundColor(.white)
+                        } else if let maneuver = context.state.nextManeuver {
+                            HStack(spacing: 4) {
+                                if let img = context.state.nextManeuverImageName {
+                                    Image(systemName: img)
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundColor(DesignSystem.cyan)
+                                }
+                                Text(maneuver)
+                                    .font(.caption.weight(.bold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
                             }
                             Text(formatDistance(context.state.distanceToNextTurn ?? 0))
-                                .font(.headline.bold())
+                                .font(.caption2.weight(.bold))
+                                .foregroundColor(DesignSystem.cyan)
                         }
-                        Text(maneuver)
-                            .font(.caption)
-                            .foregroundColor(.gray)
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
-            .padding()
-            // Add a bottom color bar to represent status instantly
-            .background(
-                VStack {
-                    Spacer()
-                    Rectangle()
-                        .fill(colorForStatus(context.state.status))
-                        .frame(height: 4)
-                }
-            )
+            .background(DesignSystem.bgCard.opacity(0.92))
             .widgetBackground(DesignSystem.bgCard.opacity(0.8))
             
         } dynamicIsland: { context in
+            // IMPORTANT: We have to recompute these here, NOT share through
+            // a value captured by the outer `content:` closure. Swift's
+            // closure args to `ActivityConfiguration.init(...)` are
+            // SIBLING scopes — a `let` declared in `content:` does not
+            // leak into `dynamicIsland:`. Without this re-declaration the
+            // widget extension target fails to compile.
+            let measurementSystemDI = SpeedFormatting.measurementSystemFromAppGroup()
+            let unitShortDI = SpeedFormatting.unitLabelShort(measurementSystem: measurementSystemDI)
+            let limitDisplayDI = SpeedFormatting.displayLimit(
+                forMph: context.state.speedLimit,
+                measurementSystem: measurementSystemDI
+            )
             DynamicIsland {
                 // Expanded
                 DynamicIslandExpandedRegion(.center) {
@@ -94,9 +166,14 @@ struct SpeedLiveActivityView: Widget {
                             Text("\(Int(context.state.speed))")
                                 .font(.system(size: 60, weight: .black, design: .rounded))
                                 .foregroundColor(colorForStatus(context.state.status))
-                            
+
+                            // Dynamic-Island expanded center without a maneuver
+                            // also gets the metric/imperial-aware limit + unit.
+                            // NOTE: uses the `…DI` locals (scope is the
+                            // `dynamicIsland:` closure, not the `content:`
+                            // closure — see sibling-closure note above).
                             HStack(spacing: 20) {
-                                Text("LIMIT: \(context.state.speedLimit)")
+                                Text("LIMIT: \(limitDisplayDI) \(unitShortDI)")
                                 if context.state.isRecording {
                                     Text(formatTime(context.state.sessionDuration))
                                         .monospacedDigit()

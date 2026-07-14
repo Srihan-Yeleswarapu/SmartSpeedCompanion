@@ -10,5 +10,20 @@
     <array>
         <string>$(AppIdentifierPrefix)com.speedsense.app</string>
     </array>
+    <!--
+      App Group capability is now REQUIRED so the widget extension can
+      read the same `group.com.smartspeedcompanion.app` defaults that
+      `SpeedFormatting.writeMeasurementSystemToAppGroup(_:)` and
+      `DriveViewModel.writeWidgetSnapshot()` write. Without this entry
+      the App Store provisioning profile rejects the entitlement file at
+      sign time and the widget binary never ships to TestFlight.
+      MANUAL SETUP NOTE: enable the App Group on App ID
+      `com.speedsense.app` at developer.apple.com and re-download the
+      `Speedio App Store` provisioning profile.
+    -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.smartspeedcompanion.app</string>
+    </array>
 </dict>
 </plist>
