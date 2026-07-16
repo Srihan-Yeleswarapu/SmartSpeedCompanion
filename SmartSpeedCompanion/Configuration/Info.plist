@@ -2,6 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!--
+        CFBundleShortVersionString and CFBundleVersion MUST live here as
+        (MARKETING_VERSION) / (CURRENT_PROJECT_VERSION) build-setting
+        variables — at the very TOP of the plist before any other key — so
+        Xcode's variable substitution engine finds them during INFOPLIST_FILE
+        processing. App Store Connect ingests the .ipa by reading these
+        two keys verbatim from the compiled Info.plist; a stale or missing
+        pair causes ALT to fall back to a previously cached version number
+        (we hit this on the 1.1 rollout — altool raised 90478 "Invalid
+        Version 2.1.4, later version closed" because the missing keys led
+        to a baked value of "2.1.4" from a prior archive). XcodeGen also
+        mirrors these two keys via project.yml's `info.properties` block,
+        so the values stay in sync with the build-settings layer.
+    -->
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <true/>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

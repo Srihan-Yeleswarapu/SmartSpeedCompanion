@@ -173,11 +173,25 @@ jobs:
           # and ASC sees the duplicate. Each push now gets a unique, automatically-monotonic
           # build number derived from `git rev-list --count HEAD`.
           CURRENT_BUILD=$(git rev-list --count HEAD)
+          # Auto-derive MARKETING_VERSION straight from project.yml so the
+          # workflow has no hardcoded version string and any future bump
+          # (1.1 -> 1.2 -> 2.0) propagates with zero workflow edits. The
+          # source of truth stays settings.base.MARKETING_VERSION in
+          # project.yml; this is just plumbing. Using python's regex
+          # avoids grovelling on YAML structure and works with whatever
+          # whitespace appears around the colon. We grab the FIRST match
+          # which is always the canonical settings.base entry (the
+          # later target-level override is intentionally a duplicate).
+          MARKETING_VERSION=$(python3 -c "import re,sys; txt=open('project.yml').read(); m=re.search(r'MARKETING_VERSION:\s*\"([^\"]+)\"', txt); print(m.group(1) if m else '1.1', file=sys.stderr); sys.stdout.write(m.group(1) if m else '1.1')")
           echo "=== Auto-derived build number: ${CURRENT_BUILD} ==="
+          echo "=== MARKETING_VERSION from project.yml: ${MARKETING_VERSION} ==="
 
           # Capture the real exit code without aborting on it.
           set +e
-          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" CURRENT_PROJECT_VERSION="${CURRENT_BUILD}" -archivePath ./SmartSpeedCompanion.xcarchive
+          # Pass MARKETING_VERSION explicitly on the xcodebuild CLI line so
+          # even if the XcodeGen-generated project has a stale cached
+          # build-setting value from a prior run, this CLI flag wins.
+          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" MARKETING_VERSION="${MARKETING_VERSION}" CURRENT_PROJECT_VERSION="${CURRENT_BUILD}" -archivePath ./SmartSpeedCompanion.xcarchive
           BUILD_EXIT=$?
           set -e
 
@@ -205,6 +219,13 @@ jobs:
         run: |
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
 
+          # Nuke prior Export/IPAWork directories so a half-completed
+          # previous attempt cannot leave a stale .ipa around — we
+          # already incorrectly uploaded a 2.1.4 IPA once because
+          # `find ... -name "*.ipa" | head -1` returned an older
+          # artifact before this rm step existed. Fresh export on every
+          # run guarantees only the current archive is selectable.
+          rm -rf "$PWD/Export" "$PWD/IPAWork"
           mkdir -p "$PWD/Export"
           mkdir -p "$PWD/IPAWork"
 
