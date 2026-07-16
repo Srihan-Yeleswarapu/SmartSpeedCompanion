@@ -165,6 +165,24 @@ targets:
 
     settings:
       base:
+        # Pin MARKETING_VERSION + CURRENT_PROJECT_VERSION at the TARGET
+        # level too -- belt + suspenders with the same values at
+        # settings.base above. The TestFlight 2.1.4 high-volume / 1.1
+        # rollout hit a case where the IPA CFBundleShortVersionString
+        # baked out as 2.1.4 despite settings.base declaring MARKETING_VERSION
+        # = "1.1"; one possible cause is a stale Xcode-scheme override of
+        # MARKETING_VERSION pinned by an older `xcodegen generate` run.
+        # Declaring the values here forces xcodebuild to read them from
+        # this explicit scope every archive, regardless of any cached
+        # project-level default. $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION)
+        # in this target's `info.properties` block above still drive the
+        # baked Info.plist values.
+        MARKETING_VERSION: "1.1"
+        # CURRENT_PROJECT_VERSION is auto-derived at archive time in
+        # distribute.yml from `git rev-list --count HEAD` -- the literal
+        # "4" below only affects Xcode local-dev previews. Keep it > last
+        # uploaded build number to avoid ASC duplicate detection.
+        CURRENT_PROJECT_VERSION: "4"
         PRODUCT_BUNDLE_IDENTIFIER: com.speedsense.app
         INFOPLIST_FILE: SmartSpeedCompanion/Configuration/Info.plist
         CODE_SIGN_ENTITLEMENTS: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
@@ -258,6 +276,13 @@ targets:
 
     settings:
       base:
+        # Belt + suspenders with the same MARKETING_VERSION=1.1 / build
+        # number at the project-level settings.base. See the comment
+        # block on the SmartSpeedCompanion target's settings.base for why
+        # duplicating these here matters when an older `xcodegen generate`
+        # version may have cached a stale scheme-level override.
+        MARKETING_VERSION: "1.1"
+        CURRENT_PROJECT_VERSION: "4"
         # Bundle id is the host-app's id with a `.SpeedWidget` suffix —
         # iOS only embeds an extension into its parent app when the
         # extension's bundle id is rooted at the parent's prefix.
