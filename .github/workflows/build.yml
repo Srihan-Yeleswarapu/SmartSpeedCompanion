@@ -259,21 +259,42 @@ jobs:
               echo "[ERROR] No .app bundle found in IPA"
               exit 1
             fi
-            echo "Found app bundle: $APP_BUNDLE"
+            echo "Found app bundle: $APP_BUNDLE"              # Re-sign with entitlements. Sign nested .appex INWARD-OUT
+              # (extensions first, parent last) so the parent .app's seal
+              # wraps already-signed nested bundles — this mirrors what
+              # Xcode does during native `xcodebuild -exportArchive`.
+              # Without this loop the widget appex ships with zero
+              # entitlements and `xcrun altool --upload-app` rejects the
+              # upload with "Missing Code Signing Entitlements. No
+              # entitlements found in bundle com.speedsense.app.SpeedWidget ...".
+              cp /tmp/profile.mobileprovision "$APP_BUNDLE/embedded.mobileprovision"
+              echo "[OK] Embedded provisioning profile into: $APP_BUNDLE/embedded.mobileprovision"
 
-            # Copy provisioning profile into the app bundle
-            cp /tmp/profile.mobileprovision "$APP_BUNDLE/embedded.mobileprovision"
-            echo "[OK] Embedded provisioning profile into: $APP_BUNDLE/embedded.mobileprovision"
+              security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+              for APPEX in "$APP_BUNDLE/PlugIns"/*.appex; do
+                [ -d "$APPEX" ] || continue
+                cp /tmp/profile.mobileprovision "$APPEX/embedded.mobileprovision"
+                ENT_NAME="$(basename "$APPEX" .appex)"
+                # Resolve the entitlements plist by basename match. We are
+                # in $PWD/IPAWork so `../SmartSpeedCompanion/Resources/...`
+                # resolves relative to the repo source tree.
+                ENT_FILE="../SmartSpeedCompanion/Resources/Entitlements/${ENT_NAME}.entitlements"
+                if [ -f "$ENT_FILE" ]; then
+                  codesign --force --sign "Apple Distribution" --entitlements "$ENT_FILE" "$APPEX"
+                  echo "[OK] Re-signed app extension $APPEX with $ENT_FILE"
+                else
+                  codesign --force --sign "Apple Distribution" "$APPEX"
+                  echo "[WARN] Re-signed $APPEX without entitlements (no $ENT_FILE in IPAWork/../...)"
+                fi
+              done
 
-            # Re-sign with entitlements from provisioning profile
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-            if [ -f /tmp/entitlements.plist ]; then
-              codesign --force --sign "Apple Distribution" --entitlements /tmp/entitlements.plist "$APP_BUNDLE"
-              echo "[OK] Re-signed app bundle with entitlements"
-            else
-              codesign --force --sign "Apple Distribution" "$APP_BUNDLE"
-              echo "[WARN] Re-signed without entitlements (not found in profile)"
-            fi
+              if [ -f /tmp/entitlements.plist ]; then
+                codesign --force --sign "Apple Distribution" --entitlements /tmp/entitlements.plist "$APP_BUNDLE"
+                echo "[OK] Re-signed app bundle with entitlements"
+              else
+                codesign --force --sign "Apple Distribution" "$APP_BUNDLE"
+                echo "[WARN] Re-signed without entitlements (not found in profile)"
+              fi
 
             rm -f "$IPA_PATH"
             zip -rq "$IPA_PATH" Payload/
