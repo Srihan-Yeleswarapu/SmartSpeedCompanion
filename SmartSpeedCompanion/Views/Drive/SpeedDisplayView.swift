@@ -19,7 +19,8 @@ public struct SpeedDisplayView: View {
                         Capsule().stroke(DesignSystem.colorForStatus(viewModel.status), lineWidth: 1.5)
                     )
                     .clipShape(Capsule())
-                    .opacity(viewModel.status == .over ? flashOpacity : 1.0)                Spacer()
+                    .opacity(viewModel.status == .over ? flashOpacity : 1.0)
+                Spacer()
 
                 // Speed Limit Chip — value + unit honor Settings → UNITS.
                 // The chip deliberately inlines the unit (e.g. "65 MPH" / "105 KMH")

@@ -13,7 +13,8 @@ struct BufferSliderView: View {
         f.unitOptions = .providedUnit
         f.numberFormatter.maximumFractionDigits = 0
         return f
-    }()    var body: some View {
+    }()
+    var body: some View {
         // TestFlight 2.1.4 feedback: the buffer chip value previously
         // hard-coded "+X mph". The underlying `@AppStorage("userBuffer")`
         // value is the raw mph (SpeedEngine thresholds are mph-stable),

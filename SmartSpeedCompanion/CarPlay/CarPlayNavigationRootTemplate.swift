@@ -30,7 +30,8 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         
         setupTemplate()
         bindViewModel()
-    }    @MainActor
+    }
+    @MainActor
     private func setupTemplate() {
         // Navigation Bar Buttons (Top - Representing the 25% overlay conceptually).
         // Placeholder labels honor Settings → UNITS so a metric user's first
@@ -201,7 +202,8 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
     @MainActor
     public func showTurnByTurnList() {
         navigationManager.showManeuversList(interfaceController: interfaceController)
-    }    @MainActor
+    }
+    @MainActor
     private func presentSafetyReport() {
         // Information Template for professional session summaries.
         // CarPlay "Current Speed" detail honors Settings → UNITS too —

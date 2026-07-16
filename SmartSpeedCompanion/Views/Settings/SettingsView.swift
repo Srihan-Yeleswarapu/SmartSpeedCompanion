@@ -16,7 +16,8 @@ public struct SettingsView: View {
     @AppStorage("threeDFlyoverEnabled") private var threeDFlyoverEnabled: Bool = false
     
     @EnvironmentObject var driveViewModel: DriveViewModel
-    @EnvironmentObject var appState: AppState    @State private var showingTutorial = false
+    @EnvironmentObject var appState: AppState
+    @State private var showingTutorial = false
 
     // NOTE: Previously this view hosted a deletion-flow (notice alert,
     // typed-DELETE confirm, optional reauth sheet, destructive spinner

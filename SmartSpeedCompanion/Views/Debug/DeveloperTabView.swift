@@ -95,8 +95,8 @@ public struct DeveloperTabView: View {
                             logger.clear()
                         }
                         .foregroundColor(DesignSystem.alertRed)
-                    }
-                }                ToolbarItem(placement: .navigationBarLeading) {
+                    }                    }
+                    ToolbarItem(placement: .navigationBarLeading) {
                     Button(action: {
                         Task { @MainActor in
                             let vm = AppDelegate.sharedDriveViewModel
