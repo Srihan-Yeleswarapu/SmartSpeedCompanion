@@ -22,7 +22,24 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "VCNBBG32P6"
-    MARKETING_VERSION: "2.1.4"
+    # ── APP VERSION (single source of truth) ───────────────────────────
+    # MARKETING_VERSION is the user-facing iOS app version
+    # (CFBundleShortVersionString). App Store Connect routes uploaded
+    # builds by this string: an .ipa whose CFBundleShortVersionString
+    # matches an existing App Store Connect Version row lands in that
+    # version's "Builds" tab automatically. To ship a new ASC release:
+    #   1. Bump this value (e.g. "1.1" -> "1.2" -> "2.0").
+    #   2. Create the matching version row in App Store Connect
+    #      (My Apps > Speedio > + Version) if it doesn't already exist.
+    #   3. Push to version2 — distribute.yml auto-uploads via
+    #      `xcrun altool --upload-app` and the build appears under
+    #      that version's "Builds" tab.
+    # No other file in the repo needs to change for an iOS version
+    # bump. CURRENT_PROJECT_VERSION (the build number) is auto-derived
+    # at archive time from `git rev-list --count HEAD` inside
+    # distribute.yml — keep the static "4" here only as a local-dev
+    # fallback so previews in Xcode don't show "(null)".
+    MARKETING_VERSION: "1.1"
     CURRENT_PROJECT_VERSION: "4"
     ENABLE_BITCODE: NO
     DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
