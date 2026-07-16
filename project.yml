@@ -3,7 +3,13 @@ options:
   bundleIdPrefix: com.speedsense
   deploymentTarget:
     iOS: "18.0"
-  xcodeVersion: "16.0"
+  # Pinned to Xcode 26.6 (latest stable on the macos-26 GitHub Actions runner
+  # as of 2026-07-16; released 2026-06-25 by Apple, build 17F113). Xcode 27.0
+  # is beta-only — not safe for production builds yet. The workflows also pin
+  # the runtime `xcode-select` to `/Applications/Xcode_26.6.app` with a
+  # graceful fallback to any Xcode_26.*.app, so if GitHub later adds a 26.7
+  # point release on the runner image, CI will use it without code edits here.
+  xcodeVersion: "26.6"
   createIntermediateGroups: true
   groupSortPosition: top
 

@@ -26,12 +26,25 @@ jobs:
           fi
 
       - name: Select Xcode
-        # Auto-select the latest Xcode version. The macos-26 runner image
-        # ships Xcode 26.x as the default; older .app bundles like Xcode 16.2
-        # are not present. `distribute.yml` already uses this pattern.
+        # Prefer Xcode 26.6 (matches project.yml `xcodeVersion: "26.6"`),
+        # but fall back gracefully to any Xcode 26.x point release if a
+        # future runner image swaps in e.g. 26.7 before this workflow is
+        # updated. Reject anything older than 26.x explicitly so a stray
+        # Xcode 16.2 (from a different runner image) can't silently drift
+        # into the toolchain. macos-26 ships 26.0.1 .. 26.6 today.
+        # Mirrors `distribute.yml`'s pattern.
         run: |
-          XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          XCODE_PATH=$(ls -d /Applications/Xcode_26.6*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE_PATH" ]; then
+            XCODE_PATH=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
+          fi
+          if [ -z "$XCODE_PATH" ]; then
+            echo "[ERROR] No Xcode 26.x installed on this runner. Check the macos-26 runner image manifest."
+            ls -d /Applications/Xcode_* 2>/dev/null
+            exit 1
+          fi
           echo "Selecting: $XCODE_PATH"
+          echo "Active developer dir: $(sudo xcode-select -p)"
           sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
 
