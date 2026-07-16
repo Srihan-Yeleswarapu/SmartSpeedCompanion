@@ -371,7 +371,17 @@ public actor ArizonaSpeedLimitService {
                     let isEastWest   = dx > (dy * 1.5)
                     guard isNorthSouth || isEastWest else { continue }
                     let roadHeading = isNorthSouth ? 0.0 : 90.0
-                    let raw = abs(currentHeading.truncatingRemainder(dividingBy: 180) - roadHeading)
+                    // Normalize the heading's mod-180 remainder into [0, 180).
+                    // `Double.truncatingRemainder(dividingBy:)` returns a
+                    // signed result equal in sign to the dividend, so a
+                    // negative heading like -91° (just south of due-west)
+                    // produces -91, then abs(-91 - 90) = 181, then
+                    // min(181, -1) = -1 -- which would falsely PASS the
+                    // < 30° gate. The +180%180 trick forces the remainder
+                    // into [0, 180) for both positive and negative inputs.
+                    let mod180 = (currentHeading.truncatingRemainder(dividingBy: 180) + 180)
+                        .truncatingRemainder(dividingBy: 180)
+                    let raw = abs(mod180 - roadHeading)
                     let normalizedDiff = min(raw, 180 - raw)
                     // Require the user's heading to actually match the
                     // road's dominant axis. 30° is generous enough to
@@ -445,7 +455,14 @@ public actor ArizonaSpeedLimitService {
                 let isHighlyDirectional = isNorthSouth || isEastWest
                 if isHighlyDirectional {
                     let roadHeading = isNorthSouth ? 0.0 : 90.0
-                    let diff = abs(carHeading.truncatingRemainder(dividingBy: 180) - roadHeading)
+                    // Same modulo normalization as Pass 1.5: force the
+                    // remainder into [0, 180) so negative headings (e.g.
+                    // -91° when the user is just south of due-west)
+                    // produce a diff in [0, 90] and not a negative value
+                    // that would slip through the gate above.
+                    let mod180 = (carHeading.truncatingRemainder(dividingBy: 180) + 180)
+                        .truncatingRemainder(dividingBy: 180)
+                    let diff = abs(mod180 - roadHeading)
                     let normalizedDiff = min(diff, 180 - diff)
                     if normalizedDiff > 40 { scoreMultiplier *= 40.0 }
                     else if normalizedDiff > 20 { scoreMultiplier *= 5.0 }

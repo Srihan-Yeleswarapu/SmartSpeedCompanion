@@ -444,7 +444,13 @@ fileprivate struct NetworkHelpSheet: View {
                 .frame(width: 22, height: 22)
                 .background(DesignSystem.cyan)
                 .clipShape(Circle())
-            Text(.init(text))
+            // Use LocalizedStringKey so the `**bold**` markers in our
+            // step text get parsed by SwiftUI's Markdown renderer. The
+            // previous `Text(.init(text))` dispatched to the plain-String
+            // init, which renders asterisks verbatim — visible as literal
+            // stars in the live TestFlight build (code-review of e70991c
+            // flagged this).
+            Text(LocalizedStringKey(text))
                 .font(.system(size: 14))
                 .foregroundColor(.white)
                 .fixedSize(horizontal: false, vertical: true)
@@ -457,7 +463,9 @@ fileprivate struct NetworkHelpSheet: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundColor(DesignSystem.neonGreen)
                 .font(.system(size: 14, weight: .bold))
-            Text(.init(text))
+            // Markdown turn–on via LocalizedStringKey (same reasoning as
+            // stepRow above).
+            Text(LocalizedStringKey(text))
                 .font(.system(size: 14))
                 .foregroundColor(.white.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)
