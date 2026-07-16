@@ -325,11 +325,92 @@ public actor ArizonaSpeedLimitService {
                 DebugLogger.shared.log("AZ Data: name-first hit \(matched) on \(nameBestRouteId ?? "unknown road") (geocoded '\(providedRoadName)')")
                 return matched
             }
-            // No name-matching candidate within the 200 m gate. REJECT SQLite
-            // so the SpeedLimitService orchestrator falls through to ArcGIS +
-            // Overpass. This is the fix for "driving on Arizona Avenue, the
-            // SQLite has nothing for me, so it was lying with S 202's 65 mph".
-            DebugLogger.shared.log("AZ Data: no SQL coverage for geocoded '\(providedRoadName)' within \(Int(NAME_MATCH_SPATIAL_GATE_M)) m -> REJECT SQLite")
+            // ---- PASS 1.5: bearing-dominant spatial salvage ----
+            // Why this exists (TestFlight 2.1.4 feedback from
+            // srihan.yeleswarapu@gmail.com): "E Riggs Rd is 45 mph and it
+            // found 25 mph." E Riggs Rd is an east-west arterial in the
+            // Phoenix east valley. CLGeocoder correctly resolves the road
+            // name to "E Riggs Rd", but the SQLite `RouteId` for the
+            // segment is stored without the directional prefix (e.g.
+            // "07 RIGGS RD"), and `RoadNameMatcher.normalize(_:)` strips
+            // the alpha prefix AND the directional prefix on its way to a
+            // canonical form. After normalization both sides read as
+            // "RIGGS RD" -- which should match -- but if there's any
+            // whitespace / zero-padding drift the canonical compare fails
+            // AND Pass 1's `RoadNameMatcher.score(...)` rounds to < 0.5.
+            // Before Pass 1.5, the fallback was: throw URLError and let
+            // the orchestrator walk live providers. ArcGIS / Overpass
+            // also miss E Riggs Rd (municipal arterials aren't in HPMS),
+            // and SQLite was rejected on each retry, so the lower-speed
+            // 25 mph cross-street would win by default.
+            //
+            // Pass 1.5 runs ONLY when `roadName` is provided. It does a
+            // strict physical-physical match: the candidate's bbox must
+            // be directional (mostly N-S or mostly E-W), it must be
+            // within 30 m of the user, AND the user's heading must
+            // align with the candidate's dominant axis within 30°.
+            // Tight gates block the S 202 mega-bbox case from regressing:
+            // a freeway 65 m from the user with the wrong heading do
+            // NOT pick up, but the right road RIGHT under the user does.
+            if let currentHeading = heading {
+                var salvageLimit: Int? = nil
+                var salvageRouteId: String? = nil
+                var salvageMinScore: Double = .infinity
+                for segment in segments {
+                    guard segment.limit > 0 else { continue }
+                    let dx = segment.maxx - segment.minx
+                    let dy = segment.maxy - segment.miny
+                    if sqrt(dx*dx + dy*dy) > 1.0 { continue }
+                    let distance = segment.distance(to: coordinate)
+                    // 30 m gate -- wider than Pass 2's legacy 20 m but
+                    // still tight enough that a freeway 65 m away can't
+                    // pickup. The previous 20 m gate was the reason many
+                    // legit local-road answers required expandedSearch.
+                    guard distance <= 30.0 else { continue }
+                    let isNorthSouth = dy > (dx * 1.5)
+                    let isEastWest   = dx > (dy * 1.5)
+                    guard isNorthSouth || isEastWest else { continue }
+                    let roadHeading = isNorthSouth ? 0.0 : 90.0
+                    let raw = abs(currentHeading.truncatingRemainder(dividingBy: 180) - roadHeading)
+                    let normalizedDiff = min(raw, 180 - raw)
+                    // Require the user's heading to actually match the
+                    // road's dominant axis. 30° is generous enough to
+                    // cover a slight misalignment at intersections but
+                    // tight enough that a 45 mph E-W road can NOT pickup
+                    // from a driver who reports a 90° off-axis heading
+                    // (e.g. they're actually on a N-S cross-street).
+                    guard normalizedDiff < 30 else { continue }
+                    var score = (distance + SCORE_BASE_OFFSET)
+                    // Reward the bearing match HARD so the residual
+                    // spatial sub-score has no chance of vaulting a
+                    // bigger-but-mismatched bbox over our candidate.
+                    if normalizedDiff < 10 {
+                        score += 100.0  // excellent alignment bonus
+                    } else {
+                        score += 30.0   // acceptable alignment
+                    }
+                    if score < salvageMinScore {
+                        salvageMinScore = score
+                        salvageLimit = segment.limit
+                        salvageRouteId = segment.routeId
+                    }
+                }
+                if let salvaged = salvageLimit, salvaged > 0 {
+                    self.lastSegmentId = salvageRouteId
+                    DebugLogger.shared.log("AZ Data: Pass 1.5 salvaged \(salvaged) on \(salvageRouteId ?? "unknown road") via bearing alignment (geocoded '\(providedRoadName)' had no name match)")
+                    return salvaged
+                }
+            }
+            // No name-matching candidate within the 200 m gate AND no
+            // bearing-aligned corridor within 30 m -> REJECT SQLite so
+            // the SpeedLimitService orchestrator falls through to
+            // ArcGIS + Overpass. This preserves the original safety net
+            // for cases where the user's road truly has no SQL coverage
+            // (and Pass 1.5's tight bearing gate rightly stayed silent)
+            // but lets the local-DB answer win for the E Riggs Rd case
+            // where the SQLite has the data and the user is clearly on
+            // the road, just with a name normalization drift.
+            DebugLogger.shared.log("AZ Data: no SQL coverage for geocoded '\(providedRoadName)' within \(Int(NAME_MATCH_SPATIAL_GATE_M)) m and no bearing-aligned corridor within 30 m -> REJECT SQLite")
             throw URLError(.resourceUnavailable)
         }
 

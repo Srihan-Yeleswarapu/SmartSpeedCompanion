@@ -18,6 +18,12 @@ public struct SettingsView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @EnvironmentObject var appState: AppState
     @State private var showingTutorial = false
+    // TestFlight 2.1.4 feedback from
+    // srihan.yeleswarapu@gmail.com: "And put a how to button. Then put
+    // detailed instructions on how to toggle an app to use cellular,
+    // and basically like how to debug it to get cellular data to fetch
+    // data." Toggled by the new NETWORK & DATA row below.
+    @State private var showingNetworkHelp = false
 
     // NOTE: Previously this view hosted a deletion-flow (notice alert,
     // typed-DELETE confirm, optional reauth sheet, destructive spinner
@@ -150,6 +156,37 @@ public struct SettingsView: View {
                 }
                 .listRowBackground(DesignSystem.bgPanel)
                 
+                // MARK: - NETWORK & DATA section (always visible)
+                // Driving the speed-limit pipeline requires EITHER live
+                // network (ArcGIS HPMS + OSM Overpass) OR local coverage
+                // in the Arizona SQLite. Help the user unblock cellular
+                // so live providers can come back online when they do
+                // return to service.
+                // (TestFlight 2.1.4: "put a how to button… detailed
+                //  instructions on how to toggle an app to use cellular".)
+                Section(header: Text("NETWORK & DATA").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                    Button(action: {
+                        showingNetworkHelp = true
+                    }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                                .foregroundColor(DesignSystem.cyan)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Can't load live speed limits?")
+                                    .foregroundColor(.white)
+                                Text("How to enable Cellular Data for Speedio")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.white.opacity(0.4))
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                }
+                .listRowBackground(DesignSystem.bgPanel)
+
                 // MARK: - SUPPORT section (always visible)
                 // Report Issue and Replay Tutorial are useful regardless of auth
                 // state, so they're surfaced to every user.
@@ -191,6 +228,14 @@ public struct SettingsView: View {
             .toolbarColorScheme(.dark, for: .navigationBar)                .fullScreenCover(isPresented: $showingTutorial) {
                     TutorialView(isReplaying: true)
                         .environmentObject(appState)
+                }
+                // Cellular data troubleshooting sheet. Distinct from the
+                // full-screen Tutorial because the user wants a quick
+                // reference they can read while sitting next to the
+                // iPhone Settings app. Opens a system Settings deep-link
+                // from a button so they don't have to navigate manually.
+                .sheet(isPresented: $showingNetworkHelp) {
+                    NetworkHelpSheet()
                 }
                 // Cold-start App-Group mirror. The picker only fires
                 // `.onChange` when the user flips it; if the app ever
@@ -283,6 +328,151 @@ public struct SettingsView: View {
         tokenSaveMessage = "Cleared."
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             tokenSaveMessage = nil
+        }
+    }
+}
+
+// MARK: - Network Help Sheet
+//
+// TestFlight 2.1.4 feedback: "Also if the user has no wifi, show an
+// alert saying please turn on WiFi or cellular data. And put a how
+// to button. Then put detailed instructions on how to toggle an app
+// to use cellular, and basically like how to debug it to get cellular
+// data to fetch data."
+//
+// Sheet (not alert) because users want to compare the instructions
+// against the actual iPhone Settings screens they're looking at —
+// an alert is too small / dismisses too easily. Includes a deep link
+// to the system Settings app so the user can tap once and land on
+// the relevant page.
+fileprivate struct NetworkHelpSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+
+                    enableStepsSection
+                    debugTipsSection
+                    settingsDeepLinkButton
+                }
+                .padding(20)
+            }
+            .background(DesignSystem.bgDeep.ignoresSafeArea())
+            .navigationTitle("Network Troubleshooting")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundColor(DesignSystem.cyan)
+                }
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(DesignSystem.amber)
+                Text("Live speed limits need a network path")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            Text("Speedio grabs fresh speed-limit data from Apple/ArcGIS and OpenStreetMap. If Wi-Fi and Cellular Data are both off — or if Speedio's per-app toggle is off — the app will fall back to a small local Arizona database and you may see stale or missing limits.")
+                .font(.system(size: 14))
+                .foregroundColor(.white.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var enableStepsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("HOW TO ENABLE CELLULAR DATA FOR SPEEDIO",
+                  systemImage: "1.circle.fill")
+                .font(.system(size: 12, weight: .black))
+                .foregroundColor(DesignSystem.cyan)
+            stepRow(num: "1", text: "Open the **iPhone Settings** app.")
+            stepRow(num: "2", text: "Tap **Cellular** (called *Mobile Data* on UK/AU devices).")
+            stepRow(num: "3", text: "Make sure **Cellular Data** at the top is **ON** (green).")
+            stepRow(num: "4", text: "Scroll down to the **Speedio** entry and toggle it **ON**.")
+            stepRow(num: "5", text: "If you only use Wi-Fi, scroll to **Wi-Fi** instead and ensure Speedio is allowed.")
+        }
+    }
+
+    private var debugTipsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("DEBUGGING TIPS",
+                  systemImage: "stethoscope")
+                .font(.system(size: 12, weight: .black))
+                .foregroundColor(DesignSystem.cyan)
+            tipRow(text: "Turn **Airplane Mode** OFF (orange crescent icon in Control Center).")
+            tipRow(text: "Disable **Low Power Mode** — it throttles background fetches and may delay live results.")
+            tipRow(text: "If you use a **VPN** or firewall app, allowlist Speedio so requests aren't blocked.")
+            tipRow(text: "Try opening **maps.apple.com** in Safari to confirm your cellular data path works end-to-end.")
+            tipRow(text: "If you still see a red **OFFLINE** banner in the app but Safari works, please report an issue from the SUPPORT section.")
+        }
+    }
+
+    private var settingsDeepLinkButton: some View {
+        Button(action: openIPhoneSettings) {
+            HStack(spacing: 10) {
+                Image(systemName: "gear")
+                    .font(.system(size: 15, weight: .bold))
+                Text("Open iPhone Settings")
+                    .font(.system(size: 15, weight: .bold))
+            }
+            .foregroundColor(.black)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(DesignSystem.cyan)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: DesignSystem.cyan.opacity(0.4), radius: 8, y: 3)
+        }
+        .padding(.top, 6)
+    }
+
+    private func stepRow(num: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(num)
+                .font(.system(size: 14, weight: .black, design: .rounded))
+                .foregroundColor(.white)
+                .frame(width: 22, height: 22)
+                .background(DesignSystem.cyan)
+                .clipShape(Circle())
+            Text(.init(text))
+                .font(.system(size: 14))
+                .foregroundColor(.white)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func tipRow(text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(DesignSystem.neonGreen)
+                .font(.system(size: 14, weight: .bold))
+            Text(.init(text))
+                .font(.system(size: 14))
+                .foregroundColor(.white.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func openIPhoneSettings() {
+        // UIApplication.openSettingsURLString is the Apple-blessed way to
+        // jump from our app's Settings screen straight into the system
+        // Settings app. iOS handles the route: Cellular / Wi-Fi / General
+        // are all top-level pages the user can navigate from.
+        if let url = URL(string: UIApplication.openSettingsURLString),
+           UIApplication.shared.canOpenURL(url) {
+            UIApplication.shared.open(url)
         }
     }
 }

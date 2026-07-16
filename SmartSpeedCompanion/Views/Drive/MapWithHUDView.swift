@@ -5,6 +5,12 @@ public struct MapWithHUDView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @Environment(\.horizontalSizeClass) var hSizeClass
     @Environment(\.verticalSizeClass) var vSizeClass
+    // Observed so the offline banner re-renders in real time when
+    // NWPathMonitor fires a path-update on the device. Per
+    // TestFlight 2.1.4 feedback from
+    // srihan.yeleswarapu@gmail.com: "if the user has no wifi, show an
+    // alert saying please turn on WiFi or cellular data".
+    @ObservedObject private var network = NetworkReachability.shared
 
     public init() {}
 
@@ -36,6 +42,19 @@ public struct MapWithHUDView: View {
 
                 // Overlay content
                 VStack(spacing: 0) {
+                    // Offline banner (TestFlight 2.1.4 feedback:
+                    // "if the user has no wifi, show an alert saying
+                    // please turn on WiFi or cellular data"). Visible only
+                    // when NWPathMonitor reports !satisfied. Pinned to the
+                    // very top of the VStack so it doesn't get occluded
+                    // by navigation cards. Animates in/out so it doesn't
+                    // punch in awkwardly when connectivity flaps.
+                    if !network.isConnected {
+                        OfflineDataBanner()
+                            .padding(.top, geo.safeAreaInsets.top + 4)
+                            .padding(.horizontal, 12)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                     if (driveViewModel.isNavigating || driveViewModel.isSelectingRoute) && !driveViewModel.isSearchingLocally {
                         if driveViewModel.isNavigating {
                             NavigationInstructionCard()
@@ -771,12 +790,44 @@ fileprivate struct NearbyAmenitiesCard: View {
             }
 
             Color.clear.frame(height: 8)
-        }
-        .background(DesignSystem.bgPanel)
+        }        .background(DesignSystem.bgPanel)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(
             RoundedRectangle(cornerRadius: 18)
                 .stroke(DesignSystem.cyan.opacity(0.25), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Offline Data Banner
+// TestFlight 2.1.4 feedback from srihan.yeleswarapu@gmail.com: "if the
+// user has no wifi, show an alert saying please turn on WiFi or
+// cellular data". We surface a non-modal red banner at the top of the
+// driving overlay whenever NWPathMonitor reports the path as !satisfied.
+// The banner animates in / out so brief connectivity flaps don't punch
+// in awkwardly.
+fileprivate struct OfflineDataBanner: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(.white)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("OFFLINE")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundColor(.white.opacity(0.75))
+                Text("Turn on Wi-Fi or Cellular Data for fresh speed limits.")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity)
+        .background(DesignSystem.alertRed.opacity(0.92))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: DesignSystem.alertRed.opacity(0.5), radius: 8, y: 2)
     }
 }
