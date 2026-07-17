@@ -241,65 +241,107 @@ jobs:
             exit 1
           fi
           echo "[OK] IPA found: $IPA_PATH"
-          echo "=== Checking for embedded.mobileprovision ==="
-          if unzip -l "$IPA_PATH" | grep -q "embedded.mobileprovision"; then
-            echo "[OK] embedded.mobileprovision already present in IPA"
-          else
-            echo "[WARN] embedded.mobileprovision NOT found - manually embedding..."
+          echo "=== Always force inner-appex re-sign with on-disk entitlements ==="
+          # xcodebuild -exportArchive with a manual signing identity DOES write
+          # embedded.mobileprovision, but it also signs the inner .appex with whatever
+          # entitlements can be derived from the host profile's :Entitlements dict.
+          # When that dict does not include per-target capabilities (e.g. the widget's
+          # com.apple.security.application-groups key), Apple's altool static
+          # validator rejects the upload with:
+          #
+          #   Missing Code Signing Entitlements (90166). No entitlements found in bundle
+          #   'com.speedsense.app.SpeedWidget' for executable '.../SmartSpeedCompanionWidget'.
+          #
+          # Treating the on-disk `Resources/Entitlements/<ExecutablesName>.entitlements`
+          # files as the source of truth — re-signing every inner .appex with its
+          # matching on-disk entitlements file before re-sealing the host — eliminates
+          # the failure regardless of what xcodebuild embedded. Apple requires
+          # leaf-then-parent order so the host's signature wraps the inner seals.
+          #
+          # --generate-entitlement-der is required since iOS 15 so the OS reads the
+          # enforced entitlements blob correctly even before XML parsing.
 
-            if [ ! -f /tmp/profile.mobileprovision ]; then
-              echo "[ERROR] /tmp/profile.mobileprovision not found!"
-              exit 1
-            fi
-
-            cd "$PWD/IPAWork"
-            unzip -o "$IPA_PATH" > /dev/null 2>&1
-
-            APP_BUNDLE=$(find . -name "*.app" -type d | head -1)
-            if [ -z "$APP_BUNDLE" ]; then
-              echo "[ERROR] No .app bundle found in IPA"
-              exit 1
-            fi
-            echo "Found app bundle: $APP_BUNDLE"
-
-            # Re-sign with entitlements. Sign nested .appex INWARD-OUT (extensions first,
-            # parent last) so the parent .app's seal wraps already-signed nested
-            # bundles -- mirrors native xcodebuild -exportArchive. Without this loop
-            # the widget appex ships with zero entitlements and xcrun altool
-            # rejects with: Missing Code Signing Entitlements. No entitlements found
-            # in bundle com.speedsense.app.SpeedWidget ...
-            cp /tmp/profile.mobileprovision "$APP_BUNDLE/embedded.mobileprovision"
-            echo "[OK] Embedded provisioning profile into: $APP_BUNDLE/embedded.mobileprovision"
-
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
-            for APPEX in "$APP_BUNDLE/PlugIns"/*.appex; do
-              [ -d "$APPEX" ] || continue
-              cp /tmp/profile.mobileprovision "$APPEX/embedded.mobileprovision"
-              ENT_NAME="$(basename "$APPEX" .appex)"
-              ENT_FILE="../SmartSpeedCompanion/Resources/Entitlements/${ENT_NAME}.entitlements"
-              if [ -f "$ENT_FILE" ]; then
-                codesign --force --sign "Apple Distribution" --entitlements "$ENT_FILE" "$APPEX"
-                echo "[OK] Re-signed app extension $APPEX with $ENT_FILE"
-              else
-                codesign --force --sign "Apple Distribution" "$APPEX"
-                echo "[WARN] Re-signed $APPEX without entitlements (no $ENT_FILE in IPAWork/../...)"
-              fi
-            done
-
-            if [ -f /tmp/entitlements.plist ]; then
-              codesign --force --sign "Apple Distribution" --entitlements /tmp/entitlements.plist "$APP_BUNDLE"
-              echo "[OK] Re-signed app bundle with entitlements"
-            else
-              codesign --force --sign "Apple Distribution" "$APP_BUNDLE"
-              echo "[WARN] Re-signed without entitlements (not found in profile)"
-            fi
-
-            rm -f "$IPA_PATH"
-            zip -rq "$IPA_PATH" Payload/
-            echo "[OK] Repackaged IPA with embedded.mobileprovision"
-
-            cd "$PWD"
+          if [ ! -f /tmp/profile.mobileprovision ]; then
+            echo "[ERROR] /tmp/profile.mobileprovision not found!"
+            exit 1
           fi
+
+          # Resolve the entitlements directory against the repo root so the path does
+          # not shift when the script `cd`'s into $PWD/IPAWork below. The previous
+          # CWD-relative "../SmartSpeedCompanion/Resources/Entitlements/..." silently
+          # missed on runners whose $PWD differed from expectations.
+          ENT_DIR="${GITHUB_WORKSPACE:-$PWD}/SmartSpeedCompanion/Resources/Entitlements"
+          echo "Entitlements directory: $ENT_DIR"
+          ls -la "$ENT_DIR"
+
+          rm -rf "$PWD/IPAWork"
+          mkdir -p "$PWD/IPAWork"
+          cd "$PWD/IPAWork"
+          unzip -o "$IPA_PATH" > /dev/null
+
+          APP_BUNDLE=$(find . -name "*.app" -type d | head -1)
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "[ERROR] No .app bundle found in IPA"
+            exit 1
+          fi
+          echo "Found app bundle: $APP_BUNDLE"
+
+          cp /tmp/profile.mobileprovision "$APP_BUNDLE/embedded.mobileprovision"
+          echo "[OK] Embedded provisioning profile into: $APP_BUNDLE/embedded.mobileprovision"
+
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
+
+          # Sign leaves FIRST (inner .appex). Apple rejects the upload if an inner .appex
+          # is signed without entitlements; using the on-disk .entitlements file
+          # guarantees the right key/value pairs end up in the widget signature even
+          # when the host profile does not carry that capability.
+          for APPEX in "$APP_BUNDLE/PlugIns"/*.appex; do
+            [ -d "$APPEX" ] || continue
+            cp /tmp/profile.mobileprovision "$APPEX/embedded.mobileprovision"
+            ENT_NAME="$(basename "$APPEX" .appex)"
+            ENT_FILE="${ENT_DIR}/${ENT_NAME}.entitlements"
+            if [ -f "$ENT_FILE" ]; then
+              codesign --force --sign "Apple Distribution" --entitlements "$ENT_FILE" --generate-entitlement-der "$APPEX"
+              echo "[OK] Re-signed $APPEX with entitlements from $ENT_FILE"
+            else
+              codesign --force --sign "Apple Distribution" --generate-entitlement-der "$APPEX"
+              echo "[WARN] Re-signed $APPEX WITHOUT entitlements (no $ENT_FILE on disk)"
+            fi
+          done
+
+          # Sign parent LAST so its seal wraps already-signed nested bundles.
+          # Source: on-disk version (more complete than what's extracted from the host
+          # profile's :Entitlements dict via PlistBuddy -- it also includes keychain
+          # access groups, CarPlay capabilities, and App Groups).
+          HOST_ENT="${ENT_DIR}/SmartSpeedCompanion.entitlements"
+          if [ -f "$HOST_ENT" ]; then
+            codesign --force --sign "Apple Distribution" --entitlements "$HOST_ENT" --generate-entitlement-der "$APP_BUNDLE"
+            echo "[OK] Re-signed host $APP_BUNDLE with entitlements from $HOST_ENT"
+          else
+            codesign --force --sign "Apple Distribution" --generate-entitlement-der "$APP_BUNDLE"
+            echo "[WARN] Re-signed host WITHOUT entitlements (no $HOST_ENT)"
+          fi
+
+          rm -f "$IPA_PATH"
+          zip -rq "$IPA_PATH" Payload/
+          echo "[OK] Repackaged IPA with embedded.mobileprovision + per-target entitlements"
+
+          cd "$PWD"
+
+          # Verify post-re-sign so any regression surfaces in the build log instead of
+          # at ASC upload time. `codesign -d --entitlements :- <exec>` prints the
+          # entitlements XML blob to stdout; an empty body means the re-sign is broken.
+          echo "=== Post-re-sign entitlement verification ==="
+          HOST_BIN_PATH="$PWD/IPAWork/${APP_BUNDLE#./}"
+          HOST_BIN_NAME="$(basename "$HOST_BIN_PATH" .app)"
+          echo "--- Host: $HOST_BIN_NAME ---"
+          codesign -d --entitlements :- "$HOST_BIN_PATH/$HOST_BIN_NAME" 2>&1 | head -60 || true
+          for APPEX in "$HOST_BIN_PATH/PlugIns"/*.appex; do
+            [ -d "$APPEX" ] || continue
+            APPEX_NAME="$(basename "$APPEX" .appex)"
+            echo "--- Inner extension: $APPEX_NAME ---"
+            codesign -d --entitlements :- "$APPEX/$APPEX_NAME" 2>&1 | head -60 || true
+          done
 
           echo "=== Final IPA verification ==="
           if unzip -l "$IPA_PATH" | grep -q "embedded.mobileprovision"; then
