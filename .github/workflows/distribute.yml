@@ -399,18 +399,18 @@ jobs:
           echo
           echo "[DBG-WIDGET-ENT] Building /tmp/widget_entitlements.plist"
           python3 - <<'PY' || { echo "[FATAL] widget entitlements builder failed"; exit 1; }
-import plistlib, sys
-host = plistlib.load(open('/tmp/entitlements.plist', 'rb'))
-TEAM = host.get('com.apple.developer.team-identifier', 'VCNBBG32P6')
-WIDGET_BID = 'com.speedsense.app.SpeedWidget'
-widget = {
-    'application-identifier': f'{TEAM}.{WIDGET_BID}',
-    'com.apple.developer.team-identifier': TEAM,
-}
-plistlib.dump(widget, open('/tmp/widget_entitlements.plist', 'wb'), fmt=plistlib.FMT_XML)
-print(f"Wrote /tmp/widget_entitlements.plist with TEAM={TEAM}, WIDGET_BID={WIDGET_BID}")
-print(f"Widget keys: {sorted(widget.keys())}")
-PY
+          import plistlib, sys
+          host = plistlib.load(open('/tmp/entitlements.plist', 'rb'))
+          TEAM = host.get('com.apple.developer.team-identifier', 'VCNBBG32P6')
+          WIDGET_BID = 'com.speedsense.app.SpeedWidget'
+          widget = {
+              'application-identifier': f'{TEAM}.{WIDGET_BID}',
+              'com.apple.developer.team-identifier': TEAM,
+          }
+          plistlib.dump(widget, open('/tmp/widget_entitlements.plist', 'wb'), fmt=plistlib.FMT_XML)
+          print(f"Wrote /tmp/widget_entitlements.plist with TEAM={TEAM}, WIDGET_BID={WIDGET_BID}")
+          print(f"Widget keys: {sorted(widget.keys())}")
+          PY
           echo
           echo "----- /tmp/widget_entitlements.plist content -----"
           cat /tmp/widget_entitlements.plist
