@@ -85,6 +85,7 @@ jobs:
       - name: Decode and install provisioning profile
         env:
           PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
+          WIDGET_PP_BASE64: ${{ secrets.WIDGET_PROVISIONING_PROFILE_BASE64 }}
         run: |
           echo "=== Decoding provisioning profile ==="
 
@@ -147,6 +148,86 @@ jobs:
           cp /tmp/profile.mobileprovision.raw "$PP_DIR/${INSTALL_NAME}"
           echo "Installed provisioning profile to: $PP_DIR/${INSTALL_NAME}"
           ls -la "$PP_DIR/"
+
+          # ---- WIDGET EXTENSION PROFILE (opportunistic decode) -----------------
+          # Apple's altool static analyzer trips 90164 ("entitlements do not match
+          # the ones that are contained in the provisioning profile") when the
+          # widget .appex's codesign blob carries the WIDGET bid for
+          # application-identifier but every embedded.mobileprovision in the bundle
+          # tree authorizes only the HOST bid. The structural fix is a separate App
+          # Store provisioning profile for App ID `com.speedsense.app.SpeedWidget`.
+          # If you provide WIDGET_PROVISIONING_PROFILE_BASE64 we decode it here
+          # alongside the host profile; the Export step then embeds it into the
+          # .appex and signs with the widget profile's authentic :Entitlements,
+          # resolving 90164. If absent, we emit a one-shot human-readable banner
+          # explaining how to provision it; the run continues with the prior
+          # fabricated-fallback behavior so the failure mode is still observable.
+          if [ -n "$WIDGET_PP_BASE64" ]; then
+            echo
+            echo "=== Decoding WIDGET provisioning profile ==="
+            python3 -c "import base64; data = base64.b64decode(''.join('$WIDGET_PP_BASE64'.split())); open('/tmp/widget_profile.mobileprovision.raw', 'wb').write(data); print(f'WIDGET raw file: {len(data)} bytes')"
+            if security cms -D -in /tmp/widget_profile.mobileprovision.raw -out /tmp/widget_profile.unwrapped.plist 2>/dev/null; then
+              echo "[OK] Successfully unwrapped WIDGET CMS/PKCS#7 envelope via security cms"
+            else
+              echo "[WARN] security cms -D failed for WIDGET profile - extracting embedded plist directly from DER structure"
+              python3 -c "import plistlib,sys; d=open('/tmp/widget_profile.mobileprovision.raw','rb').read(); s=d.find(b'<?xml'); e=d.find(b'</plist>',s); assert s>=0 and e>=0,b'no plist boundaries found'; pb=d[s:e+len(b'</plist>')]; p=plistlib.loads(pb); assert 'UUID' in p,b'plist missing required UUID property'; open('/tmp/widget_profile.unwrapped.plist','wb').write(pb); print('[OK] extracted WIDGET plist: %d bytes, UUID=%s' % (len(pb),p['UUID']))"
+            fi
+            cp /tmp/widget_profile.mobileprovision.raw /tmp/widget_profile.mobileprovision
+            WIDGET_UUID=$(python3 -c "import plistlib; print(plistlib.loads(open('/tmp/widget_profile.unwrapped.plist','rb').read()).get('UUID',''))" 2>/dev/null || echo "")
+            WIDGET_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/widget_profile.unwrapped.plist 2>/dev/null || echo "unknown")
+            WIDGET_APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/widget_profile.unwrapped.plist 2>/dev/null || echo "unknown")
+            echo "WIDGET Profile Name: $WIDGET_NAME"
+            echo "WIDGET Profile UUID: $WIDGET_UUID"
+            echo "WIDGET App ID: $WIDGET_APPID"
+            /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/widget_profile.unwrapped.plist > /tmp/widget_entitlements.plist 2>/dev/null
+            if [ -s /tmp/widget_entitlements.plist ]; then
+              echo "[OK] WIDGET profile :Entitlements extracted (this REPLACES the on-disk widget entitlements file as signing source-of-truth)"
+              echo "----- WIDGET :Entitlements content (from profile) -----"
+              cat /tmp/widget_entitlements.plist
+              echo "-------------------------------------------------------"
+            else
+              echo "[FATAL] WIDGET profile :Entitlements extraction failed -- altool 90164 will trip"
+              exit 1
+            fi
+            if [ -n "$WIDGET_UUID" ] && echo "$WIDGET_UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+              WIDGET_INSTALL_NAME="${WIDGET_UUID}.mobileprovision"
+            else
+              echo "[WARN] No UUID-shaped string on WIDGET profile - installing as widget_profile.mobileprovision as fallback"
+              WIDGET_INSTALL_NAME="widget_profile.mobileprovision"
+            fi
+            cp /tmp/widget_profile.mobileprovision.raw "$PP_DIR/${WIDGET_INSTALL_NAME}"
+            echo "Installed WIDGET profile to: $PP_DIR/${WIDGET_INSTALL_NAME}"
+            ls -la "$PP_DIR/"
+          else
+            echo
+            echo "===================================================================="
+            echo "  [WARN] WIDGET_PROVISIONING_PROFILE_BASE64 secret is NOT set."
+            echo "         Apple's altool will reject the upload with 90164 because the"
+            echo "         widget extension has no embedded profile whose application-"
+            echo "         identifier authorizes its bundle id"
+            echo "         (com.speedsense.app.SpeedWidget)."
+            echo ""
+            echo "         One-time setup to fix this:"
+            echo "           1. Apple Developer Portal (developer.apple.com) ->"
+            echo "              'Certificates, Identifiers & Profiles' -> Identifiers."
+            echo "              Register App ID 'com.speedsense.app.SpeedWidget' as an"
+            echo "              EXPLICIT App ID (NOT a wildcard App Group) and enable"
+            echo "              the App Group 'group.com.smartspeedcompanion.app' on it"
+            echo "              (matches the host's group.com.smartspeedcompanion.app)."
+            echo "           2. Profiles -> Distribution -> App Store -> click '+'."
+            echo "              Select the widget App ID. Continue -> Generate ->"
+            echo "              Download the .mobileprovision file (e.g. Widget.mobileprovision)."
+            echo "           3. base64 -i Widget.mobileprovision | tr -d '\\n'   (Mac)."
+            echo "              Copy the resulting single-line string."
+            echo "           4. GitHub repo -> Settings -> Secrets and variables ->"
+            echo "              Actions -> 'New repository secret'."
+            echo "                Name:  WIDGET_PROVISIONING_PROFILE_BASE64"
+            echo "                Value: <paste the base64 string>"
+            echo "           5. Re-run this workflow (Actions tab -> latest run ->"
+            echo "              'Re-run jobs'). The WARN disappears and the widget is"
+            echo "              signed with its own profile (resolves 90164)."
+            echo "===================================================================="
+          fi
 
       - name: Build Archive (Unsigned for SPM targets)
         env:
@@ -386,19 +467,37 @@ jobs:
             fi
           done
 
+          # Decide whether to sign widget with its own profile (preferred, resolves
+          # 90164) or fall back to a fabricated /tmp/widget_entitlements.plist (works
+          # around 90046 but trips 90164 because there's still no embedded profile
+          # authorizing the widget bid).  WIDGET_USE_PROFILE=1 requires the
+          # WIDGET_PROVISIONING_PROFILE_BASE64 secret to be set up in the Decode
+          # and install provisioning profile step above.
+          echo
+          echo "[DBG-WIDGET-AVAIL] WIDGET-specific profile decoded?"
+          if [ -f /tmp/widget_profile.mobileprovision ] && [ -s /tmp/widget_entitlements.plist ]; then
+            echo "[DBG-WIDGET-AVAIL] YES -- widget will be embedded with its own profile (resolves 90164)."
+            WIDGET_USE_PROFILE=1
+          else
+            echo "[WARN] NO -- widget will use the fabricated fallback (90164 expected). See banner in Decode step."
+            WIDGET_USE_PROFILE=0
+          fi
+
           # Build /tmp/widget_entitlements.plist -- widget-specific entitlements with
           # a correctly-formatted application-identifier.  Apple's App Store Connect
           # static analyzer rejects 90046 when the widget's codesign blob carries the
           # host's application-identifier value (host bid) because the widget's
           # CFBundleIdentifier is `<host bid>.SpeedWidget` -- it must be formatted
-          # `<TEAMID>.<widget bid>` not `<TEAMID>.<host bid>`.  Without a real widget
-          # provisioning profile in this pipeline we can't pull the right value from
-          # the profile, so we fabricate it programmatically from the host profile's
-          # team identifier + the hardcoded widget bundle id.  This is the minimum
-          # non-empty payload ASC accepts for a widget extension.
+          # `<TEAMID>.<widget bid>` not `<TEAMID>.<host bid>`.  When the widget
+          # profile was decoded above, /tmp/widget_entitlements.plist already holds
+          # the widget profile's authentic :Entitlements -- we keep it as-is.  When
+          # no widget profile is available we fall back to fabricating a minimal
+          # blob from the host profile's team identifier.
           echo
-          echo "[DBG-WIDGET-ENT] Building /tmp/widget_entitlements.plist"
-          python3 - <<'PY' || { echo "[FATAL] widget entitlements builder failed"; exit 1; }
+          echo "[DBG-WIDGET-ENT] /tmp/widget_entitlements.plist content (signing source-of-truth for widget):"
+          if [ "$WIDGET_USE_PROFILE" -eq 0 ]; then
+            echo "[DBG-WIDGET-ENT] No widget profile -- fabricating minimal plist."
+            python3 - <<'PY' || { echo "[FATAL] widget entitlements builder failed"; exit 1; }
           import plistlib, sys
           host = plistlib.load(open('/tmp/entitlements.plist', 'rb'))
           TEAM = host.get('com.apple.developer.team-identifier', 'VCNBBG32P6')
@@ -411,8 +510,9 @@ jobs:
           print(f"Wrote /tmp/widget_entitlements.plist with TEAM={TEAM}, WIDGET_BID={WIDGET_BID}")
           print(f"Widget keys: {sorted(widget.keys())}")
           PY
-          echo
-          echo "----- /tmp/widget_entitlements.plist content -----"
+          else
+            echo "[DBG-WIDGET-ENT] Using widget profile's :Entitlements -- no fabrication needed."
+          fi
           cat /tmp/widget_entitlements.plist
           echo
 
@@ -423,15 +523,20 @@ jobs:
           echo "=== Re-signing inner extensions (leaves first) ==="
           for APPEX in "$APP_BUNDLE/PlugIns"/*.appex; do
             [ -d "$APPEX" ] || continue
-            # DO NOT copy the host profile into the widget.  Apple's static
-            # analyzer cross-checks the extension's embedded.mobileprovision's
-            # :Entitlements.application-identifier against the widget's
-            # codesign blob's application-identifier; embedding the host
-            # profile (which has host App ID) into a widget whose codesign
-            # blob correctly says widget bid would trip a different error
-            # class.  Without an embedded profile ASC just reads the codesign
-            # blob's value, validates it against the bundle id directly, and
-            # accepts the correctly-formatted value.
+            # Embed the widget-specific provisioning profile when available so its
+            # embedded :Entitlements.application-identifier (widget bid) matches the
+            # widget codesign blob's application-identifier (also widget bid). This
+            # is the structural fix for altool 90164. When no widget profile is
+            # available we leave the .appex profile-less and rely on the fabricated
+            # codesign blob alone -- which trips 90164 because the validator falls
+            # back to the nearest ancestor's profile (the host's, which authorizes
+            # only the host bid).
+            if [ "$WIDGET_USE_PROFILE" -eq 1 ]; then
+              cp /tmp/widget_profile.mobileprovision "$APPEX/embedded.mobileprovision"
+              echo "[DBG-SIGN] APPEX=$APPEX -- embedded WIDGET profile from /tmp/widget_profile.mobileprovision"
+            else
+              echo "[DBG-SIGN] APPEX=$APPEX -- NO embedded WIDGET profile (fallback path; 90164 expected)"
+            fi
             ENT_NAME="$(basename "$APPEX" .appex)"
             # Inner extensions sign with /tmp/widget_entitlements.plist (built
             # above) -- a minimal entitlements blob whose application-identifier
