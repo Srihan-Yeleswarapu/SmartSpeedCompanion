@@ -311,10 +311,13 @@ jobs:
           fi
 
       - name: Upload to TestFlight (App Store Connect)
-        # Upload the IPA so it appears under App Store Connect → TestFlight for the Speedio
-        # bundle id. This step is non-blocking: a build verification failure here should
-        # not prevent the IPA artifact from being preserved on GitHub.
-        continue-on-error: true
+        # Upload the IPA so it appears under App Store Connect → TestFlight for the
+        # Speedio bundle id. This step is now a HARD FAIL on altool errors so the real
+        # error reaches the GitHub Actions UI — the prior `continue-on-error: true` plus
+        # a trailing `rm -f "$UPLOAD_LOG"` (which always exited 0) silently masked bad
+        # uploads as green even when altool returned a real error. The IPA binary is
+        # still preserved as a workflow artifact regardless of upload outcome via the
+        # unconditional `Upload Artifacts` step further down.
         run: |
           IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
           if [ -z "$IPA_PATH" ]; then
@@ -354,6 +357,10 @@ jobs:
               echo "Check the full upload log for details; the build artifact will still be uploaded below."
             fi
           fi
+          # Propagate altool's actual exit code so the real error reaches the GitHub
+          # Actions UI. Without this, the trailing `rm -f "$UPLOAD_LOG"` returns 0 and
+          # the step is green even when altool failed.
+          exit "$UPLOAD_EXIT"
           rm -f "$UPLOAD_LOG"
 
       - name: Upload Artifacts
