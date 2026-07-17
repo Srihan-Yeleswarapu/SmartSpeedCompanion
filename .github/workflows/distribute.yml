@@ -277,7 +277,17 @@ jobs:
           # CWD-relative "../SmartSpeedCompanion/Resources/Entitlements/..." silently
           # missed on runners whose $PWD differed from expectations.
           ENT_DIR="${GITHUB_WORKSPACE:-$PWD}/SmartSpeedCompanion/Resources/Entitlements"
-          HOST_ENT="${ENT_DIR}/SmartSpeedCompanion.entitlements"
+          # Signing source-of-truth is /tmp/entitlements.plist -- the profile's
+          # :Entitlements dict, extracted earlier in the workflow via
+          #   PlistBuddy -x -c "Print :Entitlements" /tmp/profile.unwrapped.plist > /tmp/entitlements.plist
+          # That file is guaranteed to contain the App ID + keychain-access-groups
+          # + team-identifier entries Apple expects, regardless of any state of the
+          # .entitlements files under Resources/Entitlements/ in the working tree.
+          # We hit a case on commit 7782c7d where Resources/Entitlements/*.entitlements
+          # showed up as a 181-byte <dict/> plist at runtime even though git ls-tree HEAD
+          # said those blobs had real content; signing with the empty dict propagated
+          # up to the binary's entitlements blob and altool rejected with 90166.
+          HOST_ENT="/tmp/entitlements.plist"
           echo
           echo "[DBG-PROF] Profile :Entitlements dict (extracted from profile):"
           if [ -f /tmp/entitlements.plist ]; then
@@ -289,12 +299,19 @@ jobs:
           echo "[DBG-ENTDIR] Entitlements directory: $ENT_DIR"
           ls -la "$ENT_DIR"
           echo
-          echo "[DBG-ENTFILES] On-disk entitlements source-of-truth (full content):"
+          echo "[DBG-ENTFILES] On-disk entitlements source-of-truth (full content, reference only -- NOT used for signing anymore):"
           for f in "$ENT_DIR"/*.entitlements; do
             echo "  ----- $f -----"
             cat "$f"
             echo
           done
+          echo
+          echo "[DBG-API-ENT] /tmp/entitlements.plist content (ACTUAL signing source-of-truth):"
+          if [ -f /tmp/entitlements.plist ]; then
+            cat /tmp/entitlements.plist
+          else
+            echo "  /tmp/entitlements.plist missing -- profile extraction failed upstream and signing will use empty entitlements (regression risk)"
+          fi
           echo
           echo "[DBG-IDENT] Codesign identities in keychain:"
           security find-identity -v -p codesigning "$RUNNER_TEMP/app-signing.keychain-db" 2>&1 | head -20 || true
@@ -378,7 +395,14 @@ jobs:
             [ -d "$APPEX" ] || continue
             cp /tmp/profile.mobileprovision "$APPEX/embedded.mobileprovision"
             ENT_NAME="$(basename "$APPEX" .appex)"
-            ENT_FILE="${ENT_DIR}/${ENT_NAME}.entitlements"
+            # Inner extensions sign with the same /tmp/entitlements.plist source
+            # as the host so the codesign blob is non-empty even when on-disk
+            # Resources/Entitlements/${ENT_NAME}.entitlements is unexpectedly empty.
+            # The widget doesn't have its own provisioning profile in this pipeline,
+            # so embedding host-profile-derived entitlements is the most concrete
+            # non-empty payload we can give codesign. Apple's validator still has
+            # application-identifier granularity, which we surface in DBG-WIDGET-PROF.
+            ENT_FILE="/tmp/entitlements.plist"
             echo
             echo "[DBG-SIGN] APPEX=$APPEX"
             echo "[DBG-SIGN]   identity:    Apple Distribution"
@@ -455,7 +479,14 @@ jobs:
           echo "=== Repackaging via ditto (Apple-approved for signed IPAs) ==="
           TMP_IPA="$PWD/IPAWork/Speedio-repacked.ipa"
           rm -f "$TMP_IPA"
-          ditto -c -k --keepParent --sequesterRsrcAndKeepParent Payload "$TMP_IPA"
+          # `--sequesterRsrcAndKeepParent` is NOT a recognized ditto flag on the
+          # macOS 26 runner we use -- a prior iteration of this script shipped with
+          # that flag and the entire repack step exited non-zero before altool ran.
+          # The valid flags are `--sequesterRsrc` (store resource forks as AppleDouble)
+          # and `--keepParent` (preserve parent directory in archive layout). Both
+          # together keep `Payload/` at top level with metadata preserved; the archive
+          # Apple wants for App Store Connect uploads.
+          ditto -c -k --keepParent Payload "$TMP_IPA"
           RC=$?
           echo "[DBG-DITTO] rc=$RC"
           if [ "$RC" -ne 0 ]; then
