@@ -98,14 +98,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // MARK: - Native MapKit Features (see Apple Maps Server API notes in code comments)
 
     /// Coordinate of the upcoming maneuver (last point of the current route step).
-    /// Used by the map to drop a maneuver annotation and to fetch a Look Around scene.
+    /// Consumed by `LiveMapView` to drop a maneuver annotation while navigating.
+    /// (Look Around fetching was removed in TestFlight 2.2.0 / FB10.)
     @Published public var nextManeuverCoordinate: CLLocationCoordinate2D? = nil
-
-    /// Cached Look Around scene for the upcoming maneuver (nil when coverage missing).
-    @Published public var upcomingLookAroundScene: MKLookAroundScene? = nil
-
-    /// Cached Look Around scene for the final destination.
-    @Published public var destinationLookAroundScene: MKLookAroundScene? = nil
 
     /// Last few MKMapItems returned by a "nearby amenities" category search.
     @Published public var nearbyAmenities: [MKMapItem] = []
@@ -124,12 +119,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     public var showApplePOIs: Bool {
         get { UserDefaults.standard.object(forKey: "showApplePOIs") as? Bool ?? false }
         set { UserDefaults.standard.set(newValue, forKey: "showApplePOIs") }
-    }
-
-    /// Master toggle for Look Around preview chips near turns / destination.
-    public var lookAroundPreviewEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "lookAroundPreviewEnabled") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "lookAroundPreviewEnabled") }
     }
 
     /// When true, the route polyline is drawn with a gradient (iOS 17+) tinted by
@@ -183,19 +172,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private var stepStageFlags: [Int: Set<String>] = [:]
     private var lastDistanceToTurn: CLLocationDistance? = nil
     private var hasAnnouncedArrival: Bool = false
-    /// Last coordinate for which we fired the Look Around fetch — guards against
-    /// hammering Apple's servers every GPS ping when the maneuver hasn't moved.
-    private var lastLookAroundRequestedAt: CLLocationCoordinate2D? = nil
     /// Monotonic search id for `searchNearby(category:)`. When the user
     /// taps Gas then Coffee rapidly, only the last response updates the
     /// card so the label always matches the visible results.
-    private var nearbySearchGeneration: UInt64 = 0
-    /// In-flight destination Look Around fetch (started on navigation
-    /// begin). We cancel it on `endNavigation` so the scene published
-    /// after the user already left the route never appears in the HUD.
-    private var destinationLookAroundTask: Task<Void, Never>? = nil
-    
-    public init(modelContext: ModelContext? = nil) {
+    private var nearbySearchGeneration: UInt64 = 0    public init(modelContext: ModelContext? = nil) {
         // Core Logic components are owned by the ViewModel
         let locManager = LocationManager()
         let spdEngine = SpeedEngine(locationManager: locManager)
@@ -447,9 +427,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 // Wipe speed limit cache to save memory once drive is over
                 await ArizonaSpeedLimitService.shared.clearCache()
             }
-            // Free Look-Around + amenity transient state between drives so
-            // the next navigation starts with an empty LRU and no stale
-            // upcoming-turn coordinates pinned in memory.
+            // Free amenity + maneuver-coordinate transient state between
+            // drives so the next navigation starts clean.
+            // (Look-Around scratch state was removed in TestFlight 2.2.0 / FB10.)
             clearNativeMapCache()
         }
     }
@@ -535,14 +515,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
         // Cache speed limits for the route points to ensure we stay offline-capable during the drive
         await cacheRouteSegments(route)
-
-        // Pre-warm the destination Look Around scene in the background while the
-        // user is still approaching the start of the route. The graphic card
-        // will be ready to display by the time the user arrives.
-        destinationLookAroundTask?.cancel()
-        destinationLookAroundTask = Task { [weak self] in
-            await self?.loadLookAroundForDestination()
-        }
 
         // Inform the CarPlay/UI layer that navigation is moving
         if let dest = self.destination {
@@ -631,13 +603,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         rerouteTimer?.invalidate()
         rerouteTimer = nil
         self.stepStageFlags.removeAll()
-        // Drop maneuver + Look Around scratch state so the next navigation starts clean.
+        // Drop maneuver scratch state so the next navigation starts clean.
+        // (Look Around scratch state removed in TestFlight 2.2.0 / FB10.)
         self.nextManeuverCoordinate = nil
-        self.upcomingLookAroundScene = nil
-        self.destinationLookAroundScene = nil
-        self.lastLookAroundRequestedAt = nil
-        destinationLookAroundTask?.cancel()
-        destinationLookAroundTask = nil
         await navigationDelegate?.endNavigationTrigger()
         
         // Requirement 4: If we end directions, we end the session (recording).
@@ -779,26 +747,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 let distanceToTurn = location.distance(from: maneuverLocation)
                 self.distanceToNextTurn = distanceToTurn
 
-            // Surface the maneuver coordinate so the map can drop an annotation
-            // and Look-Around-At-Turn can be fetched on demand. CLLocationCoordinate2D
-            // is `Sendable`, so we publish it directly.
+            // Surface the maneuver coordinate so LiveMapView can drop a
+            // maneuver annotation on the route. CLLocationCoordinate2D is
+            // `Sendable`, so we publish it directly. (Look Around fetches
+            // were removed in TestFlight 2.2.0 / FB10.)
             let maneuverCoord = stepPolyline.points()[pointCount - 1].coordinate
             self.nextManeuverCoordinate = maneuverCoord
-
-            // Debounce Look Around fetches: only re-request when the upcoming
-            // maneuver has moved at least ~75 m. Without this guard we'd hit
-            // Apple's scene server on every GPS ping.
-            if let prev = lastLookAroundRequestedAt {
-                let dist = CLLocation(latitude: prev.latitude, longitude: prev.longitude)
-                    .distance(from: CLLocation(latitude: maneuverCoord.latitude, longitude: maneuverCoord.longitude))
-                if dist >= 75 {
-                    lastLookAroundRequestedAt = maneuverCoord
-                    Task { await self.loadLookAroundForUpcomingTurn() }
-                }
-            } else {
-                lastLookAroundRequestedAt = maneuverCoord
-                Task { await self.loadLookAroundForUpcomingTurn() }
-            }
 
             // Determine the actual active instruction (skip generic labels)
             var activeInstruction = currentStep.instructions
@@ -1038,27 +992,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }    // MARK: - Native MapKit Feature Helpers
 
-    /// Asks the LookAroundCoordinator for a panoramic scene at the upcoming
-    /// maneuver and publishes the result on the main thread.
-    /// Silently no-ops if the user has disabled Look Around previews in Settings.
-    public func loadLookAroundForUpcomingTurn() async {
-        guard lookAroundPreviewEnabled, isNavigating else { return }
-        guard #available(iOS 16.0, *), let coord = nextManeuverCoordinate else { return }
-        let scene = await LookAroundCoordinator.shared.requestScene(at: coord)
-        guard !Task.isCancelled else { return }
-        self.upcomingLookAroundScene = scene
-    }
-
-    /// Asks the LookAroundCoordinator for a panoramic scene at the destination
-    /// placemark and publishes the result.
-    public func loadLookAroundForDestination() async {
-        guard lookAroundPreviewEnabled, isNavigating else { return }
-        guard #available(iOS 16.0, *) else { return }
-        guard let coord = destination?.placemark.coordinate else { return }
-        let scene = await LookAroundCoordinator.shared.requestScene(at: coord)
-        guard !Task.isCancelled else { return }
-        self.destinationLookAroundScene = scene
-    }
+    // TestFlight 2.2.0 (FB10): Look Around removed.
+    //   - `loadLookAroundForUpcomingTurn()` and `loadLookAroundForDestination()`
+    //     deleted — both called `LookAroundCoordinator.shared.requestScene(at:)`
+    //     which talks to Apple's MKLookAroundSceneRequest per maneuver.
+    //   - `LookAroundCoordinator.shared` is no longer referenced from this
+    //     file; the coordinator itself has been deleted from the project.
 
     /// Free-text + category "nearby" search. The native MKLocalSearch API is
     /// fully on-device (this is `/v1/search`'s free equivalent in Apple Maps
@@ -1133,15 +1072,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
 
-    /// Resets Look-Around + amenity transient state for a fresh drive.
+    /// Resets maneuver coordinate + amenity transient state for a fresh drive.
+    /// (Look Around scratch state was removed in TestFlight 2.2.0 / FB10.)
     public func clearNativeMapCache() {
-        LookAroundCoordinator.shared.clear()
         self.nearbyAmenities = []
         self.nearbyAmenitiesQuery = ""
-        self.upcomingLookAroundScene = nil
-        self.destinationLookAroundScene = nil
         self.nextManeuverCoordinate = nil
-        self.lastLookAroundRequestedAt = nil
     }
 
     /// Triggers speech synthesis for a given string.

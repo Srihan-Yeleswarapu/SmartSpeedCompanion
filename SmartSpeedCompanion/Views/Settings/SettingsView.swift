@@ -11,7 +11,6 @@ public struct SettingsView: View {
     // Native MapKit feature toggles (see DriveViewModel.MapStyleChoice).
     @AppStorage("mapStyle") private var mapStyle: String = "mutedDark"
     @AppStorage("showApplePOIs") private var showApplePOIs: Bool = false
-    @AppStorage("lookAroundPreviewEnabled") private var lookAroundPreviewEnabled: Bool = true
     @AppStorage("gradientRouteEnabled") private var gradientRouteEnabled: Bool = true
     @AppStorage("threeDFlyoverEnabled") private var threeDFlyoverEnabled: Bool = false
     
@@ -130,8 +129,8 @@ public struct SettingsView: View {
                     Toggle("Show Apple POIs (gas / food / parking)", isOn: $showApplePOIs)
                         .tint(DesignSystem.neonGreen)
 
-                    Toggle("Look Around previews", isOn: $lookAroundPreviewEnabled)
-                        .tint(DesignSystem.neonGreen)
+                    // TestFlight 2.2.0 (FB10): "Look Around previews"
+                    // toggle removed per user request.
 
                     Toggle("Gradient route line", isOn: $gradientRouteEnabled)
                         .tint(DesignSystem.neonGreen)

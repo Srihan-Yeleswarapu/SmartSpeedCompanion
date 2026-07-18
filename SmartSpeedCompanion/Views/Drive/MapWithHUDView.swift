@@ -26,20 +26,6 @@ public struct MapWithHUDView: View {
                 LiveMapView()
                     .ignoresSafeArea(.all)
 
-                // Look Around preview card pinned above the speed HUD when a
-                // scene becomes available for the current destination.
-                if driveViewModel.isNavigating,
-                   driveViewModel.lookAroundPreviewEnabled,
-                   #available(iOS 16.0, *),
-                   let scene = driveViewModel.destinationLookAroundScene ?? driveViewModel.upcomingLookAroundScene {
-                    LookAroundPreviewCard(scene: scene)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, geo.safeAreaInsets.bottom + 96)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-
                 // Overlay content
                 VStack(spacing: 0) {
                     // Offline banner (TestFlight 2.1.4 feedback:
@@ -619,64 +605,15 @@ fileprivate struct RouteSelectionCard: View {
     }
 }
 
-// MARK: - Look Around Preview Card
-//
-// SwiftUI's LookAroundPreview is the native MapKit view that consumes an
-// MKLookAroundScene and shows a draggable 360° street-level preview. We surface
-// it here so the user sees their destination before they pull into the
-// parking lot — same affordance Apple Maps gives on the destination detail card.
-//
-// Falls back to gracefully hiding when the user's POI has no Look Around
-// coverage (Apple returns nil for suburban / no-data zones).
-@available(iOS 16.0, *)
-fileprivate struct LookAroundPreviewCard: View {
-    let scene: MKLookAroundScene
-    @State private var isCollapsed: Bool = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "binoculars.fill")
-                    .foregroundColor(DesignSystem.cyan)
-                Text("LOOK AROUND")
-                    .font(.system(size: 11, weight: .black))
-                    .foregroundColor(DesignSystem.cyan)
-                Spacer()
-                Button(action: { isCollapsed.toggle() }) {
-                    Image(systemName: isCollapsed ? "chevron.up" : "chevron.down")
-                        .foregroundColor(.white.opacity(0.7))
-                        .padding(6)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-
-            if !isCollapsed {
-                LookAroundPreview(initialScene: scene)
-                    .frame(height: 140)
-                    .cornerRadius(14)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
-            }
-        }
-        .background(DesignSystem.bgPanel)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(DesignSystem.cyan.opacity(0.35), lineWidth: 1)
-        )
-        .shadow(color: DesignSystem.cyan.opacity(0.25), radius: 14, y: 4)
-    }
-}
-
 // MARK: - Navigation Shortcuts Row
 //
-// Three pill buttons shown under the navigation card while a destination is
+// Two pill buttons shown under the navigation card while a destination is
 // active:
-//   - "Look Around" — pushes the LookAroundPreview overlay card above the HUD
 //   - "Apple Maps"   — MKMapItem.openInMaps(launchOptions:) hands the trip off
 //                      to Apple Maps with full traffic + Look Around the
-//                      moment the user wants it.
+//                      moment the user wants it (Apple provides this surface
+//                      inside Apple Maps; no in-app Look Around, per
+//                      TestFlight 2.2.0 FB10).
 //   - "Gas / Food"  — MKLocalSearch category query (gas / cafe / parking / etc.)
 //                      with results rendered in NearbyAmenitiesCard below.
 fileprivate struct NavigationShortcutsRow: View {
@@ -686,20 +623,10 @@ fileprivate struct NavigationShortcutsRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                if #available(iOS 16.0, *), driveViewModel.upcomingLookAroundScene != nil || driveViewModel.destinationLookAroundScene != nil {
-                    Button(action: {
-                        Task { await driveViewModel.loadLookAroundForDestination() }
-                    }) {
-                        Label("Refresh Look Around", systemImage: "binoculars")
-                            .labelStyle(.titleAndIcon)
-                            .font(.system(size: 13, weight: .bold))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .foregroundColor(.white)
-                            .background(DesignSystem.cyan.opacity(0.25))
-                            .cornerRadius(18)
-                    }
-                }
+                // TestFlight 2.2.0 (FB10): "Refresh Look Around" button
+                // removed per user request. Apple Maps surface via
+                // `Open in Apple Maps` below covers the destination-preview
+                // use case instead.
                 Button(action: {
                     driveViewModel.openInAppleMaps(destination)
                 }) {
