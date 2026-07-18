@@ -63,9 +63,23 @@ public struct MapWithHUDView: View {
                                 .padding(.horizontal, 16)
                         }
                     } else {
-                        SearchBarView()
-                            .padding(.top, geo.safeAreaInsets.top + 12)
-                            .padding(.horizontal, 16)
+                        // Top row (TestFlight 2.2.x chrome redesign).
+                        //   • SearchBarView — thinner (inner HStack frame is
+                        //     40pt, down from 56pt; magnifier is 16pt;
+                        //     TextField is 15pt; inner padding is 14pt).
+                        //   • MapPitchToggleButton — SwiftUI 2D/3D pill,
+                        //     sits immediately to the right of the search
+                        //     bar. The native MKMapView pitch toggle is
+                        //     HIDDEN in LiveMapView so this pill owns the
+                        //     toggle position. They share the HStack so they
+                        //     appear as one squeezed search row with the
+                        //     map fully visible underneath.
+                        HStack(spacing: 8) {
+                            SearchBarView()
+                            MapPitchToggleButton(isLandscape: isLandscape)
+                        }
+                        .padding(.top, geo.safeAreaInsets.top + 8)
+                        .padding(.horizontal, 12)
                     }
 
                     // NOTE: SpeedCameraAlertBanner removed — camera API is disabled.
@@ -108,8 +122,17 @@ public struct MapWithHUDView: View {
                     }
 
                     if !driveViewModel.isSelectingRoute && !driveViewModel.isSearchingLocally {
-                        SpeedHUDPill(isLandscape: isLandscape)
-                            .padding(.bottom, geo.safeAreaInsets.bottom + 16)
+                        // Bottom chrome redesign — NO panel background.
+                        // The SpeedReadout (leading), START/STOP pill
+                        // (center), and LimitSignView (trailing) are three
+                        // independent floating widgets that just sit over
+                        // the map; the road-name chip floats centered
+                        // above them. All padding is handled internally by
+                        // `BottomTransparentHUD` so the parent only sets
+                        // safe-area + horizontal breathing room.
+                        BottomTransparentHUD(isLandscape: isLandscape)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, geo.safeAreaInsets.bottom + 12)
                     }
                 }
             }
@@ -208,11 +231,11 @@ fileprivate struct SearchBarView: View {
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(DesignSystem.cyan)
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                 
                 TextField("Where to?", text: $searchText)
                     .foregroundColor(.white)
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .focused($isFocused)
                     .submitLabel(.search)
                     .onSubmit {
@@ -235,8 +258,8 @@ fileprivate struct SearchBarView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .frame(height: 56)
+            .padding(.horizontal, 14)
+            .frame(height: 40)
             .glassStyle()
             
             if isFocused && !driveViewModel.recentSearches.isEmpty {
@@ -367,22 +390,37 @@ fileprivate struct SearchBarView: View {
     }
 }
 
-fileprivate struct SpeedHUDPill: View {
+// MARK: - BottomTransparentHUD
+//
+// Replaces the legacy `SpeedHUDPill` (which forced all chrome into a
+// single glass-frosted panel). User wanted three independent floating
+// widgets so the map is fully visible underneath, so we DROP the
+// `.glassStyle()` and let the HStack naturally space its children:
+//   • [leading] SpeedReadout — huge speed number with status color, plus
+//     the unit label and an optional REC indicator above.
+//   • [center]  START/STOP pill — cyan capsule, red while recording.
+//   • [trailing] LimitSignView — white-faced circle with red ring + the
+//     small source-chip caption beneath.
+//
+// The road-name chip floats centered above the HStack, also no
+// background. Each widget is a separate fileprivate struct so the layout
+// can be tweaked individually in future iterations without churning the
+// whole bottom chrome.
+//
+// `alignment: .bottom` makes the giant speed number "sit" on the same
+// baseline as the smaller START button + smaller limit sign so the eye
+// reads them as a single horizontal row even with NO panel backdrop
+// holding them together.
+fileprivate struct BottomTransparentHUD: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     let isLandscape: Bool
-    
+
     var body: some View {
-        VStack(spacing: 4) {
-            // Current road name chip — surfaced from
-            // `DriveViewModel.currentRoadName` which is populated by a
-            // ~10-sec-throttled reverse-geocode over `RoadGeocoder.shared`.
-            // The underlying geocoder already carries a 50 m grid-cell
-            // cache so re-resolution is effectively free when the user stays
-            // on the same road. The chip is intentionally HIDDEN when the
-            // road name is nil (first 1-2 GPS ticks before the geocode
-            // resolves, or after `clearNativeMapCache` runs at end-session),
-            // so the pill doesn't show an empty slot above the HUD on
-            // cold-start.
+        VStack(spacing: 8) {
+            // Road name chip — floats centered, no background. Hidden
+            // when nil (first 1-2 GPS ticks before the geocode resolves,
+            // or after `clearNativeMapCache` runs at end-session, or on
+            // a parking lot where geocode returns no thoroughfare).
             if let roadName = driveViewModel.currentRoadName, !roadName.isEmpty {
                 Text(roadName.uppercased())
                     .font(.system(size: isLandscape ? 9 : 10, weight: .black, design: .monospaced))
@@ -392,78 +430,128 @@ fileprivate struct SpeedHUDPill: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.bottom, 2)
             }
-            HStack(alignment: .center, spacing: isLandscape ? 16 : 24) {
-            
-            // Limit Sign
-            LimitSignView(limit: driveViewModel.limit, source: driveViewModel.speedLimitSource, isLandscape: isLandscape)
-            
-            // Speed Number
-            VStack(alignment: .leading, spacing: 0) {
-                if driveViewModel.isRecording {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(DesignSystem.alertRed)
-                            .frame(width: 6, height: 6)
-                        Text("REC \(formatDuration(driveViewModel.sessionDuration))")
-                            .font(.system(size: isLandscape ? 10 : 12, weight: .black))
-                            .foregroundColor(DesignSystem.alertRed)
+
+            HStack(alignment: .bottom, spacing: 0) {
+                SpeedReadout(isLandscape: isLandscape)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(action: {
+                    if driveViewModel.isRecording {
+                        driveViewModel.endSession()
+                    } else {
+                        driveViewModel.startSession()
                     }
-                    .padding(.bottom, 2)
-                }
-                
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("\(Int(driveViewModel.speed))")
-                        .font(.system(size: isLandscape ? 44 : 56, weight: .black, design: .rounded))
-                        .foregroundColor(DesignSystem.colorForStatus(driveViewModel.status))
-                        .contentTransition(.numericText())
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .minimumScaleFactor(0.9)
-                    
-                    // Tracer-bar unit label honors Settings → UNITS so the
-                    // SpeedHUDPill text under the safe/warning/over-limit
-                    // speed number matches the LIMIT sign to its left.
-                    Text(SpeedFormatting.unitLabelShort(
-                            measurementSystem: SpeedFormatting.measurementSystem()))
+                }) {
+                    Text(driveViewModel.isRecording ? "STOP" : "START")
                         .font(.system(size: isLandscape ? 12 : 14, weight: .black))
-                        .foregroundColor(.white.opacity(0.4))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .foregroundColor(driveViewModel.isRecording ? .white : .black)
+                        .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
+                        .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
+                        .clipShape(Capsule())
+                        .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
                 }
-            }
-            .frame(minWidth: isLandscape ? 100 : 130, alignment: .leading) // Prevent squishing against limit sign or buttons
-            
-            Spacer(minLength: 0)
-            
-            // Start/Stop Button
-            Button(action: {
-                if driveViewModel.isRecording {
-                    driveViewModel.endSession()
-                } else {
-                    driveViewModel.startSession()
-                }
-            }) {
-                Text(driveViewModel.isRecording ? "STOP" : "START")
-                    .font(.system(size: isLandscape ? 12 : 14, weight: .black))
-                    .foregroundColor(driveViewModel.isRecording ? .white : .black)
-                    .frame(width: 80, height: 44)
-                    .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
-                    .cornerRadius(22)
-                    .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
+                .frame(maxWidth: .infinity, alignment: .center)
+                LimitSignView(limit: driveViewModel.limit, source: driveViewModel.speedLimitSource, isLandscape: isLandscape)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-        }
-        .padding(.horizontal, isLandscape ? 20 : 24)
-        .padding(.vertical, isLandscape ? 14 : 18)
-        .frame(minWidth: 320)
-        .glassStyle()
+        // NO .glassStyle() — each widget floats independently over the
+        // map. Safe-area bottom inset is applied by the parent.
     }
-    
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let h = Int(duration) / 3600
-        let m = (Int(duration) % 3600) / 60
-        let s = Int(duration) % 60
+}
+
+// MARK: - SpeedReadout
+//
+// Floating speed-number widget extracted from the legacy `SpeedHUDPill`.
+// Big rounded number in the live status color, plus the unit label
+// (mph / kmh) on the right of the baseline, plus an optional REC
+// indicator dot + timer on top so the user sees recording status at a
+// glance. Lives on the leading edge of the bottom chrome row.
+fileprivate struct SpeedReadout: View {
+    @EnvironmentObject var driveViewModel: DriveViewModel
+    let isLandscape: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if driveViewModel.isRecording {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(DesignSystem.alertRed)
+                        .frame(width: 6, height: 6)
+                    Text("REC \(recDuration)")
+                        .font(.system(size: isLandscape ? 10 : 12, weight: .black))
+                        .foregroundColor(DesignSystem.alertRed)
+                }
+                .padding(.bottom, 2)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("\(Int(driveViewModel.speed))")
+                    .font(.system(size: isLandscape ? 52 : 64, weight: .black, design: .rounded))
+                    .foregroundColor(DesignSystem.colorForStatus(driveViewModel.status))
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .minimumScaleFactor(0.85)
+
+                // Unit label honors Settings → UNITS so the speed
+                // readout matches the LIMIT sign to its right.
+                Text(SpeedFormatting.unitLabelShort(measurementSystem: SpeedFormatting.measurementSystem()))
+                    .font(.system(size: isLandscape ? 12 : 14, weight: .black))
+                    .foregroundColor(.white.opacity(0.4))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .frame(minWidth: isLandscape ? 110 : 132, alignment: .leading)
+    }
+
+    /// Same `%H:%M:%S` formatting the legacy `SpeedHUDPill.formatDuration`
+    /// used; lifted to a computed property because the speed readout is
+    /// now its own View (was nested in `SpeedHUDPill` before).
+    private var recDuration: String {
+        let d = driveViewModel.sessionDuration
+        let h = Int(d) / 3600
+        let m = (Int(d) % 3600) / 60
+        let s = Int(d) % 60
         return String(format: "%02d:%02d:%02d", h, m, s)
+    }
+}
+
+// MARK: - MapPitchToggleButton
+//
+// Tiny white pill rendered directly to the right of the search bar that
+// cycles the user's pin for the MKMapView camera pitch through:
+//   `.auto` → `.forced2D` → `.forced3D` → `.auto` → ...
+//
+// The white-on-black "AUTO / 2D / 3D" label stays readable against any
+// map style. The full 44×44 capsule is the tap area (44×38 in landscape
+// to fit the smaller search bar height).
+//
+// Sits next to the search bar because the native MKMapView pitch toggle
+// is hidden (see `LiveMapView.makeUIView`); without this pill, the
+// user would have no 2D / 3D switch at all.
+fileprivate struct MapPitchToggleButton: View {
+    @EnvironmentObject var driveViewModel: DriveViewModel
+    let isLandscape: Bool
+
+    var body: some View {
+        Button(action: cycle) {
+            Text(driveViewModel.mapPitchMode.shortLabel)
+                .font(.system(size: isLandscape ? 11 : 12, weight: .black, design: .rounded))
+                .foregroundColor(.black)
+                .frame(width: isLandscape ? 38 : 44, height: isLandscape ? 38 : 44)
+                .background(Color.white.opacity(0.95))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .shadow(color: .black.opacity(0.25), radius: 5, y: 2)
+        }
+        .accessibilityLabel("Camera pitch: \(driveViewModel.mapPitchMode.shortLabel). Tap to cycle 2D, 3D, auto.")
+    }
+
+    private func cycle() {
+        let all = DriveViewModel.MapPitchMode.allCases
+        let idx = all.firstIndex(of: driveViewModel.mapPitchMode) ?? 0
+        let next = all[(idx + 1) % all.count]
+        driveViewModel.mapPitchMode = next
+        DebugLogger.shared.log("MapPitch: \(next.rawValue)")
     }
 }
 

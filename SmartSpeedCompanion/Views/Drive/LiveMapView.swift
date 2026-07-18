@@ -39,13 +39,20 @@ public struct LiveMapView: UIViewRepresentable {
         map.isZoomEnabled = true
         map.isScrollEnabled = true
 
-        // Surface the system pitch toggle. MKPitchToggle does not exist
-        // in iOS MapKit (the SwiftUI analog is `MapPitchToggle(view:)`,
-        // not an MK-prefixed class), so the system-rendered button is the
-        // on-device native option — it theming-picks-up dark mode itself.
-        if #available(iOS 16.0, *) {
-            map.pitchButtonVisibility = .visible
-        }
+        // MapKit's native pitch toggle is intentionally HIDDEN — we
+        // surface our own SwiftUI 2D/3D pill in
+        // `MapWithHUDView.MapPitchToggleButton` so it sits squeezed next
+        // to the search bar in the top row (the user wants the chrome
+        // to read "[thin search bar][2D/3D pill]" with the toggle
+        // directly adjacent to the search input). The native button
+        // auto-positions in the top-right corner regardless of layout —
+        // hiding it gives us full control of placement. The native
+        // pinch gesture still works for free perspective pitch when
+        // the user's mode is `.auto`. MKPitchToggle is still not a
+        // MapKit class (the SwiftUI analog is `MapPitchToggle(view:)`),
+        // but we no longer need it since our SwiftUI pill owns the
+        // toggle surface.
+        map.pitchButtonVisibility = .hidden
 
         // MKUserTrackingButton is added as an explicit subview in
         // setupNativeControls(for:) — we deliberately do NOT also set
@@ -213,6 +220,34 @@ public struct LiveMapView: UIViewRepresentable {
         }
         #endif
         
+        // PITCH OVERRIDE — short-circuit for user-pinned 2D/3D.
+        //
+        // Runs BEFORE auto-altitude so a freshly-tapped `.forced3D` flips
+        // the camera immediately even while the driver is stationary
+        // (the auto-altitude's "speed < 3.0" guard would otherwise suppress
+        // the first frame when the user pins 3D at a stop light). Only
+        // fires when the mode actually changed; equality check is what
+        // made the pill's repeat-tap no-op the previous implementation.
+        let userPitchMode = viewModel.mapPitchMode
+        if userPitchMode != .auto, userPitchMode != context.coordinator.lastAppliedPitchMode {
+            let target = userPitchMode.targetPitch
+            if Double(uiView.camera.pitch) != target {
+                let cam = uiView.camera.copy() as! MKMapCamera
+                cam.pitch = CGFloat(target)
+                uiView.setCamera(cam, animated: true)
+            }
+            context.coordinator.lastAppliedPitchMode = userPitchMode
+            // Bump past the alt-cooldown for the next updateSmartAltitude
+            // tick so it doesn't immediately undo our pin via its own
+            // setCamera call.
+            context.coordinator.lastCameraChangeTime = Date()
+        } else if userPitchMode == .auto {
+            // Releasing back to auto: clear the latch so a future pin to
+            // the same mode re-applies (otherwise tapping
+            // 3D → auto → 3D would no-op the third tap).
+            context.coordinator.lastAppliedPitchMode = .auto
+        }
+
         // Adjust camera altitude (pitch + zoom) without breaking tracking mode
         updateSmartAltitude(uiView, context: context)
         
@@ -351,10 +386,22 @@ public struct LiveMapView: UIViewRepresentable {
         let isCriticalZoom = (distanceToTurn < 120 && isNavigating && targetAltitude < 400)
         let cooldown = isCriticalZoom ? 1.0 : context.coordinator.cameraChangeCooldown
         
+        // USER PIN OVERRIDE: when the user has explicitly pinned a 2D or
+        // 3D mode, the auto-altitude's computed pitch LOSES to the pin —
+        // otherwise a turn-approach zoom would kick the camera back to a
+        // non-pinned pitch even though the user just locked 2D. Both
+        // modes clamp the pitch; altitude still tracks speed/state
+        // independently so the user's view distance is preserved.
+        if viewModel.mapPitchMode == .forced3D {
+            targetPitch = 45
+        } else if viewModel.mapPitchMode == .forced2D {
+            targetPitch = 0
+        }
+
         if (altDiff > 300 || pitchDiff > 12) && timeSinceLastChange >= cooldown {
-            DebugLogger.shared.log("CAM [\(zoomReason)]: \(Int(currentAltitude))m -> \(Int(targetAltitude))m | spd=\(Int(speed))")
+            DebugLogger.shared.log("CAM [\(zoomReason)]: \(Int(currentAltitude))m -> \(Int(targetAltitude))m | spd=\(Int(speed)) pinned=\(viewModel.mapPitchMode.rawValue)")
             context.coordinator.lastCameraChangeTime = Date()
-            
+
             let newCamera = uiView.camera.copy() as! MKMapCamera
             newCamera.centerCoordinateDistance = targetAltitude
             newCamera.pitch = CGFloat(targetPitch)
@@ -374,11 +421,17 @@ public struct LiveMapView: UIViewRepresentable {
         var lastCameraChangeTime: Date = .distantPast
         let cameraChangeCooldown: TimeInterval = 4.0
 
-        // Cache the last-applied map style / POI filter so we don't rebuild
-        // the MKMapConfiguration (and trigger a fresh camera animation) on
-        // every UIViewRepresentable invalidate.
+        // Cache the last-applied map style / POI filter / pitch mode so
+        // we don't rebuild the MKMapConfiguration (and trigger a fresh
+        // camera animation) on every UIViewRepresentable invalidate.
         var lastAppliedMapStyle: DriveViewModel.MapStyleChoice? = nil
         var lastAppliedShowPOIs: Bool? = nil
+        /// Tracks the last `DriveViewModel.MapPitchMode` we forwarded to
+        /// `MKMapView.setCamera`. Used by the pitch-override short-circuit
+        /// in `updateUIView` so a repeat-tap on the same mode (e.g. user
+        /// taps 3D → auto → 3D again) re-applies the camera change
+        /// rather than no-op'ing the equality check.
+        var lastAppliedPitchMode: DriveViewModel.MapPitchMode? = nil
         // Maneuver annotation we own — ref so we don't churn annotations on
         // every GPS ping.
         private var maneuverAnnotation: ManeuverAnnotation? = nil

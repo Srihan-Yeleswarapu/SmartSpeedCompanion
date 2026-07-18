@@ -158,6 +158,72 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         set { UserDefaults.standard.set(newValue, forKey: "threeDFlyoverEnabled") }
     }
 
+    // MARK: - Camera pitch override (NEW: TestFlight 2.2.x redesign)
+    //
+    // User-controlled 2D / 3D pitch override. Persisted to UserDefaults.
+    // When `.auto` (default) the existing `LiveMapView.updateSmartAltitude`
+    // dynamic logic decides pitch from speed/nav/recording state. When
+    // `.forced2D` / `.forced3D`, the override short-circuit in
+    // `LiveMapView.updateUIView` flips the camera pitch immediately, AND
+    // `updateSmartAltitude` clamps the auto-derived pitch so the user's
+    // pin survives even mid-route when the auto logic would otherwise
+    // zoom-in / pitch for a turn.
+    //
+    // SwiftUI Views observe the @Published raw value (string) for
+    // reactivity; the typed `mapPitchMode` computed view is the public
+    // API for callers that want the enum (button actions, MapKit glue).
+    @Published public var mapPitchModeRaw: String = UserDefaults.standard.string(forKey: "mapPitchMode") ?? MapPitchMode.auto.rawValue
+
+    /// User-facing computed view of `mapPitchModeRaw` with the typed enum.
+    /// Persistent across launches via the "mapPitchMode" UserDefaults key.
+    public var mapPitchMode: MapPitchMode {
+        get { MapPitchMode(rawValue: mapPitchModeRaw) ?? .auto }
+        set {
+            mapPitchModeRaw = newValue.rawValue
+            UserDefaults.standard.set(newValue.rawValue, forKey: "mapPitchMode")
+        }
+    }
+
+    /// User-controlled camera pitch override. Complements the existing
+    /// `threeDFlyoverEnabled` (which only fires on long highway stretches).
+    /// The pill toggle in `MapWithHUDView.MapPitchToggleButton` cycles
+    /// through these three modes.
+    public enum MapPitchMode: String, CaseIterable, Identifiable, Sendable {
+        /// Default. Lets `LiveMapView.updateSmartAltitude` decide — keeps
+        /// the existing "pitch 0 idle / 45 navigating / 30 recording"
+        /// behavior. Native MKMapView pinch-to-3D still works.
+        case auto
+        /// Pin to a flat top-down view (pitch 0°). Wins over auto-altitude.
+        case forced2D
+        /// Pin to a perspective view (pitch 45°). Wins over auto-altitude.
+        case forced3D
+
+        public var id: String { rawValue }
+
+        /// Target pitch in degrees. Returns -1 as a sentinel meaning
+        /// "auto-altitude decides" — callers MUST treat `targetPitch < 0`
+        /// as no-op so they don't accidentally clamp the camera to a
+        /// phantom -1° angle.
+        public var targetPitch: Double {
+            switch self {
+            case .auto:     return -1
+            case .forced2D: return 0
+            case .forced3D: return 45
+            }
+        }
+
+        /// Short label rendered inside the small inline pill toggle next
+        /// to the search bar. "AUTO" reads slightly longer than "2D"/"3D"
+        /// but fits the same 44×44 capsule without ellipsis.
+        public var shortLabel: String {
+            switch self {
+            case .auto:     return "AUTO"
+            case .forced2D: return "2D"
+            case .forced3D: return "3D"
+            }
+        }
+    }
+
     /// The four map styles the Settings screen offers, mapped to the native
     /// `MKMapConfiguration` family. Every choice below is on-device and free.
     public enum MapStyleChoice: String, CaseIterable, Identifiable, Sendable {
