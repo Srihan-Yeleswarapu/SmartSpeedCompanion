@@ -75,7 +75,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
 
         if status == .over && anyAlertEnabled {
             if timerCancellable == nil {
-                DebugLogger.shared.log("AlertEngine: OVER \u2192 start monitoring")
+                DebugLogger.shared.log("AlertEngine: OVER → start monitoring")
                 startMonitoring()
             }
         } else {
