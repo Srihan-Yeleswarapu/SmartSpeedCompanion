@@ -3,6 +3,13 @@ import SwiftUI
 public struct SettingsView: View {
     @AppStorage("userBuffer") var buffer: Double = 5
     @AppStorage("audioAlertsEnabled") var audioEnabled: Bool = true
+    // Haptic alert preferences live alongside audio so the two toggles stay
+    // visually coupled when the user opens Settings → ALERTS. The style is
+    // persisted as a HapticStyle raw string and translated to the enum
+    // (see HapticAlertManager.swift) at read time.
+    @AppStorage("hapticAlertsEnabled") var hapticEnabled: Bool = true
+    @AppStorage("hapticAlertStyle") private var hapticStyle: String = "strong"
+    @AppStorage("hapticCustomPattern") private var hapticCustomPatternData: Data = Data()
     @AppStorage("voiceNavEnabled") var voiceNavEnabled: Bool = true
     @AppStorage("avoidHighways") var avoidHighways: Bool = false
     @AppStorage("measurementSystem") var measurementSystem: String = "Imperial"
@@ -23,6 +30,7 @@ public struct SettingsView: View {
     // and basically like how to debug it to get cellular data to fetch
     // data." Toggled by the new NETWORK & DATA row below.
     @State private var showingNetworkHelp = false
+    @State private var showingHapticRecorder = false
 
     // NOTE: Previously this view hosted a deletion-flow (notice alert,
     // typed-DELETE confirm, optional reauth sheet, destructive spinner
@@ -65,6 +73,42 @@ public struct SettingsView: View {
                     
                     Toggle("Audio Alerts", isOn: $audioEnabled)
                         .tint(DesignSystem.neonGreen)
+
+                    // TestFlight v2.2.0 (b365) — srihan.yeleswarapu@gmail.com:
+                    // "Maybe right below audio alerts toggle, put haptic alerts
+                    // selection bar. U should be able to select what type of
+                    // vibration haptic you want when your speeding. You should
+                    // also be able to record your own haptic..."
+                    Toggle("Haptic Alerts", isOn: $hapticEnabled)
+                        .tint(DesignSystem.neonGreen)
+
+                    // Only show the haptic catalog when (a) the master toggle is
+                    // on AND (b) the device actually has a taptic engine.
+                    // iPads ship without Core Haptics hardware; on those the
+                    // Haptic Alerts toggle still appears so the user can
+                    // pre-stage their setting for a future iPhone, but the
+                    // catalog stays hidden.
+                    if hapticEnabled && HapticAlertManager.deviceSupportsHaptics {
+                        Picker("Haptic Style", selection: Binding<HapticStyle>(
+                            get: { HapticStyle(rawValue: hapticStyle) ?? .strong },
+                            set: { hapticStyle = $0.rawValue }
+                        )) {
+                            ForEach(HapticStyle.allCases, id: \.self) { style in
+                                Text(style.displayName).tag(style)
+                            }
+                        }
+                        .tint(DesignSystem.cyan)
+
+                        if HapticStyle(rawValue: hapticStyle) == .custom {
+                            Button(action: { showingHapticRecorder = true }) {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "hand.tap.fill")
+                                    Text("Record Custom Haptic…")
+                                }
+                                .foregroundColor(DesignSystem.cyan)
+                            }
+                        }
+                    }
                 }
                 .listRowBackground(DesignSystem.bgPanel)
                 
@@ -222,6 +266,11 @@ public struct SettingsView: View {
                 // from a button so they don't have to navigate manually.
                 .sheet(isPresented: $showingNetworkHelp) {
                     NetworkHelpSheet()
+                }
+                // Full-screen tap-to-record modal for the “Custom” haptic.
+                // Implemented in HapticRecordingView.swift.
+                .fullScreenCover(isPresented: $showingHapticRecorder) {
+                    HapticRecordingView()
                 }
                 // Cold-start App-Group mirror. The picker only fires
                 // `.onChange` when the user flips it; if the app ever

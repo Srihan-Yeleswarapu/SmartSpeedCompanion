@@ -28,6 +28,20 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         }
         return defaults.bool(forKey: audioAlertsKey)
     }
+
+    // Haptic toggle is independent of the audio toggle since
+    // TestFlight v2.2.0 b366. AlertEngine still gates *whether* to even
+    // start monitoring on either being on (`handleStatusChange`), but each
+    // half of `triggerAlert()` reads its own toggle so a user with
+    // audio-off + haptic-on still gets vibration alerts (and vice-versa).
+    private let hapticAlertsKey = "hapticAlertsEnabled"
+    private var isHapticAlertsEnabled: Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: hapticAlertsKey) == nil {
+            defaults.set(true, forKey: hapticAlertsKey)
+        }
+        return defaults.bool(forKey: hapticAlertsKey)
+    }
     
     // Cooldown
     private var lastBeepTime: Date = .distantPast
@@ -55,11 +69,13 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - Status Handling
     private func handleStatusChange(_ status: SpeedStatus) {
-        let alertsEnabled = isAudioAlertsEnabled
-        
-        if status == .over && alertsEnabled {
+        // Start monitoring if EITHER alert channel is enabled. Audio / haptic
+        // toggles are independent since v2.2.0 b366.
+        let anyAlertEnabled = isAudioAlertsEnabled || isHapticAlertsEnabled
+
+        if status == .over && anyAlertEnabled {
             if timerCancellable == nil {
-                DebugLogger.shared.log("AlertEngine: OVER → start monitoring")
+                DebugLogger.shared.log("AlertEngine: OVER \u2192 start monitoring")
                 startMonitoring()
             }
         } else {
@@ -73,22 +89,24 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     // MARK: - Monitoring
     private func startMonitoring() {
         consecutiveSeconds = 0
-        
+
         timerCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                
-                guard self.isAudioAlertsEnabled else {
+
+                // Stop monitoring if the user toggled BOTH audio and haptic
+                // off mid-drive. Either one alone keeps the timer running.
+                guard self.isAudioAlertsEnabled || self.isHapticAlertsEnabled else {
                     self.stopMonitoringState()
                     return
                 }
-                
+
                 self.consecutiveSeconds += 1
-                
+
                 if self.consecutiveSeconds >= 3 {
                     self.audioAlertActive = true
-                    
+
                     let now = Date()
                     if now.timeIntervalSince(self.lastBeepTime) >= 2.0 {
                         self.lastBeepTime = now
@@ -111,14 +129,18 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - ALERT
     private func triggerAlert() {
-    playTone()
-    
-    // Always guarantee at least one vibration
-    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
-    
-    // Then try advanced haptics
-    hapticSpeedingAlert()
-}
+        // Audio half: only fires when the audio toggle is on. Independent
+        // of the haptic toggle so users can silence the audio while keeping
+        // vibration alerts.
+        if isAudioAlertsEnabled {
+            playTone()
+        }
+        // Haptic half: HapticAlertManager owns its own master toggle + style
+        // picker + deviceSupportsHaptics guard, so we just delegate. Falls
+        // back to a system vibrate only when the user picked a non-Off style
+        // on a haptic-capable device whose engine somehow failed.
+        HapticAlertManager.shared.fireIfEnabled()
+    }
     
     // MARK: - Audio Session
     private func setupAudioSession() {
@@ -233,26 +255,16 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - HAPTIC PATTERNS
     
-    // SPEEDING: aggressive, spammy, impossible to ignore
-    private func hapticSpeedingAlert() {
-        guard let _ = hapticEngine else { return }
-        
-        var events: [CHHapticEvent] = []
-        
-        for i in stride(from: 0.0, to: 1.0, by: 0.08) {
-            let event = CHHapticEvent(
-                eventType: .hapticTransient,
-                parameters: [
-                    .init(parameterID: .hapticIntensity, value: 1.0),
-                    .init(parameterID: .hapticSharpness, value: 1.0)
-                ],
-                relativeTime: i
-            )
-            events.append(event)
-        }
-        
-        playHaptic(events)
-    }
+    // Note: The previous `hapticSpeedingAlert()` private method (an
+    // aggressive 12-events-per-second continuous barrage) was removed in
+    // TestFlight v2.2.0 b366. Speeding haptics are now delegated entirely
+    // to `HapticAlertManager.shared.fireIfEnabled()`, which honors the
+    // user's master toggle + style pick from Settings → ALERTS.
+    //
+    // The `hapticExplosion / hapticLeft / hapticRight` helpers below remain
+    // because they are called by CarPlayNavigationManager / SmartSpeedLive
+    // Activity / DriveViewModel voice prompts — those are NOT speed-alert
+    // haptic signals and live in a separate vocabulary.
     
     // Explosion / cloud feel
     public func hapticExplosion() {
