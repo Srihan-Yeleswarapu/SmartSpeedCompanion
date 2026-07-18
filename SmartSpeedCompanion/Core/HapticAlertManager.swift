@@ -212,7 +212,7 @@ public final class HapticAlertManager: ObservableObject {
             events = customEvents().map { tap in
                 CHHapticEvent(eventType: .hapticTransient,
                               parameters: [
-                                .init(parameterID: .hapticIntensity, value: tap.intensity),
+                                .init(parameterID: .hapticIntensity, value: Float(tap.intensity)),
                                 .init(parameterID: .hapticSharpness, value: Float(0.5))
                               ],
                               relativeTime: tap.timeOffset)
