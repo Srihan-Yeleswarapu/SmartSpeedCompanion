@@ -78,15 +78,36 @@ public final class HapticAlertManager: ObservableObject {
 
     public static let shared = HapticAlertManager()
 
-    // User preferences — mirrored to UserDefaults through @AppStorage so
-    // SwiftUI views binding to them update reactively.
-    @AppStorage("hapticAlertsEnabled") public var isEnabled: Bool = true
-    @AppStorage("hapticAlertStyle")    public var styleRaw: String = HapticStyle.strong.rawValue
+    // User preferences — read/written directly to UserDefaults. We
+    // intentionally do NOT use @AppStorage here because it conforms to
+    // DynamicProperty and is meant for SwiftUI Views, not for an
+    // @MainActor ObservableObject singleton like ourselves. Accessing a
+    // non-static @AppStorage property from inside a SwiftUI
+    // ViewBuilder's conditional expression has been observed to
+    // silently truncate the form rendering graph (no fatal crash — see
+    // TestFlight v2.2.0 b367 feedback where the entire haptic alerts
+    // block disappeared from Settings → ALERTS on a taptic-capable
+    // iPhone while the Audio Alerts toggle above it continued to
+    // render). UserDefaults is the SwiftUI-environment-safe primitive
+    // here; the @AppStorage mirror lives on `SettingsView` (which is
+    // the SwiftUI View-side reactive source of truth).
+    public var isEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "hapticAlertsEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "hapticAlertsEnabled") }
+    }
+
+    public var styleRaw: String {
+        get { UserDefaults.standard.string(forKey: "hapticAlertStyle") ?? HapticStyle.strong.rawValue }
+        set { UserDefaults.standard.set(newValue, forKey: "hapticAlertStyle") }
+    }
 
     // Custom pattern storage. We store `[HapticTapEvent]` JSON instead of a
     // serialized `CHHapticPattern` because Apple's archival format changes
     // occasionally; raw event times are resilient.
-    @AppStorage("hapticCustomPattern") public var customPatternData: Data = Data()
+    public var customPatternData: Data {
+        get { UserDefaults.standard.data(forKey: "hapticCustomPattern") ?? Data() }
+        set { UserDefaults.standard.set(newValue, forKey: "hapticCustomPattern") }
+    }
 
     /// Underlying engine — nil on simulator or any device without haptic
     /// hardware. We DO still construct the manager so the rest of the app
