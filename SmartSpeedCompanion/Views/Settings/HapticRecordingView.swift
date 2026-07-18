@@ -162,9 +162,13 @@ public struct HapticRecordingView: View {
         // Timer fires on the main RunLoop (Timer.scheduledTimer → current
         // thread's RunLoop), and `tick()` is a `@MainActor`-isolated method
         // we can call directly — no `Task { @MainActor in … }` indirection
-        // needed. `[weak self]` avoids retaining the view past dismiss.
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.tick()
+        // needed.
+        // NOTE: SwiftUI views are value-type structs in Swift, so
+        // `[weak self]` would be a compile error (`'weak' may only be
+        // applied to class…`). The view stays alive while on-screen and
+        // `.onDisappear` invalidates the timer; just call `tick()` here.
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            tick()
         }
     }
 

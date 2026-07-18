@@ -175,8 +175,8 @@ public final class HapticAlertManager: ObservableObject {
             events = [
                 CHHapticEvent(eventType: .hapticTransient,
                               parameters: [
-                                .init(parameterID: .hapticIntensity, value: 0.5),
-                                .init(parameterID: .hapticSharpness, value: 0.4)
+                                .init(parameterID: .hapticIntensity, value: Float(0.5)),
+                                .init(parameterID: .hapticSharpness, value: Float(0.4))
                               ],
                               relativeTime: 0)
             ]
@@ -184,8 +184,8 @@ public final class HapticAlertManager: ObservableObject {
             events = [
                 CHHapticEvent(eventType: .hapticTransient,
                               parameters: [
-                                .init(parameterID: .hapticIntensity, value: 1.0),
-                                .init(parameterID: .hapticSharpness, value: 1.0)
+                                .init(parameterID: .hapticIntensity, value: Float(1.0)),
+                                .init(parameterID: .hapticSharpness, value: Float(1.0))
                               ],
                               relativeTime: 0)
             ]
@@ -193,8 +193,8 @@ public final class HapticAlertManager: ObservableObject {
             events = stride(from: 0.0, through: 0.26, by: 0.13).map { t in
                 CHHapticEvent(eventType: .hapticTransient,
                               parameters: [
-                                .init(parameterID: .hapticIntensity, value: 0.9),
-                                .init(parameterID: .hapticSharpness, value: 0.7)
+                                .init(parameterID: .hapticIntensity, value: Float(0.9)),
+                                .init(parameterID: .hapticSharpness, value: Float(0.7))
                               ],
                               relativeTime: t)
             }
@@ -202,8 +202,8 @@ public final class HapticAlertManager: ObservableObject {
             events = [
                 CHHapticEvent(eventType: .hapticContinuous,
                               parameters: [
-                                .init(parameterID: .hapticIntensity, value: 0.9),
-                                .init(parameterID: .hapticSharpness, value: 0.3)
+                                .init(parameterID: .hapticIntensity, value: Float(0.9)),
+                                .init(parameterID: .hapticSharpness, value: Float(0.3))
                               ],
                               relativeTime: 0,
                               duration: 0.5)
@@ -213,7 +213,7 @@ public final class HapticAlertManager: ObservableObject {
                 CHHapticEvent(eventType: .hapticTransient,
                               parameters: [
                                 .init(parameterID: .hapticIntensity, value: tap.intensity),
-                                .init(parameterID: .hapticSharpness, value: 0.5)
+                                .init(parameterID: .hapticSharpness, value: Float(0.5))
                               ],
                               relativeTime: tap.timeOffset)
             }
@@ -259,7 +259,7 @@ public final class HapticAlertManager: ObservableObject {
             CHHapticEvent(eventType: .hapticTransient,
                           parameters: [
                             .init(parameterID: .hapticIntensity, value: tap.intensity),
-                            .init(parameterID: .hapticSharpness, value: 0.5)
+                            .init(parameterID: .hapticSharpness, value: Float(0.5))
                           ],
                           relativeTime: tap.timeOffset)
         }

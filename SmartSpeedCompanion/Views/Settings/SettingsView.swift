@@ -88,7 +88,7 @@ public struct SettingsView: View {
                     // Haptic Alerts toggle still appears so the user can
                     // pre-stage their setting for a future iPhone, but the
                     // catalog stays hidden.
-                    if hapticEnabled && HapticAlertManager.deviceSupportsHaptics {
+                    if hapticEnabled && HapticAlertManager.shared.deviceSupportsHaptics {
                         Picker("Haptic Style", selection: Binding<HapticStyle>(
                             get: { HapticStyle(rawValue: hapticStyle) ?? .strong },
                             set: { hapticStyle = $0.rawValue }
