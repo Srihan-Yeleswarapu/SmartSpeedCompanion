@@ -106,6 +106,58 @@ public final class HapticAlertManager: ObservableObject {
         set { styleRaw = newValue.rawValue }
     }
 
+    // MARK: - Settings-preview path (picker auditions)
+
+    /// Throttle state for the Settings Picker preview path so a wheel-style
+    /// picker can't queue dozens of preview patterns per second. 400 ms is
+    /// enough room for the longest built-in pattern (`.warning` is a 0.5 s
+    /// continuous event) to play out before the next preview starts;
+    /// shorter intervals would cut off mid-play.
+    private var lastPreviewTime: Date = .distantPast
+    // 0.6 s so the longest built-in pattern (`.warning` is a 0.5 s
+    // `hapticContinuous` event) finishes playing before the next
+    // preview starts. 0.4 s (initial v1) was tight and risked audible
+    // overlap with `.warning`'s tail. Settings picker is non-spammy by
+    // spec, so 0.6 s feels interactive on each tap.
+    private let previewMinInterval: TimeInterval = 0.6
+
+    /// Play a one-shot preview of the currently selected HapticStyle so the
+    /// user can audition styles from the Settings picker without waiting to
+    /// go speeding (TestFlight v2.2.0 b366 customer feedback —
+    /// srihan.yeleswarapu@gmail.com: "In the Haptic Style thing, when i
+    /// select one, I want to feel a sample of it. Like how am I supposed
+    /// to know how that feels like?").
+    ///
+    /// Contract:
+    ///   * **Bypasses `isEnabled`** — interacting with the style catalog
+    ///     implies a desire to feel the styles, regardless of the master
+    ///     on/off toggle. `fireIfEnabled()` is the gated path; this is the
+    ///     "always playable" path.
+    ///   * **Silent on `.off`** — vibrating when the user explicitly chose
+    ///     "Off" breaks the semantic trust of the option; they want silence.
+    ///   * **Silent on non-taptic hardware** — iPad picker row is already
+    ///     hidden in `SettingsView` behind `deviceSupportsHaptics`, but
+    ///     this guard keeps parity if the row is ever exposed elsewhere.
+    ///   * **Throttled ≥400 ms** — prevents wheel-style pickers from
+    ///     spamming patterns at 30 ms cadence.
+    public func previewCurrentStyle() {
+        // Settings preview is always-on regardless of the master on/off
+        // toggle — only `fireIfEnabled()` honors `isEnabled`.
+        guard deviceSupportsHaptics else { return }
+
+        // Honoring the explicit "Off" choice: even though
+        // `currentPattern()` returns nil for `.off`, the explicit guard
+        // here makes the silence-on-off contract visible AND prevents
+        // repeated `.off` taps from burning the throttle clock without
+        // actually firing anything (caught in code-review).
+        guard style != .off else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastPreviewTime) >= previewMinInterval else { return }
+        lastPreviewTime = now
+        guard let pattern = currentPattern() else { return }
+        playPattern(pattern)
+    }
+
     private init() {
         self.deviceSupportsHaptics =
             CHHapticEngine.capabilitiesForHardware().supportsHaptics
