@@ -97,7 +97,9 @@ public struct AnalyticsDashboardView: View {
 private struct AnalyticsContentView: View {
     let session: DriveSession
     @ObservedObject var viewModel: AnalyticsViewModel
-    @Environment(\.modelContext) private var modelContext    var body: some View {
+    @Environment(\.modelContext) private var modelContext
+
+    var body: some View {
         // TestFlight FB7 (v2.2.0 b361): the previous `if session.isDeleted`
         // guard was itself a `_FullFutureBackingData.getValue(forKey:)`
         // read on a tombstoned row, reproducing the same GeometryReader

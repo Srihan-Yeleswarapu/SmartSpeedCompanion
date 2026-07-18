@@ -175,7 +175,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// Monotonic search id for `searchNearby(category:)`. When the user
     /// taps Gas then Coffee rapidly, only the last response updates the
     /// card so the label always matches the visible results.
-    private var nearbySearchGeneration: UInt64 = 0    public init(modelContext: ModelContext? = nil) {
+    private var nearbySearchGeneration: UInt64 = 0
+
+    public init(modelContext: ModelContext? = nil) {
         // Core Logic components are owned by the ViewModel
         let locManager = LocationManager()
         let spdEngine = SpeedEngine(locationManager: locManager)
