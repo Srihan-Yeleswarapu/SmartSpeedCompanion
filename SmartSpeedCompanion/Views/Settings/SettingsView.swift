@@ -89,6 +89,13 @@ public struct SettingsView: View {
                     // pre-stage their setting for a future iPhone, but the
                     // catalog stays hidden.
                     if hapticEnabled && HapticAlertManager.shared.deviceSupportsHaptics {
+                        // Spec: changing the picker should play the chosen
+                        // style so the user can audition it without waiting
+                        // for a speeding alert (TestFlight v2.2.0 b366
+                        // feedback). `previewCurrentStyle()` is gated to
+                        // stay silent on `.off`, throttle to ≥400 ms, and
+                        // bypass the master `isEnabled` toggle (Settings
+                        // preview is always-on regardless of muted alerts).
                         Picker("Haptic Style", selection: Binding<HapticStyle>(
                             get: { HapticStyle(rawValue: hapticStyle) ?? .strong },
                             set: { hapticStyle = $0.rawValue }
@@ -98,6 +105,15 @@ public struct SettingsView: View {
                             }
                         }
                         .tint(DesignSystem.cyan)
+                        // Hook the underlying @AppStorage-backed String
+                        // (rather than the bind's `.set:`) because SwiftUI's
+                        // `Picker` re-evaluates the bind on every render and
+                        // would otherwise fire preview patterns unrelated to
+                        // the user's tap. `onChange` of the storage key
+                        // only fires on real selection events.
+                        .onChange(of: hapticStyle) { _, _ in
+                            HapticAlertManager.shared.previewCurrentStyle()
+                        }
 
                         if HapticStyle(rawValue: hapticStyle) == .custom {
                             Button(action: { showingHapticRecorder = true }) {

@@ -26,6 +26,15 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     @Published public var speed: Double = 0.0
     /// True heading when available; otherwise falls back to course (direction of travel).
     @Published public var currentHeading: Double? = nil
+    /// Reverse-geocoded current road name from `RoadGeocoder` (e.g. "W Frye Rd").
+    /// Populated by a ~10 sec throttled background geocode kicked off from the
+    /// 500 ms GPS sink; the underlying `RoadGeocoder` already carries a 50 m
+    /// grid-cell cache so the actual geocode call is effectively free when
+    /// the driver stays on the same road. Surfaced on the HUD as a tiny
+    /// monospaced chip above the START button. Hidden when nil (first
+    /// 1-2 ticks before geocode resolves, end-of-drive cleardown, or
+    /// geocode returning no thoroughfare on a parking-lot churn).
+    @Published public var currentRoadName: String? = nil
     /// Current speed limit from the active data source (Overpass or Arizona GeoJSON).
     @Published public var limit: Int = 0
     /// Status indicating if the user is over, near, or safely within the limit.
@@ -186,6 +195,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     private var stepStageFlags: [Int: Set<String>] = [:]
     private var lastDistanceToTurn: CLLocationDistance? = nil
     private var hasAnnouncedArrival: Bool = false
+    // Current road name reverse-geocode throttle. The 10 sec wall-clock gate
+    // stops us from re-issuing an async task on every 500 ms GPS tick while
+    // cruising; `RoadGeocoder` itself deduplicates by 50 m coordinate grid so
+    // when the gate fires the underlying call is usually a cache hit.
+    private var lastRoadNameRefreshAt: Date = .distantPast
+    private let roadNameRefreshInterval: TimeInterval = 10.0
     /// Monotonic search id for `searchNearby(category:)`. When the user
     /// taps Gas then Coffee rapidly, only the last response updates the
     /// card so the label always matches the visible results.
@@ -284,6 +299,20 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 // the active display unit (km/h when metric, mph when imperial) so
                 // any view reading `viewModel.speed` always gets the right value.
                 self.currentHeading = location.course >= 0 ? location.course : nil
+                // 10-sec-throttled reverse-geocode to refresh
+                // `currentRoadName`. RoadGeocoder.shared already carries a
+                // 50 m grid-cell cache so when this gate fires the actual
+                // `resolveRoadContext` call is usually a cache hit; the wall-
+                // clock gate exists purely to keep async-task creation sane
+                // for highway GPS cadences.
+                let now = Date()
+                if now.timeIntervalSince(self.lastRoadNameRefreshAt) >= self.roadNameRefreshInterval {
+                    self.lastRoadNameRefreshAt = now
+                    let coord = location.coordinate
+                    Task { [weak self] in
+                        await self?.refreshCurrentRoadName(at: coord)
+                    }
+                }
                 // Advance turn-by-turn guidance
                 if self.isNavigating {
                     self.updateNavigationProgress(at: location)
@@ -1099,6 +1128,22 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
 
+    /// Throttled reverse-geocode that populates `currentRoadName`. Called
+    /// from the 500 ms GPS sink; typically fires once per 10 sec while
+    /// driving. We intentionally do NOT clear `currentRoadName` when the
+    /// geocode returns no thoroughfare (e.g. parking-lot churn after a
+    /// destination arrival) — keeping the last known road name prevents
+    /// the HUD chip from flickering off when the user briefly drives through
+    /// an unnamed lot before re-entering a named street.
+    func refreshCurrentRoadName(at coordinate: CLLocationCoordinate2D) async {
+        if let context = await RoadGeocoder.shared.resolveRoadContext(at: coordinate),
+           let name = context.roadName,
+           !name.isEmpty,
+           name != currentRoadName {
+            currentRoadName = name
+        }
+    }
+
     /// Resets maneuver coordinate + amenity transient state for a fresh drive.
     /// (Look Around scratch state was removed in TestFlight 2.2.0 / FB10.)
     public func clearNativeMapCache() {
@@ -1106,6 +1151,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.nearbyAmenitiesQuery = ""
         self.nextManeuverCoordinate = nil
         self.distanceToDestination = 0
+        self.currentRoadName = nil
     }
 
     /// Triggers speech synthesis for a given string.

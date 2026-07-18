@@ -179,6 +179,47 @@ jobs:
             echo "WIDGET Profile Name: $WIDGET_NAME"
             echo "WIDGET Profile UUID: $WIDGET_UUID"
             echo "WIDGET App ID: $WIDGET_APPID"
+            # ---- WIDGET profile sanity check (fail-loud on misconfiguration) --------
+            # The codesign blob for the widget MUST carry application-identifier
+            # = VCNBBG32P6.com.speedsense.app.SpeedWidget so altool's static
+            # analyzer accepts it, AND the embedded WIDGET profile's
+            # :Entitlements.application-identifier must authorize exactly that
+            # value (else altool reports 90164 with "the bundle contains a key
+            # value that is not allowed").  Catch profile-vs-App-ID mismatches
+            # here so a stray wildcard / wrong-team provisioning profile is
+            # surfaced before the slow codesign + ditto + altool roundtrip.
+            EXPECTED_WIDGET_BID="com.speedsense.app.SpeedWidget"
+            EXPECTED_WIDGET_APPID="VCNBBG32P6.${EXPECTED_WIDGET_BID}"
+            EXPECTED_WIDGET_TEAM="VCNBBG32P6"
+            ACTUAL_WIDGET_TEAM=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/widget_profile.unwrapped.plist 2>/dev/null || echo "unknown")
+            if [ "$WIDGET_APPID" != "$EXPECTED_WIDGET_APPID" ] || [ "$ACTUAL_WIDGET_TEAM" != "$EXPECTED_WIDGET_TEAM" ]; then
+              echo
+              echo "===================================================================="
+              echo "  [FATAL] WIDGET provisioning profile is misconfigured."
+              echo "    Expected profile :Entitlements:application-identifier = $EXPECTED_WIDGET_APPID"
+              echo "    Actual   profile :Entitlements:application-identifier = $WIDGET_APPID"
+              echo "    Expected profile :TeamIdentifier[0]                    = $EXPECTED_WIDGET_TEAM"
+              echo "    Actual   profile :TeamIdentifier[0]                    = $ACTUAL_WIDGET_TEAM"
+              echo ""
+              echo "  altool 90164 ('bundle contains a key value that is not allowed')"
+              echo "  is GUARANTEED to trip because the embedded WIDGET profile does"
+              echo "  not authorize the widget extension's bundle id"
+              echo "  ($EXPECTED_WIDGET_BID)."
+              echo ""
+              echo "  One-time fix in Apple Developer Portal:"
+              echo "    1. Identifiers -> register an EXPLICIT App ID with id"
+              echo "       '$EXPECTED_WIDGET_BID' (do NOT use a wildcard App ID)."
+              echo "       Enable 'App Groups' on it and add"
+              echo "       'group.com.smartspeedcompanion.app'."
+              echo "    2. Profiles -> Distribution -> App Store -> '+'."
+              echo "       Select that App ID -> Generate -> Download the .mobileprovision."
+              echo "    3. Recompute base64: 'base64 -i Widget.mobileprovision | tr -d '\\n'"
+              echo "       Update GH secret WIDGET_PROVISIONING_PROFILE_BASE64 with the new value."
+              echo "    4. Re-run this workflow."
+              echo "===================================================================="
+              exit 1
+            fi
+            echo "[OK] WIDGET profile authorizes $WIDGET_APPID for team $ACTUAL_WIDGET_TEAM -- 90164-safe."
             /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/widget_profile.unwrapped.plist > /tmp/widget_entitlements.plist 2>/dev/null
             if [ -s /tmp/widget_entitlements.plist ]; then
               echo "[OK] WIDGET profile :Entitlements extracted (this REPLACES the on-disk widget entitlements file as signing source-of-truth)"

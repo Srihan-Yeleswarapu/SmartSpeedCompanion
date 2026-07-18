@@ -372,7 +372,27 @@ fileprivate struct SpeedHUDPill: View {
     let isLandscape: Bool
     
     var body: some View {
-        HStack(alignment: .center, spacing: isLandscape ? 16 : 24) {
+        VStack(spacing: 4) {
+            // Current road name chip — surfaced from
+            // `DriveViewModel.currentRoadName` which is populated by a
+            // ~10-sec-throttled reverse-geocode over `RoadGeocoder.shared`.
+            // The underlying geocoder already carries a 50 m grid-cell
+            // cache so re-resolution is effectively free when the user stays
+            // on the same road. The chip is intentionally HIDDEN when the
+            // road name is nil (first 1-2 GPS ticks before the geocode
+            // resolves, or after `clearNativeMapCache` runs at end-session),
+            // so the pill doesn't show an empty slot above the HUD on
+            // cold-start.
+            if let roadName = driveViewModel.currentRoadName, !roadName.isEmpty {
+                Text(roadName.uppercased())
+                    .font(.system(size: isLandscape ? 9 : 10, weight: .black, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.55))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 2)
+            }
+            HStack(alignment: .center, spacing: isLandscape ? 16 : 24) {
             
             // Limit Sign
             LimitSignView(limit: driveViewModel.limit, source: driveViewModel.speedLimitSource, isLandscape: isLandscape)
@@ -431,6 +451,7 @@ fileprivate struct SpeedHUDPill: View {
                     .cornerRadius(22)
                     .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
             }
+        }
         }
         .padding(.horizontal, isLandscape ? 20 : 24)
         .padding(.vertical, isLandscape ? 14 : 18)
