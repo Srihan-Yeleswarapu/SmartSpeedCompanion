@@ -30,6 +30,19 @@ public enum SpeedFormatting {
     /// than hard-coding a literal so we can audit drift in one place.
     public static let kmhPerMph: Double = 1.60934
 
+    /// 1 mile in meters. Canonical SI-derived value (1609.344 exactly).
+    /// Paired with `feetPerMeter` so the only place a length conversion
+    /// factor lives is here — keeps the comment in the file header auditable
+    /// ("every other conversion site... should reference this rather than
+    /// hard-coding a literal").
+    public static let metersPerMile: Double = 1609.344
+
+    /// 1 meter in feet. Equals ~3.28084. Paired with `metersPerMile`.
+    public static let feetPerMeter: Double = 1.0 / 0.3048
+
+    /// 1 kilometer in meters. SI canonical.
+    public static let metersPerKilometer: Double = 1000
+
     /// Suite name shared by WidgetKit + ActivityKit extensions. Must mirror
     /// the App Group capability declared on the main app's entitlements.
     public static let appGroupSuite = "group.com.smartspeedcompanion.app"
@@ -88,6 +101,26 @@ public enum SpeedFormatting {
             return (mph * kmhPerMph).rounded()
         }
         return mph
+    }
+
+    /// Converts a stored meters `CLLocationDistance` into the `(value, unit)`
+    /// tuple that voice and UI surfaces speak back. Below ~1 km / ~1 mi we
+    /// drop into the finer-grained unit (meters / feet) because drivers
+    /// reason about short distances naturally in those units — Siri will
+    /// say *"Your next turn is in 200 feet"* instead of *"Your next turn is in
+    /// 0.12 miles"*.
+    public static func distanceDisplay(forMeters meters: Double, measurementSystem: String) -> (value: Double, unit: String) {
+        if isMetric(measurementSystem) {
+            if meters >= metersPerKilometer {
+                return (meters / metersPerKilometer, "kilometers")
+            }
+            return (meters, "meters")
+        }
+        // Imperial: see top-of-enum constants. (1/0.3048 == ~3.28084)
+        if meters >= metersPerMile {
+            return (meters / metersPerMile, "miles")
+        }
+        return (meters * feetPerMeter, "feet")
     }
 
     // MARK: - Unit labels

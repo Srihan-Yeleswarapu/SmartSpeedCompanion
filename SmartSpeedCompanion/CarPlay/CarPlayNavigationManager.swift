@@ -135,6 +135,10 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         
         let estimatedTime = route.expectedTravelTime
         viewModel.eta = Date().addingTimeInterval(estimatedTime)
+        // Mirror CarPlay's remaining-route distance onto the ViewModel right
+        // away so Siri `GetDistanceToDestinationIntent` can answer before the
+        // next `evaluateNavigationProgress` tick fires.
+        viewModel.distanceToDestination = route.distance
         
         let routeChoice = CPRouteChoice(
             summaryVariants: ["Fastest Route"],
@@ -177,6 +181,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         viewModel.destination = nil
         viewModel.nextManeuverInstruction = ""
         viewModel.distanceToNextTurn = 0
+        viewModel.distanceToDestination = 0
         viewModel.eta = nil
     }
     
@@ -221,6 +226,12 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         // Update CarPlay HUD Estimates
         let totalDistance = Measurement(value: currentRoute.distance - currentRoute.distance(to: currentStepIndex), unit: UnitLength.meters)
         let timeRemaining = currentRoute.expectedTravelTime * (totalDistance.value / currentRoute.distance)
+        // Mirror the same remaining distance onto the ViewModel so Siri
+        // `GetDistanceToDestinationIntent` can answer while CarPlay is the
+        // active navigation surface. DriveViewModel's own
+        // updateNavigationProgress(...) sets this property on the phone-only
+        // path; both writes converge to roughly the same value (in meters).
+        viewModel.distanceToDestination = totalDistance.value
         let travelEstimates = CPTravelEstimates(distanceRemaining: totalDistance, timeRemaining: timeRemaining)
         
         if let maneuver = currentManeuver {

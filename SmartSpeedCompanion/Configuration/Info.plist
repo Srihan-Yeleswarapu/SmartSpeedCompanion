@@ -44,7 +44,7 @@
     <key>NSMotionUsageDescription</key>
     <string>We use motion data for advanced crash detection during drive sessions.</string>
     <key>NSSiriUsageDescription</key>
-    <string>Siri integration allows you to start and end your drives via voice controls.</string>
+    <string>Siri integration allows you to start and end drives, check your current speed, the posted speed limit, the time until your next turn, your estimated arrival time, and the remaining distance to your destination via voice controls.</string>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

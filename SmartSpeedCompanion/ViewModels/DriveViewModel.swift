@@ -95,6 +95,20 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// Estimated time of arrival calculated based on expected route time and progress.
     @Published public var eta: Date? = nil
 
+    /// Remaining route distance in meters to the active destination.
+    /// Updated:
+    ///   * `DriveViewModel.updateNavigationProgress(...)` (phone-only path)
+    ///     every location tick — reuses the `remainingDistance` sum used to
+    ///     compute the ETA.
+    ///   * `CarPlayNavigationManager.evaluateNavigationProgress(...)` (CarPlay
+    ///     path) every CarPlay HUD update — reuses the `totalDistance`
+    ///     `Measurement` already passed to `CPTravelEstimates`.
+    /// Siri `GetDistanceToDestinationIntent` reads this directly so both paths
+    /// keep the same property fresh. Reset to 0 in `clearNativeMapCache()`
+    /// (fresh-drive) and in `CarPlayNavigationManager.endNavigation()`
+    /// (route ended).
+    @Published public var distanceToDestination: CLLocationDistance = 0
+
     // MARK: - Native MapKit Features (see Apple Maps Server API notes in code comments)
 
     /// Coordinate of the upcoming maneuver (last point of the current route step).
@@ -508,6 +522,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         
         startRerouteTimer() // Every 5 minutes check for a faster path
         self.eta = Date().addingTimeInterval(route.expectedTravelTime)
+        // Initialize remaining-route distance right at start so Siri's
+        // `GetDistanceToDestinationIntent` answers correctly even before
+        // the first `updateNavigationProgress` location tick fires
+        // (~1–10 s gap after `startNavigation` runs). Without this, the
+        // first Siri response was "You're almost there — 0 meters".
+        self.distanceToDestination = route.distance
         
         // Automatically start recording the drive session if it hasn't been started manually
         if !isRecording {
@@ -799,7 +819,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let totalExpectedTime = route.expectedTravelTime
         let newETA = Date().addingTimeInterval(max(30, totalExpectedTime * (1.0 - progressPercent)))
         self.eta = newETA
-        
+        // Same `remainingDistance` sum is what Siri
+        // `GetDistanceToDestinationIntent` speaks back; mirror it onto the
+        // @Published `distanceToDestination` so the Intent sees live values
+        // even when the user is on the phone (no CarPlay).
+        self.distanceToDestination = remainingDistance
+
         // 5. PROACTIVE ARRIVAL: Announce "arriving" when within 10m of destination,
         //    regardless of whether step logic has completed.
         if !hasAnnouncedArrival, let dest = destination?.placemark.location {
@@ -1080,6 +1105,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.nearbyAmenities = []
         self.nearbyAmenitiesQuery = ""
         self.nextManeuverCoordinate = nil
+        self.distanceToDestination = 0
     }
 
     /// Triggers speech synthesis for a given string.
