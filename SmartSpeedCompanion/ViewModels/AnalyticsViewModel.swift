@@ -59,23 +59,30 @@ public final class AnalyticsViewModel: ObservableObject {
     public func deleteSession(_ session: DriveSession, context: ModelContext) {
         let sessionIdToDelete = session.id
 
-        // 1. Clear selection FIRST if it's the one being deleted.
-        // CRITICAL: do NOT wrap this in `withAnimation`. The exit animation
-        // keeps `AnalyticsContentView` (with its `GeometryReader`) alive
-        // long enough for the SwiftData save() below to tombstone the row,
-        // and the next layout pass then reads `session.percentWithinLimit`
-        // on a deleted object, crashing SwiftData's BackingData.
+        // 1. Clear selection FIRST. CRITICAL: do NOT wrap this in
+        // `withAnimation` — the implicit exit animation keeps
+        // `AnalyticsContentView` (with its `GeometryReader`) mounted long
+        // enough for the SwiftData commit below to trip
+        // `_FullFutureBackingData.getValue(forKey:)` (TestFlight FB7,
+        // v2.2.0 b361).
         if selectedSession?.id == sessionIdToDelete {
             selectedSession = nil
         }
 
-        // 2. Perform the deletion.
-        context.delete(session)
-
-        do {
-            try context.save()
-        } catch {
-            print("Failed to save deletion: \(error)")
+        // 2. DEFER the SwiftData mutation off the current SwiftUI render
+        // pass. Once `selectedSession = nil` has propagated and the
+        // GeometryReader inside AnalyticsContentView has unmounted, it is
+        // safe to commit the delete. Reading `session.isDeleted` inside
+        // the deferred task is itself a BackingData getValue() call and
+        // reproduces the same crash during the tombstone tick, so we
+        // intentionally do NOT touch it here.
+        Task { @MainActor in
+            context.delete(session)
+            do {
+                try context.save()
+            } catch {
+                print("Failed to save deletion: \(error)")
+            }
         }
     }
     
@@ -85,16 +92,34 @@ public final class AnalyticsViewModel: ObservableObject {
         try? context.save()
     }
     
-    /// Deletes all non-starred sessions older than 30 days.
+    /// Deletes all non-starred sessions older than 30 days. Deferred off
+    /// the current render pass for the same reason as `deleteSession`:
+    /// a SwiftData tombstone during the same tick that a GeometryReader
+    /// ancestor is rendering crashes `_FullFutureBackingData.getValue(forKey:)`
+    /// (TestFlight FB7, v2.2.0 b361).
     public func purgeOldSessions(sessions: [DriveSession], context: ModelContext) {
         let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
-        for session in sessions where !session.isDeleted {
+        let victims = sessions.filter { session in
+            guard !session.isDeleted else { return false }
             let isStarred = session.isStarred ?? false
-            if !isStarred && session.startTime < cutoff {
-                if selectedSession?.id == session.id { selectedSession = nil }
+            return !isStarred && session.startTime < cutoff
+        }
+        guard !victims.isEmpty else { return }
+
+        // Drop any selected session up-front so GeometryReader ancestors unroll.
+        if let selected = selectedSession, victims.contains(where: { $0.id == selected.id }) {
+            selectedSession = nil
+        }
+
+        Task { @MainActor in
+            // Do NOT read `session.isDeleted` here — that BackingData
+            // getValue(forKey:) read is itself the FB7 crash repro.
+            // `context.delete` is idempotent against an already-tombstoned
+            // row, so re-running over `victims` is safe.
+            for session in victims {
                 context.delete(session)
             }
+            try? context.save()
         }
-        try? context.save()
     }
 }
