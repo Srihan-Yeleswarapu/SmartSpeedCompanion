@@ -567,45 +567,6 @@ public actor ArizonaSpeedLimitService {
         return segments
     }
 
-    // MARK: - Phase 2 -- SQLite-first fast pre-check
-
-    /// Returns true if any AZ-speed-limit segment is registered within ~1 km of
-    /// `coordinate`, without committing to a snap. Used by SpeedLimitService as a
-    /// cheap gate to prefer the local SQLite over network providers when the
-    /// driver is in well-known corridor territory.
-    ///
-    /// Refreshing the 2-mile circular cache normally if we've moved more than a
-    /// mile since last fill. Cheap: walks the in-memory circularCache (a few
-    /// hundred segments at most); no DB query on the hit path.
-    public func hasNearbyCoverage(
-        at coordinate: CLLocationCoordinate2D,
-        heading: Double? = nil
-    ) -> Bool {
-        if !isLoaded { loadDataIfNeeded() }
-        guard db != nil else { return false }
-
-        let shouldRefresh = lastCacheCenter == nil ||
-            coordinate.distance(from: lastCacheCenter!) > triggerDistanceMeters
-        if shouldRefresh {
-            refreshCircularCache(at: coordinate)
-        }
-
-        // Any segment within 1 km of the coord, with a sensible area cap (drop
-        // generic county-wide polygons), counts. Heading is intentionally ignored
-        // here -- the goal is "is there a known corridor nearby?", not a snap.
-        let corridorRadius: CLLocationDistance = 1000.0
-        for segment in circularCache where segment.limit > 0 {
-            let dx = segment.maxx - segment.minx
-            let dy = segment.maxy - segment.miny
-            let diagonalDegrees = sqrt(dx * dx + dy * dy)
-            if diagonalDegrees > 1.0 { continue }  // skip huge county polygons
-            if segment.distance(to: coordinate) <= corridorRadius {
-                return true
-            }
-        }
-        return false
-    }
-
     // MARK : Circular Cache
 
     private func refreshCircularCache(at center: CLLocationCoordinate2D) {

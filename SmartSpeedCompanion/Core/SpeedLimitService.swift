@@ -1,11 +1,8 @@
 // SpeedLimitService.swift
 // Orchestrator that picks the best speed-limit answer for the user's current coord.
 //
-// Decision tree (Phase 2 polish + Phase 4 continuity guard):
+// Decision tree (live-first; SQLite only as last-resort fallback):
 //   1. Spatial-grid cache lookup -> hit short-circuits everything below.
-//   1.5. SQLite-fast-path -- if the user is within ~1 km of a known AZ road corridor
-//        (ArizonaSpeedLimitService.hasNearbyCoverage), try the local SQLite first.
-//        Success skips the network round-trip; snap failure falls through.
 //   2. If NetworkReachability.isConnected:
 //        Walk liveProviders in order (ArcGIS HPMS -> Overpass) -- first non-nil
 //        response wins. On network/parse failure for a provider, drop and try the next.
@@ -14,13 +11,13 @@
 //   4. SQLite miss raises missCount; at missThresholdBeforeClear consecutive misses
 //      we clear the local caches so stale bounding boxes can't pin us.
 //
-// Trade-off note: the 30-min memory cache TTL combined with sqlite-first means a
-// recently-installed sign change can be silently stale for up to 30 min in the same
-// 50 m cell. Acceptable for the polish pass -- background live verification can be
-// added later as shadow-verify if the staleness proves user-visible.
+// Trade-off note: live-first + cache-first means a recently-installed sign change
+// will be picked up on the very next fetch after the 30-min memory cache TTL expires.
+// No stale-DB-window bug -- the bundled SQLite is treated as offline fallback only.
 //
-// @Published dataSource is a typed SpeedLimitDataSource enum. Step 1.5 surfaces the
-// same .localDB source as the existing sqlite-fallback path.
+// @Published dataSource is a typed SpeedLimitDataSource enum. Both fallback paths (the
+// primary offline fallback and the ExpandedSearch recovery) and any future HERE path
+// surface through this enum (e.g. .localDB, .localDBRecovered, .liveHERE).
 //
 // PHASE 4 -- SpeedLimit Continuity Guard
 // --------------------------------------
@@ -216,10 +213,12 @@ public class SmartSpeedLimitService: ObservableObject {
         let isMiss: Bool
     }
 
-    /// Resolve the speed limit from the chain: cache -> sqlite-fast-path ->
-    /// live providers -> sqlite fallback. NEVER writes to the response cache
-    /// here -- cache writes happen only on commit, after the continuity guard
-    /// clears the candidate.
+    /// Resolve the speed limit from the chain: cache -> live providers ->
+    /// sqlite fallback. NEVER writes to the response cache here -- cache
+    /// writes happen only on commit, after the continuity guard clears the
+    /// candidate. The bundled SQLite is intentionally LAST so live data wins
+    /// when the network is up; SQLite only fires when offline OR every live
+    /// provider missed/shrugged.
     private func resolveCandidate(
         at coordinate: CLLocationCoordinate2D,
         heading: Double?,
@@ -236,27 +235,6 @@ public class SmartSpeedLimitService: ObservableObject {
                 detail: cached.detail,
                 isMiss: false
             )
-        }
-
-        // 1.5. SQLite-fast-path. Within a known ~1 km corridor, hit the local
-        // SQLite first. Snap failure falls through to live providers.
-        if await ArizonaSpeedLimitService.shared.hasNearbyCoverage(
-            at: coordinate, heading: heading
-        ) {
-            if let sqliteLimit = try? await ArizonaSpeedLimitService.shared.updateSpeedLimit(
-                at: coordinate, heading: heading,
-                currentSpeedMph: currentSpeedMph, roadName: roadName
-            ), sqliteLimit > 0 {
-                let detail = roadName.map { "Local SQLite lookup along \($0)" }
-                    ?? "Local SQLite lookup within 1 km corridor"
-                return Candidate(
-                    limit: sqliteLimit, source: .localDB,
-                    roadKey: "local-sqlite", providerName: "AZ SQLite",
-                    detail: detail, isMiss: false
-                )
-            }
-            // Coverage exists but SQLite could not snap (heading mismatch,
-            // intersection gap, etc.). Fall through to live providers.
         }
 
         // 2. Live provider chain (only when online).
