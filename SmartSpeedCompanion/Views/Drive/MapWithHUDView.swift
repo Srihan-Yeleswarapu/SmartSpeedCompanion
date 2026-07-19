@@ -249,9 +249,23 @@ fileprivate struct SearchBarView: View {
                     }
                 
                 if !searchText.isEmpty {
-                    Button(action: { 
+                    Button(action: {
                         searchText = ""
                         driveViewModel.updateSearchQuery("")
+                        // Clear any proposed route alternatives + map polylines
+                        // that were rendered for the previous search so they
+                        // don't linger on the map after the user dismisses
+                        // the search bar via the X button. TestFlight 2.2.0
+                        // (b377) feedback from srihan.yeleswarapu@gmail.com:
+                        // "When I 'X' out of the search, the directions
+                        // options should also go away." Mirrors the dismissal
+                        // logic in `RouteSelectionCard`'s own X handler so
+                        // both dismiss paths reach the same end state
+                        // (clear polylines, hide picker card, drop selected
+                        // destination reference).
+                        driveViewModel.isSelectingRoute = false
+                        driveViewModel.availableRoutes = []
+                        driveViewModel.destination = nil
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.white.opacity(0.4))
