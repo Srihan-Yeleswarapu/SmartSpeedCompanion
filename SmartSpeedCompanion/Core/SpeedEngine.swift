@@ -10,7 +10,7 @@ public final class SpeedEngine: ObservableObject {
     @Published public var limit: Int = 0
     @Published public var status: SpeedStatus = .safe
     
-    @AppStorage("userBuffer") public var userBuffer: Int = 5 // 0 to 15 mph
+    @AppStorage("userBuffer") public var userBuffer: Int = 5 // -5 to 15 mph
     @AppStorage("measurementSystem") public var measurementSystem: String = "Imperial"
     
     private let speedLimitService = SmartSpeedLimitService.shared

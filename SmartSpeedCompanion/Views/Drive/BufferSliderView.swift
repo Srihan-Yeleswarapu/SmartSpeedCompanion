@@ -31,7 +31,8 @@ struct BufferSliderView: View {
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(.gray)
                 Spacer()
-                Text("+\(displayBuffer) \(bufferUnit)")
+                let displaySign = displayBuffer > 0 ? "+" : ""
+                Text("\(displaySign)\(displayBuffer) \(bufferUnit)")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(Color(hex: "#FFB800"))
             }      
@@ -51,13 +52,13 @@ struct BufferSliderView: View {
                 .frame(height: 4)
 
                 // Invisible system slider for input
-                Slider(value: $buffer, in: 0...15, step: 1)
+                Slider(value: $buffer, in: -5...15, step: 1)
                     .opacity(0.015)
             }
             .frame(height: 20)
 
             HStack {
-                Text("0")
+                Text("-5")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.gray)
                 Spacer()

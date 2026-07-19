@@ -68,9 +68,10 @@ public struct SettingsView: View {
                 Section(header: Text("ALERTS").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
                     VStack(alignment: .leading) {
                         let unitLabel = measurementSystem == "Imperial" ? "mph" : "km/h"
-                        Text("Speed Buffer: +\(Int(buffer)) \(unitLabel)")
+                        let bufferSign = buffer > 0 ? "+" : ""
+                        Text("Speed Buffer: \(bufferSign)\(Int(buffer)) \(unitLabel)")
                             .foregroundColor(.white)
-                        Slider(value: $buffer, in: 0...15, step: 1)
+                        Slider(value: $buffer, in: -5...15, step: 1)
                             .tint(DesignSystem.amber)
                     }
                     
