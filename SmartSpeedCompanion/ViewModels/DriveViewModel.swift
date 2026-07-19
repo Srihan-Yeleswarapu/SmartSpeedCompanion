@@ -1099,16 +1099,45 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // MARK: - Audio Session & Announcements
     
     /// Prepares the shared AVAudioSession for spoken navigation.
-    /// Uses .mixWithOthers to allow Spotify/Music to continue playing while navigation speaks.
+    ///
+    /// Includes the deactivate → setCategory → reactivate cycle so the
+    /// `.spokenAudio` mode actually sticks:
+    ///
+    ///   `AlertEngine.init(...)` runs INSIDE `DriveViewModel.init(...)` (the
+    ///   alert engine is constructed here as `let alrtEngine = ...`) and
+    ///   calls `setCategory(.playback, mode: .default) + setActive(true)`
+    ///   immediately, so before we run, the session is already active in
+    ///   `.default` mode for the speeding tone. iOS only honours a mode
+    ///   change when the session transitions inactive → active — without
+    ///   the explicit `setActive(false)` first, the call below updates the
+    ///   recorded category in logs but leaves the underlying routing in
+    ///   `.default` mode, which sends AVSpeechSynthesizer output to the
+    ///   ringer/earpiece speaker at low volume. TestFlight 2.2.x feedback
+    ///   was "navigation messages not heard"; the `DebugLogger` line
+    ///   "NAV VOICE SENT" was still firing normally — the speech was sent,
+    ///   just routed through the wrong output path.
     private func setupAudioSession() {
         do {
-            var options: AVAudioSession.CategoryOptions = [.duckOthers, .mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
-            if #available(iOS 17.0, *) {
-                // Allows navigation to blend nicely with existing audio on iOS 17+
-                options.insert(.interruptSpokenAudioAndMixWithOthers)
-            }
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
-            DebugLogger.shared.log("Audio Session Configured")
+            // Force a clean transition. `notifyOthersOnDeactivation` lets
+            // competing audio apps (Spotify / Apple Music) release their
+            // mixWithOthers slot gracefully before we re-grab it on
+            // `.spokenAudio` mode.
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+
+            try AVAudioSession.sharedInstance().setCategory(
+                .playback,
+                mode: .spokenAudio,
+                options: [
+                    .duckOthers,
+                    .mixWithOthers,
+                    .defaultToSpeaker,
+                    .allowBluetoothA2DP,
+                    .interruptSpokenAudioAndMixWithOthers
+                ]
+            )
+
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+            DebugLogger.shared.log("Audio Session Configured (.spokenAudio forced)")
         } catch {
             DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
         }
@@ -1238,20 +1267,38 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Convert abbreviations like "Ave" to "Avenue" before speaking
         let expandedMessage = expandAbbreviations(cleanMessage)
 
-        // Only activate audio session if other audio is playing and we aren't already active
-        // This prevents redundant setActive calls when announce() is called multiple times rapidly
-        let audioSession = AVAudioSession.sharedInstance()
-        // Only activate audio session if other audio is playing
-        // This prevents redundant setActive calls when announce() is called multiple times rapidly
-        let shouldActivate = audioSession.isOtherAudioPlaying
-        if shouldActivate {
-            do {
-                // Activate session so ducking (lowering music volume) kicks in
-                try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-            } catch {
-                DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
-            }
-        }
+// Defensive: re-apply `.spokenAudio` mode just before every utterance so
+// anything that flipped the session back to `.default` mid-drive (CarPlay
+// audio route change, AlertEngine tone reset, an external interruption
+// handler, a Bluetooth re-pair) is corrected immediately. Cheap no-op when
+// the state already matches, and applies the same option set used in
+// setupAudioSession() so behavior stays consistent across launch and
+// per-utterance calls.
+let audioSession = AVAudioSession.sharedInstance()
+try? audioSession.setCategory(
+    .playback,
+    mode: .spokenAudio,
+    options: [
+        .duckOthers,
+        .mixWithOthers,
+        .defaultToSpeaker,
+        .allowBluetoothA2DP,
+        .interruptSpokenAudioAndMixWithOthers
+    ]
+)
+
+// Only activate audio session if other audio is playing — that way we
+// don't redundantly grab focus during a quiet drive but ensure `.duckOthers`
+// kicks in during a Spotify/Music session.
+let shouldActivate = audioSession.isOtherAudioPlaying
+if shouldActivate {
+    do {
+        // Activate session so ducking (lowering music volume) kicks in
+        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+    } catch {
+        DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
+    }
+}
         
         let utterance = AVSpeechUtterance(string: expandedMessage)
         
