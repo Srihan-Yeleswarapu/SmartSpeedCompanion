@@ -9,9 +9,17 @@ public struct SpeedCamera: Codable, Identifiable, Sendable {
     public let direction: String?
     public let latitude: Double
     public let longitude: Double
-    public let location: String?
-    public let sortOrder: Int?
-    
+    public let location: String?    public let sortOrder: Int?
+
+    /// Convenience accessor for MapKit code paths that want a single
+    /// `CLLocationCoordinate2D` instead of separate latitude/longitude
+    /// doubles. Computed (not stored) so backends can keep emitting
+    /// flat {latitude, longitude} JSON without us carrying an extra
+    /// Codable column around.
+    public var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
     enum CodingKeys: String, CodingKey {
         case id = "Id"
         case source = "Source"

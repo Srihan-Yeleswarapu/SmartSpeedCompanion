@@ -1345,9 +1345,20 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // (SpeedEngine's wrapper still routes through the same shared
         // service, so the @Published `limit` binding picks up the new
         // value on the next tick automatically).
+        // currentSpeedMph is the GPS-derived speed converted from m/s → mph
+        // (matches the 2.23694 constant used elsewhere in the codebase, e.g.
+        // SpeedEngine.input). Pass 0 when we have no fresh GPS fix so the
+        // continuity guard's physics-override rule never auto-commits just
+        // because the candidate happens to match a stale speed value — the
+        // user tapped this button precisely because they suspected the
+        // displayed answer was wrong, so we want the strictest path.
+        let gpsMps = locationManager.latestLocation?.speed ?? 0
+        let currentSpeedMph = gpsMps * 2.23694
+
         _ = await SmartSpeedLimitService.shared.updateSpeedLimit(
             at: coord,
             heading: currentHeading,
+            currentSpeedMph: currentSpeedMph,
             forceRefresh: true
         )
         DebugLogger.shared.log("manualRefetchSpeedLimit: completed (limit=\(limit)).")
