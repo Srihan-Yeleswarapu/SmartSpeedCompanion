@@ -838,6 +838,17 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
     }
 
+    /// Removes a specific recent search query from history and persists to UserDefaults.
+    public func removeRecentSearch(_ title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if let index = recentSearches.firstIndex(of: trimmed) {
+            recentSearches.remove(at: index)
+        }
+        UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
+    }
+
     /// Terminates the current navigation session.
     public func endNavigation() async {
         self.isNavigating = false

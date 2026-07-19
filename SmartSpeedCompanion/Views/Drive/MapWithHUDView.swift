@@ -291,30 +291,45 @@ fileprivate struct SearchBarView: View {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(filteredSearches.prefix(5), id: \.self) { search in
-                                    Button(action: {
-                                        searchText = search
-                                        Task {
-                                            await driveViewModel.searchDestination(query: search)
-                                            if let item = driveViewModel.searchResults.first {
-                                                await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
-                                                searchText = ""
-                                                isFocused = false
+                                    HStack(spacing: 0) {
+                                        Button(action: {
+                                            searchText = search
+                                            Task {
+                                                await driveViewModel.searchDestination(query: search)
+                                                if let item = driveViewModel.searchResults.first {
+                                                    await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
+                                                    searchText = ""
+                                                    isFocused = false
+                                                }
                                             }
+                                        }) {
+                                            HStack {
+                                                Image(systemName: "clock.arrow.circlepath")
+                                                    .font(.system(size: 14))
+                                                    .foregroundColor(DesignSystem.cyan)
+                                                
+                                                Text(search)
+                                                    .font(.system(size: 16, weight: .medium))
+                                                    .foregroundColor(.white)
+                                                
+                                                Spacer()
+                                            }
+                                            .padding(.vertical, 14)
+                                            .padding(.horizontal, 16)
                                         }
-                                    }) {
-                                        HStack {
-                                            Image(systemName: "clock.arrow.circlepath")
-                                                .font(.system(size: 14))
-                                                .foregroundColor(DesignSystem.cyan)
-                                            
-                                            Text(search)
-                                                .font(.system(size: 16, weight: .medium))
-                                                .foregroundColor(.white)
-                                            
-                                            Spacer()
+                                        
+                                        // X button to delete individual recent search entry
+                                        Button(action: {
+                                            driveViewModel.removeRecentSearch(search)
+                                        }) {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 11, weight: .bold))
+                                                .foregroundColor(.white.opacity(0.3))
+                                                .padding(.trailing, 16)
+                                                .padding(.vertical, 14)
+                                                .contentShape(Rectangle())
                                         }
-                                        .padding(.vertical, 14)
-                                        .padding(.horizontal, 16)
+                                        .buttonStyle(.plain)
                                     }
                                     
                                     if search != filteredSearches.prefix(5).last {
