@@ -1,0 +1,233 @@
+{
+  "metadata": {
+    "source": "generate",
+    "speed_mph": 45.0,
+    "duration_s": 300,
+    "center": [
+      33.4484367,
+      -112.074141
+    ],
+    "center_desc": "Phoenix, Maricopa County, Arizona, United States",
+    "way": {
+      "osm_id": 23711113,
+      "name": "Maricopa Freeway",
+      "ref": "I 17;US 60",
+      "highway": "motorway",
+      "maxspeed_raw": "65 mph",
+      "coord_count": 3
+    },
+    "input_file": null,
+    "point_count": 26,
+    "generated_at_unix": 1783490127
+  },
+  "points": [
+    {
+      "lat": 33.428799,
+      "lon": -112.0996576,
+      "speed_mph": 45.0,
+      "heading": 84.56062699194331,
+      "t_offset_s": 0,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42881612995805,
+      "lon": -112.09944204201587,
+      "speed_mph": 45.0,
+      "heading": 84.396300502256,
+      "t_offset_s": 1,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42883377585306,
+      "lon": -112.09922654310242,
+      "speed_mph": 45.0,
+      "heading": 84.39629937229734,
+      "t_offset_s": 2,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42885142174806,
+      "lon": -112.09901104418897,
+      "speed_mph": 45.0,
+      "heading": 84.39629823631617,
+      "t_offset_s": 3,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42886906764306,
+      "lon": -112.09879554527552,
+      "speed_mph": 45.0,
+      "heading": 84.39629710471547,
+      "t_offset_s": 4,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42888671353807,
+      "lon": -112.09858004636206,
+      "speed_mph": 45.0,
+      "heading": 84.3962959763939,
+      "t_offset_s": 5,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42890435943307,
+      "lon": -112.09836454744861,
+      "speed_mph": 45.0,
+      "heading": 84.39629484241692,
+      "t_offset_s": 6,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.428922005328076,
+      "lon": -112.09814904853516,
+      "speed_mph": 45.0,
+      "heading": 84.39629370843898,
+      "t_offset_s": 7,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42893965122308,
+      "lon": -112.09793354962171,
+      "speed_mph": 45.0,
+      "heading": 84.3962925804816,
+      "t_offset_s": 8,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42895729711808,
+      "lon": -112.09771805070827,
+      "speed_mph": 45.0,
+      "heading": 84.39629144549804,
+      "t_offset_s": 9,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42897494301309,
+      "lon": -112.09750255179482,
+      "speed_mph": 45.0,
+      "heading": 84.39629031489511,
+      "t_offset_s": 10,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.428992588908095,
+      "lon": -112.09728705288136,
+      "speed_mph": 45.0,
+      "heading": 84.39628918456043,
+      "t_offset_s": 11,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.429010234803094,
+      "lon": -112.09707155396791,
+      "speed_mph": 45.0,
+      "heading": 84.39628804957397,
+      "t_offset_s": 12,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.4290278806981,
+      "lon": -112.09685605505446,
+      "speed_mph": 45.0,
+      "heading": 84.39628691458648,
+      "t_offset_s": 13,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42904552659311,
+      "lon": -112.09664055614101,
+      "speed_mph": 45.0,
+      "heading": 84.3962857866232,
+      "t_offset_s": 14,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42906317248811,
+      "lon": -112.09642505722756,
+      "speed_mph": 45.0,
+      "heading": 84.39628465464455,
+      "t_offset_s": 15,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42908081838311,
+      "lon": -112.09620955831411,
+      "speed_mph": 45.0,
+      "heading": 84.39628351865059,
+      "t_offset_s": 16,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42909846427812,
+      "lon": -112.09599405940067,
+      "speed_mph": 45.0,
+      "heading": 84.3962823910515,
+      "t_offset_s": 17,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42911611017312,
+      "lon": -112.0957785604872,
+      "speed_mph": 45.0,
+      "heading": 84.39628125669554,
+      "t_offset_s": 18,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.429133756068126,
+      "lon": -112.09556306157376,
+      "speed_mph": 45.0,
+      "heading": 84.39628012471297,
+      "t_offset_s": 19,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42915140196313,
+      "lon": -112.09534756266031,
+      "speed_mph": 45.0,
+      "heading": 84.39627899473658,
+      "t_offset_s": 20,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42916904785813,
+      "lon": -112.09513206374686,
+      "speed_mph": 45.0,
+      "heading": 84.39627786174844,
+      "t_offset_s": 21,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.42918669375314,
+      "lon": -112.09491656483341,
+      "speed_mph": 45.0,
+      "heading": 84.39627672875935,
+      "t_offset_s": 22,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.429204339648145,
+      "lon": -112.09470106591996,
+      "speed_mph": 45.0,
+      "heading": 84.3962756011544,
+      "t_offset_s": 23,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.429221985543144,
+      "lon": -112.0944855670065,
+      "speed_mph": 45.0,
+      "heading": 84.3963041129669,
+      "t_offset_s": 24,
+      "label": "Maricopa Freeway"
+    },
+    {
+      "lat": 33.4292309,
+      "lon": -112.0943767,
+      "speed_mph": 45.0,
+      "heading": 84.3963041129669,
+      "t_offset_s": 25,
+      "label": "Maricopa Freeway"
+    }
+  ]
+}

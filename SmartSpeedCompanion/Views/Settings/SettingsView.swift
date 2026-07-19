@@ -19,8 +19,11 @@ public struct SettingsView: View {
     @AppStorage("mapStyle") private var mapStyle: String = "mutedDark"
     @AppStorage("showApplePOIs") private var showApplePOIs: Bool = false
     @AppStorage("gradientRouteEnabled") private var gradientRouteEnabled: Bool = true
-    @AppStorage("threeDFlyoverEnabled") private var threeDFlyoverEnabled: Bool = false
-    
+    // NB: the "3D flyover (long highways)" toggle was retired in 2.2.x — the
+    // flyover camera is now baked into LiveMapView as default behavior so it
+    // only ever fires when the user is on a long, straight highway stretch at
+    // speed with no turn coming up (the conditions where flyover looks good).
+
     @EnvironmentObject var driveViewModel: DriveViewModel
     @EnvironmentObject var appState: AppState
     @State private var showingTutorial = false
@@ -197,8 +200,9 @@ public struct SettingsView: View {
                     Toggle("Gradient route line", isOn: $gradientRouteEnabled)
                         .tint(DesignSystem.neonGreen)
 
-                    Toggle("3D flyover (long highways)", isOn: $threeDFlyoverEnabled)
-                        .tint(DesignSystem.amber)
+                    // "3D flyover (long highways)" toggle removed in 2.2.x —
+                    // flyover camera is now baked-in default behavior
+                    // (see LiveMapView.updateSmartAltitude).
                 }
                 .listRowBackground(DesignSystem.bgPanel)
 

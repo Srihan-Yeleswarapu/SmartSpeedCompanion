@@ -53,6 +53,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     @Published public var nearbyCameras: [SpeedCamera] = []
     /// The specific camera that triggered the most recent alert.
     @Published public var activeCameraAlert: SpeedCamera? = nil
+    /// True while the user-triggered speed-limit refetch is in flight
+    /// (`manualRefetchSpeedLimit()`, wired to a tap on the LimitSignView in
+    /// MapWithHUDView). Drives the cyan ring + brightness pulse that gives
+    /// the user immediate visual feedback when their tap landed.
+    @Published public var isRefreshingSpeedLimit: Bool = false
     
     // MARK: - Navigation State
     /// Indicates if active turn-by-turn navigation is running.
@@ -169,12 +174,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         set { UserDefaults.standard.set(newValue, forKey: "gradientRouteEnabled") }
     }
 
-    /// When true, the camera pitches aggressively and pulls back during long
-    /// straight highway stretches so the user gets a "3D flyover" perspective.
-    public var threeDFlyoverEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "threeDFlyoverEnabled") as? Bool ?? false }
-        set { UserDefaults.standard.set(newValue, forKey: "threeDFlyoverEnabled") }
-    }
+    // NB: "3D flyover on long highways" was a UserDefaults-backed toggle
+    // removed in 2.2.x. The flyover camera pitch is now baked into
+    // `LiveMapView.updateSmartAltitude` as default behavior — the gate there
+    // (`isNavigating && distanceToTurn > 4000 && speed > 50`) only fires when
+    // it would look good, so we don't surface a confusing toggle in Settings.
 
     // MARK: - Camera pitch override (NEW: TestFlight 2.2.x redesign)
     //
@@ -202,10 +206,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
 
-    /// User-controlled camera pitch override. Complements the existing
-    /// `threeDFlyoverEnabled` (which only fires on long highway stretches).
+    /// User-controlled camera pitch override (2D / 3D pill toggle in the map).
     /// The pill toggle in `MapWithHUDView.MapPitchToggleButton` cycles
-    /// through these three modes.
+    /// through these three modes. (The older "long-highway flyover" toggle
+    /// was retired; that automatic pitch-up lives in LiveMapView now.)
     public enum MapPitchMode: String, CaseIterable, Identifiable, Sendable {
         /// Default. Lets `LiveMapView.updateSmartAltitude` decide — keeps
         /// the existing "pitch 0 idle / 45 navigating / 30 recording"
@@ -278,7 +282,22 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // Voice Navigation Tracking
     private var stepStageFlags: [Int: Set<String>] = [:]
     private var lastDistanceToTurn: CLLocationDistance? = nil
-    private var hasAnnouncedArrival: Bool = false
+    /// Set<String> keys = "lat,lon" rounded to 4 decimals (~11 m precision)
+    /// so the speed-camera voice alert fires ONCE per physical camera
+    /// location even if the backend reconstructs the `SpeedCamera` struct
+    /// repeatedly across location ticks. Reset in `startNavigation(...)`
+    /// and `endNavigation()` so each fresh drive starts clean.
+    private var spokenCameraKeys: Set<String> = []
+    /// Wall-clock throttle for `manualRefetchSpeedLimit()` taps on the
+    /// LimitSignView. Two back-to-back taps within a 600 ms window collapse
+    /// to a single refetch so a double-tap from a frustrated user doesn't
+    /// double-bill the network provider chain. Reset by the completion
+    /// path inside the method itself.
+    private var lastManualRefetchAt: Date = .distantPast
+    private let manualRefetchThrottle: TimeInterval = 0.6
+
+
+
     // Current road name reverse-geocode throttle. The 10 sec wall-clock gate
     // stops us from re-issuing an async task on every 500 ms GPS tick while
     // cruising; `RoadGeocoder` itself deduplicates by 50 m coordinate grid so
@@ -353,6 +372,16 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             .map { $0.rawValue }
             .receive(on: RunLoop.main)
             .assign(to: &$speedLimitSource)
+        // SPEED CAMERA FEED: wire the SpeedCameraService shared publisher
+        // onto @Published `nearbyCameras`. The previous code declared the
+        // @Published but never bound it, so `updateNavigationProgress(...)`'s
+        // voice alert had no data. SpeedCameraService.shared.$cameras is
+        // already collected continuously as the driver moves; we just mirror
+        // it onto this field so the voice alert + any future Mira UI can
+        // read live values.
+        SpeedCameraService.shared.$cameras
+            .receive(on: RunLoop.main)
+            .assign(to: &$nearbyCameras)
         
         // 3. CACHE INITIALIZATION: Load Arizona speed limit data into memory (only happens once)
         Task {
@@ -631,7 +660,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // Reset flags so we can re-announce the approach to the first turn
         self.stepStageFlags.removeAll()
         self.lastDistanceToTurn = nil
-        self.hasAnnouncedArrival = false
+        self.spokenCameraKeys.removeAll()
         
         startRerouteTimer() // Every 5 minutes check for a faster path
         self.eta = Date().addingTimeInterval(route.expectedTravelTime)
@@ -676,6 +705,25 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             
             self.nextManeuverInstruction = displayInstruction
             self.nextManeuverImageName = getImageForManeuver(displayInstruction)
+        }
+
+        // One-shot spoken ETA + distance announcement on initial navigation
+        // start. Skips on reroute so we don't speak "Starting route to X"
+        // every time the algorithm picks a faster path mid-drive. Uses
+        // formatDistance() so the units match the user's chosen measurement
+        // system, and DateFormatter(.short) so the time renders in 12-h or
+        // 24-h per the device locale. announce() already honors the
+        // voiceNavEnabled user toggle so a quieted user hears nothing.
+        if !isReroute, let etaValue = self.eta {
+            let destinationName = (destination?.name?.isEmpty == false)
+                ? destination!.name!
+                : "your destination"
+            let distanceText = formatDistance(route.distance)
+            let etaFormatter = DateFormatter()
+            etaFormatter.timeStyle = .short
+            etaFormatter.dateStyle = .none
+            let timeText = etaFormatter.string(from: etaValue)
+            announce("Starting route to \(destinationName), \(distanceText), arriving at \(timeText).")
         }
 
         // Display the route in a Live Activity on the lock screen.
@@ -738,6 +786,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         rerouteTimer?.invalidate()
         rerouteTimer = nil
         self.stepStageFlags.removeAll()
+        self.spokenCameraKeys.removeAll()
         // Drop maneuver scratch state so the next navigation starts clean.
         // (Look Around scratch state removed in TestFlight 2.2.0 / FB10.)
         self.nextManeuverCoordinate = nil
@@ -938,13 +987,31 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         // even when the user is on the phone (no CarPlay).
         self.distanceToDestination = remainingDistance
 
-        // 5. PROACTIVE ARRIVAL: Announce "arriving" when within 10m of destination,
-        //    regardless of whether step logic has completed.
-        if !hasAnnouncedArrival, let dest = destination?.placemark.location {
-            let distToDest = location.distance(from: dest)
-            if distToDest <= 10.0 {
-                hasAnnouncedArrival = true
-                announce("You are arriving at your destination.")
+        // 5. SPEED CAMERA PROXIMITY ALERT (replaces the prior
+        //    "PROACTIVE ARRIVAL < 10 m" voice cue, which fired within the
+        //    same 50 m window as `advanceToNextStep` and produced a
+        //    "arriving..." / "arrived..." double-buzz). The remaining
+        //    arrival cue lives in advanceToNextStep at ~50 m, which is the
+        //    only provisioning maintainers should expect going forward.
+        //
+        //    The new alert speaks "Reduce speed, speed camera ahead." ONCE
+        //    per physical camera within 800 ft (~245 m) on the route.
+        //    spokenCameraKeys dedupes on "lat,lon" rounded to 4 decimals
+        //    (~11 m precision), so backend reconstructions of SpeedCamera
+        //    structs across location ticks do NOT trigger re-announces.
+        for camera in nearbyCameras {
+            let distToCamera = location.distance(
+                from: CLLocation(latitude: camera.coordinate.latitude,
+                                 longitude: camera.coordinate.longitude)
+            )
+            if distToCamera <= 245.0 {
+                let key = String(format: "%.4f,%.4f",
+                                 camera.coordinate.latitude,
+                                 camera.coordinate.longitude)
+                if spokenCameraKeys.insert(key).inserted {
+                    announce("Reduce speed, speed camera ahead.")
+                    break // one announcement per location tick max
+                }
             }
         }
     }
@@ -997,6 +1064,34 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             }
         }
         
+        // 1.5 Approaching Warning (TestFlight 2.2.x enhancement): the third
+        // cue, sitting ~643 m / 0.4 mi out from the maneuver — between the
+        // initial "advance" and the immediate "turn" cues. Fires ONCE per
+        // step (gated by the new "approaching" flag in stepStageFlags),
+        // and only AFTER `initial` has spoken while we're still above the
+        // immediate threshold — that gates the cue to genuine long steps
+        // (e.g. blocks >= 643 m) so we don't compress three back-to-back
+        // utterances on short turns.
+        //
+        // Highway maneuvers whose instruction text contains "Merge onto" /
+        // "Take exit" get a "Merging in .4 mile" prefix so the user hears
+        // a clean highway-transition reminder BEFORE the bare instruction
+        // fires at 220 m (e.g. "Take exit 142"). City/local steps fall
+        // through to the existing "In <dist>, <instruction>" phrasing.
+        if flags.contains("initial") &&
+           distanceToTurn <= 643.0 &&
+           distanceToTurn > immediateThreshold &&
+           !flags.contains("approaching") {
+            flags.insert("approaching")
+            let approachingDist = formatDistance(distanceToTurn)
+            let lower = activeInstruction.lowercased()
+            if lower.contains("merge onto") || lower.contains("take exit") {
+                announce("Merging in \(approachingDist).")
+            } else {
+                announce("In \(approachingDist), \(activeInstruction)")
+            }
+        }
+
         // 2. Immediate Turning Warning (Right before the turn)
         if distanceToTurn <= immediateThreshold && !flags.contains("immediate") {
             flags.insert("immediate")
@@ -1216,6 +1311,46 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         case .evCharger:  return "Charge"
         default:           return "Nearby"
         }
+    }
+
+    /// User-triggered re-fetch of the speed-limit answer for the current
+    /// location. Bypasses `SpeeEDLimitResponseCache` via
+    /// `forceRefresh: true` so the live provider chain + SQLite fallback
+    /// run fresh and surface any newer answer. Wired to a tap on the
+    /// `LimitSignView` (see `MapWithHUDView.swift`).
+    ///
+    /// Visual feedback: toggles `isRefreshingSpeedLimit` @Published
+    /// while the call is in flight so the `LimitSignView` can show a
+    /// scale pulse and the user immediately sees their tap landed (even
+    /// when the new answer matches the old one).
+    public func manualRefetchSpeedLimit() async {
+        let now = Date()
+        guard now.timeIntervalSince(lastManualRefetchAt) >= manualRefetchThrottle else { return }
+        lastManualRefetchAt = now
+
+        // No fresh GPS sample yet (cold launch, denied auth, etc.) — the
+        //                                              call would silently go to (0,0).
+        // Bail rather than stash a stale answer over the user's
+        // last-known value.
+        guard let coord = locationManager.latestLocation?.coordinate else {
+            DebugLogger.shared.log("manualRefetchSpeedLimit: skipped (no current GPS fix).")
+            return
+        }
+
+        isRefreshingSpeedLimit = true
+        defer { isRefreshingSpeedLimit = false }
+
+        // Call SmartSpeedLimitService directly so we hit the freshly-plumbed
+        // `forceRefresh:` parameter on the new TestFlight 2.2.x signature
+        // (SpeedEngine's wrapper still routes through the same shared
+        // service, so the @Published `limit` binding picks up the new
+        // value on the next tick automatically).
+        _ = await SmartSpeedLimitService.shared.updateSpeedLimit(
+            at: coord,
+            heading: currentHeading,
+            forceRefresh: true
+        )
+        DebugLogger.shared.log("manualRefetchSpeedLimit: completed (limit=\(limit)).")
     }
 
     /// Promotes an MKMapItem out to Apple Maps for full-fidelity directions,

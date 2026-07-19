@@ -183,11 +183,13 @@ public class SmartSpeedLimitService: ObservableObject {
         at coordinate: CLLocationCoordinate2D,
         heading: Double?,
         currentSpeedMph: Double,
-        roadName: String? = nil
+        roadName: String? = nil,
+        forceRefresh: Bool = false
     ) async -> Int {
         let outcome = await resolveCandidate(
             at: coordinate, heading: heading,
-            currentSpeedMph: currentSpeedMph, roadName: roadName
+            currentSpeedMph: currentSpeedMph, roadName: roadName,
+            forceRefresh: forceRefresh
         )
         return await finalizeWithContinuity(
             outcome: outcome,
@@ -223,10 +225,16 @@ public class SmartSpeedLimitService: ObservableObject {
         at coordinate: CLLocationCoordinate2D,
         heading: Double?,
         currentSpeedMph: Double,
-        roadName: String?
+        roadName: String?,
+        forceRefresh: Bool = false
     ) async -> Candidate {
         // 1. Cache short-circuit.
-        if let cached = await cache.lookup(at: coordinate, roadName: roadName) {
+        //    When `forceRefresh` is true (e.g. the user tapped the speed limit
+        //    sign because the displayed answer is wrong), skip the cache so
+        //    we run the live provider chain + SQLite fallback and surface any
+        //    fresher answer. Normal GPS-driven fetches leave `forceRefresh`
+        //    at its `false` default and continue to hit the cache as before.
+        if !forceRefresh, let cached = await cache.lookup(at: coordinate, roadName: roadName) {
             return Candidate(
                 limit: cached.speedLimitMph,
                 source: sourceForProviderName(cached.providerName),

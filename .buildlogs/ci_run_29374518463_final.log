@@ -1,0 +1,246 @@
+Build and Release Signed IPA	Set up job	﻿2026-07-14T22:54:59.9521750Z Current runner version: '2.335.1'
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9540010Z ##[group]Runner Image Provisioner
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9540600Z Hosted Compute Agent
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9541000Z Version: 20260624.560
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9541430Z Commit: 925d229a51159bc391ae97e54a2dd1fe20af789d
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9541970Z Build Date: 2026-06-24T18:26:47Z
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9542460Z Worker ID: {0e9ab95a-481f-4e6d-8df4-e77bd80be867}
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9542940Z Azure Region: westus
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9543340Z ##[endgroup]
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9544420Z ##[group]Operating System
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9544880Z macOS
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9545240Z 26.4
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9545600Z 25E246
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9545950Z ##[endgroup]
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9546310Z ##[group]Runner Image
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9546740Z Image: macos-26-arm64
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9547140Z Version: 20260630.0213.1
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9547900Z Included Software: https://github.com/actions/runner-images/blob/macos-26-arm64/20260630.0213/images/macos/macos-26-arm64-Readme.md
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9549140Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-26-arm64%2F20260630.0213
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9549840Z ##[endgroup]
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9550720Z ##[group]GITHUB_TOKEN Permissions
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9551950Z Contents: read
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9552350Z Metadata: read
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9552720Z Packages: read
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9553090Z ##[endgroup]
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9554440Z Secret source: Actions
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9554920Z Prepare workflow directory
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9799130Z Prepare all required actions
+Build and Release Signed IPA	Set up job	2026-07-14T22:54:59.9878030Z Getting action download info
+Build and Release Signed IPA	Set up job	2026-07-14T22:55:00.1064820Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+Build and Release Signed IPA	Set up job	2026-07-14T22:55:00.4417510Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+Build and Release Signed IPA	Set up job	2026-07-14T22:55:00.8004200Z Complete job name: Build and Release Signed IPA
+Build and Release Signed IPA	Checkout repository	﻿2026-07-14T22:55:00.9111790Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9134740Z ##[group]Run actions/checkout@v4
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9135930Z with:
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9136350Z   fetch-depth: 0
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9136780Z   repository: Srihan-Yeleswarapu/SmartSpeedCompanion
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9140800Z   token: ***
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9141180Z   ssh-strict: true
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9141730Z   ssh-user: git
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9146080Z   persist-credentials: true
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9146520Z   clean: true
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9146870Z   sparse-checkout-cone-mode: true
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9147340Z   fetch-tags: false
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9147880Z   show-progress: true
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9148300Z   lfs: false
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9148660Z   submodules: false
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9172580Z   set-safe-directory: true
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:00.9175410Z ##[endgroup]
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4140400Z Syncing repository: Srihan-Yeleswarapu/SmartSpeedCompanion
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4142150Z ##[group]Getting Git version info
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4142870Z Working directory is '/Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion'
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4143940Z [command]/opt/homebrew/bin/git version
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4380040Z git version 2.55.0
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4393610Z ##[endgroup]
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4400180Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/e2a20620-7f09-404d-bf94-bcadf3ab275a/.gitconfig'
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4411660Z Temporarily overriding HOME='/Users/runner/work/_temp/e2a20620-7f09-404d-bf94-bcadf3ab275a' before making global git config changes
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4414440Z Adding repository directory to the temporary git global config as a safe directory
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4474630Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4527980Z Deleting the contents of '/Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion'
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4531370Z ##[group]Initializing the repository
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4533280Z [command]/opt/homebrew/bin/git init /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4745740Z hint: Using 'master' as the name for the initial branch. This default branch name
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4750080Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4751840Z hint: to use in all of your new repositories, which will suppress this warning,
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4752790Z hint: call:
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4753500Z hint:
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4754050Z hint: 	git config --global init.defaultBranch <name>
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4754850Z hint:
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4755520Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4758430Z hint: 'development'. The just-created branch can be renamed via this command:
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4759380Z hint:
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4759930Z hint: 	git branch -m <name>
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4760660Z hint:
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4761310Z hint: Disable this message with "git config set advice.defaultBranchName false"
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4763160Z Initialized empty Git repository in /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/.git/
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4766750Z [command]/opt/homebrew/bin/git remote add origin https://github.com/Srihan-Yeleswarapu/SmartSpeedCompanion
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4830030Z ##[endgroup]
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4831120Z ##[group]Disabling automatic garbage collection
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4832720Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4909550Z ##[endgroup]
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4910500Z ##[group]Setting up auth
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4911570Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.4961250Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.5871600Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.5926060Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.6694550Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.6748490Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.8056290Z [command]/opt/homebrew/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.8094660Z ##[endgroup]
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.8097940Z ##[group]Fetching the repository
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:01.8099860Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8559410Z From https://github.com/Srihan-Yeleswarapu/SmartSpeedCompanion
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8560440Z  * [new branch]      main                   -> origin/main
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8560900Z  * [new branch]      version2               -> origin/version2
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8561380Z  * [new tag]         03152026_without_alert -> 03152026_without_alert
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8568250Z [command]/opt/homebrew/bin/git branch --list --remote origin/version2
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8642530Z   origin/version2
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8649340Z [command]/opt/homebrew/bin/git rev-parse refs/remotes/origin/version2
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8700590Z a33596c40e771717374bf8f4202247f19c8b7c40
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8702430Z ##[endgroup]
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8703370Z ##[group]Determining the checkout info
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8703840Z ##[endgroup]
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8706740Z [command]/opt/homebrew/bin/git sparse-checkout disable
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8786290Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8847590Z ##[group]Checking out the ref
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:03.8849920Z [command]/opt/homebrew/bin/git checkout --progress --force -B version2 refs/remotes/origin/version2
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:04.1301860Z Switched to a new branch 'version2'
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:04.1308190Z branch 'version2' set up to track 'origin/version2'.
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:04.2340260Z ##[endgroup]
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:04.2413030Z [command]/opt/homebrew/bin/git log -1 --format=%H
+Build and Release Signed IPA	Checkout repository	2026-07-14T22:55:04.2470040Z a33596c40e771717374bf8f4202247f19c8b7c40
+Build and Release Signed IPA	Select Xcode	﻿2026-07-14T22:55:04.2638970Z ##[group]Run XCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+Build and Release Signed IPA	Select Xcode	2026-07-14T22:55:04.2639580Z ^[[36;1mXCODE_PATH=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)^[[0m
+Build and Release Signed IPA	Select Xcode	2026-07-14T22:55:04.2639950Z ^[[36;1mecho "Selecting: $XCODE_PATH"^[[0m
+Build and Release Signed IPA	Select Xcode	2026-07-14T22:55:04.2640250Z ^[[36;1msudo xcode-select -s "$XCODE_PATH/Contents/Developer"^[[0m
+Build and Release Signed IPA	Select Xcode	2026-07-14T22:55:04.2681680Z shell: /bin/bash -e {0}
+Build and Release Signed IPA	Select Xcode	2026-07-14T22:55:04.2681910Z ##[endgroup]
+Build and Release Signed IPA	Select Xcode	2026-07-14T22:55:04.3142130Z Selecting: /Applications/Xcode_26.6.0.app
+Build and Release Signed IPA	Install XcodeGen	﻿2026-07-14T22:55:04.3610920Z ##[group]Run brew install xcodegen
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:04.3611370Z ^[[36;1mbrew install xcodegen^[[0m
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:04.3650970Z shell: /bin/bash -e {0}
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:04.3651220Z ##[endgroup]
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:07.9484800Z ##[warning]The following taps are not trusted:
+Build and Release Signed IPA	Install XcodeGen	  aws/tap
+Build and Release Signed IPA	Install XcodeGen	
+Build and Release Signed IPA	Install XcodeGen	Homebrew is currently ignoring formulae, casks and commands from these taps because tap trust is required.
+Build and Release Signed IPA	Install XcodeGen	Untap them with:
+Build and Release Signed IPA	Install XcodeGen	  brew untap aws/tap
+Build and Release Signed IPA	Install XcodeGen	Trust specific formulae, casks and commands with:
+Build and Release Signed IPA	Install XcodeGen	  brew trust --formula <user>/<tap>/<formula>
+Build and Release Signed IPA	Install XcodeGen	  brew trust --cask <user>/<tap>/<cask>
+Build and Release Signed IPA	Install XcodeGen	  brew trust --command <user>/<tap>/<command>
+Build and Release Signed IPA	Install XcodeGen	Whole-tap trust is broader and includes all current and future formulae,
+Build and Release Signed IPA	Install XcodeGen	casks and commands from the listed taps. Trust whole taps with:
+Build and Release Signed IPA	Install XcodeGen	  brew trust aws/tap
+Build and Release Signed IPA	Install XcodeGen	To disable trust checks:
+Build and Release Signed IPA	Install XcodeGen	  export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
+Build and Release Signed IPA	Install XcodeGen	This is not recommended and will be removed in a later release.
+Build and Release Signed IPA	Install XcodeGen	For more information, see:
+Build and Release Signed IPA	Install XcodeGen	  https://docs.brew.sh/Tap-Trust
+Build and Release Signed IPA	Install XcodeGen	
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:08.3233360Z ^[[34m==>^[[0m ^[[1mWould install 1 formula:^[[0m
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:08.3233780Z xcodegen
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:08.3260930Z ^[[34m==>^[[0m ^[[1mDownloading https://ghcr.io/v2/homebrew/core/xcodegen/manifests/2.45.4^[[0m
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:08.7182010Z ^[[32m==>^[[0m ^[[1mFetching downloads for: ^[[32mxcodegen^[[39m^[[0m
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:09.3488740Z ✔︎ Bottle xcodegen (2.45.4)
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:09.4942780Z ^[[34m==>^[[0m ^[[1mPouring xcodegen--2.45.4.arm64_tahoe.bottle.tar.gz^[[0m
+Build and Release Signed IPA	Install XcodeGen	2026-07-14T22:55:09.5677630Z 🍺  /opt/homebrew/Cellar/xcodegen/2.45.4: 38 files, 7.4MB
+Build and Release Signed IPA	Generate Xcode project	﻿2026-07-14T22:55:09.5845210Z ##[group]Run xcodegen generate
+Build and Release Signed IPA	Generate Xcode project	2026-07-14T22:55:09.5845450Z ^[[36;1mxcodegen generate^[[0m
+Build and Release Signed IPA	Generate Xcode project	2026-07-14T22:55:09.5874690Z shell: /bin/bash -e {0}
+Build and Release Signed IPA	Generate Xcode project	2026-07-14T22:55:09.5874870Z ##[endgroup]
+Build and Release Signed IPA	Generate Xcode project	2026-07-14T22:55:09.6271900Z ⚙️  Generating plists...
+Build and Release Signed IPA	Generate Xcode project	2026-07-14T22:55:09.6289240Z ⚙️  Generating project...
+Build and Release Signed IPA	Generate Xcode project	2026-07-14T22:55:09.6448380Z ⚙️  Writing project...
+Build and Release Signed IPA	Generate Xcode project	2026-07-14T22:55:09.6538660Z Created project at /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcodeproj
+Build and Release Signed IPA	Download iOS platform for Xcode	﻿2026-07-14T22:55:09.6577700Z ##[group]Run echo "Checking available platforms..."
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:09.6578070Z ^[[36;1mecho "Checking available platforms..."^[[0m
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:09.6578340Z ^[[36;1mxcrun simctl list runtimes^[[0m
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:09.6578580Z ^[[36;1mecho "Downloading iOS platform..."^[[0m
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:09.6578870Z ^[[36;1msudo xcodebuild -downloadPlatform iOS^[[0m
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:09.6612890Z shell: /bin/bash -e {0}
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:09.6613170Z ##[endgroup]
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:09.6881090Z Checking available platforms...
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5066290Z == Runtimes ==
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5073300Z iOS 26.2 (26.2 - 23C54) - com.apple.CoreSimulator.SimRuntime.iOS-26-2
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5078900Z iOS 26.4 (26.4.1 - 23E254a) - com.apple.CoreSimulator.SimRuntime.iOS-26-4
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5081230Z iOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5084020Z tvOS 26.2 (26.2 - 23K51) - com.apple.CoreSimulator.SimRuntime.tvOS-26-2
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5092910Z tvOS 26.4 (26.4 - 23L243a) - com.apple.CoreSimulator.SimRuntime.tvOS-26-4
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5098550Z tvOS 26.5 (26.5 - 23L470) - com.apple.CoreSimulator.SimRuntime.tvOS-26-5
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5099670Z watchOS 26.2 (26.2 - 23S303) - com.apple.CoreSimulator.SimRuntime.watchOS-26-2
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5100510Z watchOS 26.4 (26.4 - 23T240b) - com.apple.CoreSimulator.SimRuntime.watchOS-26-4
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5101380Z watchOS 26.5 (26.5 - 23T570) - com.apple.CoreSimulator.SimRuntime.watchOS-26-5
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5102370Z visionOS 26.2 (26.2 - 23N301) - com.apple.CoreSimulator.SimRuntime.xrOS-26-2
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5103020Z visionOS 26.4 (26.4.1 - 23O249a) - com.apple.CoreSimulator.SimRuntime.xrOS-26-4
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5103740Z visionOS 26.5 (26.5 - 23O470) - com.apple.CoreSimulator.SimRuntime.xrOS-26-5
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:21.5104750Z Downloading iOS platform...
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:24.0265800Z Finding content...
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:25.0718890Z Automatically resolved architecture variant for platform iOS as 'arm64'.
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:25.0824010Z iOS is already downloaded as universal. To replace it with arm64Only, first delete the existing one.
+Build and Release Signed IPA	Download iOS platform for Xcode	2026-07-14T22:55:25.0868330Z iOS 26.5 (23F77) - 0DD82569-A011-444A-8601-1993C6C8FE56
+Build and Release Signed IPA	Set up signing keychain & install certificate	﻿2026-07-14T22:55:25.1095910Z ##[group]Run if [ ! -f SmartSpeedCompanion/distribution.cer ]; then
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1096410Z ^[[36;1mif [ ! -f SmartSpeedCompanion/distribution.cer ]; then^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1096750Z ^[[36;1m  echo "distribution.cer not found"^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1097040Z ^[[36;1m  exit 1^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1097300Z ^[[36;1mfi^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1097560Z ^[[36;1mif [ ! -f SmartSpeedCompanion/SmartSpeedCompanion.key ]; then^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1097960Z ^[[36;1m  echo "SmartSpeedCompanion.key not found"^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1098240Z ^[[36;1m  exit 1^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1098470Z ^[[36;1mfi^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1098690Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1099020Z ^[[36;1msecurity create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1099600Z ^[[36;1msecurity set-keychain-settings -lut 21600 "$RUNNER_TEMP/app-signing.keychain-db"^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1100180Z ^[[36;1msecurity unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1100650Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1101030Z ^[[36;1mopenssl x509 -inform DER -in SmartSpeedCompanion/distribution.cer -out /tmp/distribution.pem^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1101850Z ^[[36;1mopenssl pkcs12 -export -inkey SmartSpeedCompanion/SmartSpeedCompanion.key -in /tmp/distribution.pem -out "$RUNNER_TEMP/build_certificate.p12" -passout pass:speedio123^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1102740Z ^[[36;1msecurity import "$RUNNER_TEMP/build_certificate.p12" -k "$RUNNER_TEMP/app-signing.keychain-db" -P "speedio123" -T /usr/bin/codesign -T /usr/bin/security^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1103330Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1103820Z ^[[36;1msecurity set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1104290Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1104630Z ^[[36;1mORIGINAL_KEYCHAINS=$(security list-keychains 2>/dev/null | tr -d '"' | tr -d ' ')^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1105130Z ^[[36;1msecurity list-keychains -s "$RUNNER_TEMP/app-signing.keychain-db" $ORIGINAL_KEYCHAINS^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1105550Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1105810Z ^[[36;1mecho "=== Available signing identities ==="^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1106210Z ^[[36;1msecurity find-identity -v -p codesigning "$RUNNER_TEMP/app-signing.keychain-db"^[[0m
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1139680Z shell: /bin/bash -e {0}
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1139930Z env:
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1140130Z   KEYCHAIN_PASSWORD: build_keychain_pass
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.1140630Z ##[endgroup]
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.3696120Z security: SecKeychainItemImport: MAC verification failed during PKCS12 import (wrong password?)
+Build and Release Signed IPA	Set up signing keychain & install certificate	2026-07-14T22:55:25.3709350Z ##[error]Process completed with exit code 1.
+Build and Release Signed IPA	Upload Artifacts	﻿2026-07-14T22:55:25.3903660Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3905270Z ##[group]Run actions/upload-artifact@v4
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3905570Z with:
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3905810Z   name: Speedio-IPA-141
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3906050Z   path: Export/*.ipa
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3906270Z   retention-days: 7
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3906440Z   if-no-files-found: warn
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3906650Z   compression-level: 6
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3906860Z   overwrite: false
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3907100Z   include-hidden-files: false
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.3907300Z ##[endgroup]
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.7320060Z (node:4507) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.7320810Z (Use `node --trace-deprecation ...` to show where the warning was created)
+Build and Release Signed IPA	Upload Artifacts	2026-07-14T22:55:25.7330210Z ##[warning]No files were found with the provided path: Export/*.ipa. No artifacts will be uploaded.
+Build and Release Signed IPA	Post Checkout repository	﻿2026-07-14T22:55:25.7540860Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.7541990Z Post job cleanup.
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.8561500Z [command]/opt/homebrew/bin/git version
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.8765480Z git version 2.55.0
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.8787060Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/2ec1ee7f-7b54-4400-b335-605709a678a7/.gitconfig'
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.8794850Z Temporarily overriding HOME='/Users/runner/work/_temp/2ec1ee7f-7b54-4400-b335-605709a678a7' before making global git config changes
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.8801800Z Adding repository directory to the temporary git global config as a safe directory
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.8802610Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.8941910Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.9006270Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.9911200Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.9965800Z http.https://github.com/.extraheader
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:25.9972410Z [command]/opt/homebrew/bin/git config --local --unset-all http.https://github.com/.extraheader
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:26.0033970Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:26.0831300Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Build and Release Signed IPA	Post Checkout repository	2026-07-14T22:55:26.0893690Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Build and Release Signed IPA	Complete job	﻿2026-07-14T22:55:26.1699310Z Cleaning up orphan processes
+Build and Release Signed IPA	Complete job	2026-07-14T22:55:26.8076170Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

@@ -1,0 +1,30 @@
+feat(ci): add optional WIDGET_PROVISIONING_PROFILE_BASE64 plumbing
+
+altool error 90164 has been the persistent blocker on the widget extension.
+Apple App Store Connect inherits the host embedded.mobileprovision
+hierarchically when the widget has none of its own, and the host profile
+authorizes only application-identifier for the HOST bid. A codesign blob
+with the WIDGET bid mismatches the inherited HOST profile and ASC rejects
+the upload with:
+
+  Invalid Code Signing Entitlements (90164). According to the
+  provisioning profile, the bundle contains a key value that is not
+  allowed: VCNBBG32P6.com.speedsense.app.SpeedWidget for the key
+  application-identifier in .../SmartSpeedCompanionWidget.
+
+The structural fix (and only durable fix) is a separate App Store
+provisioning profile for App ID com.speedsense.app.SpeedWidget. Provision
+the profile in Apple Developer Portal, base64-encode it, add as the new
+GH Actions secret WIDGET_PROVISIONING_PROFILE_BASE64.
+
+Once the secret is set, this workflow:
+1. decodes the widget profile alongside the host profile
+2. extracts its :Entitlements to /tmp/widget_entitlements.plist
+3. embeds the widget profile into widget.appex before codesign
+4. signs widget with widget profile ENTITLEMENTS instead of fabricated
+
+When the secret is NOT set the workflow prints an in-log banner explaining
+exactly how to provision the widget profile, then falls back to the prior
+fabricated-fallback path so 90164 is still observable (not masked).
+
+Verified: YAML parses OK; code-reviewer-minimax-m3 verdict PASS.

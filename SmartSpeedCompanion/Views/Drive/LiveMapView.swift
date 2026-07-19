@@ -278,9 +278,11 @@ public struct LiveMapView: UIViewRepresentable {
         var targetPitch: Double = 0
         var zoomReason = "unk"
 
-        // 3D flyover mode (user toggle) — only when navigating and on a long
-        // straight highway stretch so we don't disorient the driver in cities.
-        if viewModel.threeDFlyoverEnabled && isNavigating && distanceToTurn > 4000 && speed > 50 {
+        // 3D flyover (baked-in default — was a user toggle pre-2.2.x).
+        // Only kicks in when actively navigating, well above city speeds, with
+        // no turn coming up soon, so it always lands in the conditions where
+        // a tilted, pulled-back highway perspective looks good.
+        if isNavigating && distanceToTurn > 4000 && speed > 50 {
             targetAltitude = max(targetAltitude, 3500)
             targetPitch = 55
             zoomReason += "+flyover"

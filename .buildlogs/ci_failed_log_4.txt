@@ -1,0 +1,162 @@
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	﻿2026-07-14T16:56:00.0682660Z ##[group]Run # Defense-in-depth: surface any non-zero exit from xcodebuild directly instead of
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0683670Z ^[[36;1m# Defense-in-depth: surface any non-zero exit from xcodebuild directly instead of^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0684300Z ^[[36;1m# letting the step finish "successfully" without an xcarchive artifact (which is^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0684820Z ^[[36;1m# what it has been doing every run since the speed-limit feature landed).^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0685310Z ^[[36;1mset -euo pipefail^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0685740Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0686480Z ^[[36;1msecurity unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0686990Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0687250Z ^[[36;1mecho "=== Available signing identities ==="^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0687800Z ^[[36;1msecurity find-identity -v -p codesigning "$RUNNER_TEMP/app-signing.keychain-db"^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0688280Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0688510Z ^[[36;1mecho "=== Provisioning profiles ==="^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0689070Z ^[[36;1mls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0689560Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0689970Z ^[[36;1mecho "=== xcodebuild archive START at $(date -u +%H:%M:%SZ) ==="^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0690410Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0690800Z ^[[36;1m# Auto-derive CFBundleVersion from the commit count. ASC rejects any upload whose^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0691770Z ^[[36;1m# CFBundleVersion isn't strictly higher than the previously uploaded one, so without^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0692390Z ^[[36;1m# this override every push reuses the static CURRENT_PROJECT_VERSION in project.yml^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0693450Z ^[[36;1m# and ASC sees the duplicate. Each push now gets a unique, automatically-monotonic^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0694050Z ^[[36;1m# build number derived from `git rev-list --count HEAD`.^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0694500Z ^[[36;1mCURRENT_BUILD=$(git rev-list --count HEAD)^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0694980Z ^[[36;1mecho "=== Auto-derived build number: ${CURRENT_BUILD} ==="^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0695410Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0695710Z ^[[36;1m# Capture the real exit code without aborting on it.^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0696130Z ^[[36;1mset +e^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0697600Z ^[[36;1mxcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" CURRENT_PROJECT_VERSION="${CURRENT_BUILD}" -archivePath ./SmartSpeedCompanion.xcarchive^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0698970Z ^[[36;1mBUILD_EXIT=$?^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0699300Z ^[[36;1mset -e^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0699540Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0701950Z ^[[36;1mecho "=== xcodebuild DONE at $(date -u +%H:%M:%SZ); exit=${BUILD_EXIT} ==="^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0702850Z ^[[36;1mecho "=== Archive directory check ==="^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0703300Z ^[[36;1mls -la ./SmartSpeedCompanion.xcarchive 2>&1 | head -25 || true^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0703770Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0704110Z ^[[36;1mif [ "${BUILD_EXIT}" -ne 0 ]; then^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0704510Z ^[[36;1m  echo "*** FATAL: xcodebuild failed with exit ${BUILD_EXIT} ***"^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0705020Z ^[[36;1m  exit "${BUILD_EXIT}"^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0705320Z ^[[36;1mfi^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0705610Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0706000Z ^[[36;1mif [ ! -d "./SmartSpeedCompanion.xcarchive" ]; then^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0706510Z ^[[36;1m  echo "*** FATAL: xcodebuild exited 0 but no .xcarchive was produced ***"^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0707000Z ^[[36;1m  exit 1^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0708020Z ^[[36;1mfi^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0708270Z ^[[36;1m^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0708600Z ^[[36;1mecho "=== Archive verified ==="^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.0708980Z ^[[36;1mls -la ./SmartSpeedCompanion.xcarchive/^[[0m
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.1091470Z shell: /bin/bash -e {0}
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.1091800Z env:
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.1092650Z   KEYCHAIN_PASSWORD: build_keychain_pass
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.1092990Z ##[endgroup]
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.2820200Z === Available signing identities ===
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.6657120Z   1) 5853692E26CEDDC14B046AE322BA387BE2FA6CCD "Apple Distribution: Sreelakshmi Chintapalli (VCNBBG32P6)"
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.6765580Z      1 valid identities found
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.6897980Z === Provisioning profiles ===
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.7029710Z total 24
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.7132490Z drwxr-xr-x  3 runner  staff     96 Jul 14 16:55 .
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.7234820Z drwxr-xr-x  3 runner  staff     96 Jul 14 16:55 ..
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.7340760Z -rw-r--r--  1 runner  staff  12166 Jul 14 16:55 a10ac4cb-a250-46e8-ad8f-0ad805ab0e90.mobileprovision
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.7447490Z === xcodebuild archive START at 16:56:00Z ===
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:00.9337560Z === Auto-derived build number: 333 ===
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.6730720Z Command line invocation:
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.6812080Z     /Applications/Xcode_26.3.app/Contents/Developer/usr/bin/xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination generic/platform=iOS CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO "PROVISIONING_PROFILE_SPECIFIER=Speedio App Store" CURRENT_PROJECT_VERSION=333 -archivePath ./SmartSpeedCompanion.xcarchive
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.6815760Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.6939880Z Build settings from command line:
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.7054410Z     CODE_SIGN_IDENTITY = -
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.7167880Z     CODE_SIGNING_ALLOWED = NO
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.7274800Z     CODE_SIGNING_REQUIRED = NO
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.7384850Z     CURRENT_PROJECT_VERSION = 333
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.7496090Z     PROVISIONING_PROFILE_SPECIFIER = Speedio App Store
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.7630460Z     SDKROOT = iphoneos26.2
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:09.7744830Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:14.9935260Z Resolve Package Graph
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:15.5446240Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:15.5554020Z Fetching from https://github.com/firebase/firebase-ios-sdk.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:56:59.4230880Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:22.8754920Z Fetching from https://github.com/google/interop-ios-for-google-sdks.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:23.9462230Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:23.9463910Z Fetching from https://github.com/google/app-check.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:24.2233150Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:24.2334410Z Fetching from https://github.com/firebase/leveldb.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:25.4037260Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:25.4141820Z Fetching from https://github.com/google/grpc-binary.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:25.4252780Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:25.4380410Z Fetching from https://github.com/firebase/nanopb.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:26.9420620Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:26.9525320Z Fetching from https://github.com/google/gtm-session-fetcher.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:27.1691430Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:27.1794160Z Fetching from https://github.com/google/GoogleUtilities.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:28.2820160Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:28.2821150Z Fetching from https://github.com/google/GoogleDataTransport.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:28.6769150Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:28.6779270Z Fetching from https://github.com/google/GoogleAppMeasurement.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:29.2568660Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:29.2570580Z Fetching from https://github.com/google/promises.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:29.8487830Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:29.8515550Z Fetching from https://github.com/google/abseil-cpp-binary.git
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:57:30.1512430Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:06.9712610Z Fetching from https://github.com/googleads/google-ads-on-device-conversion-ios-sdk
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:07.8458080Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:22.4477730Z Creating working copy of package ‘google-ads-on-device-conversion-ios-sdk’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:22.5383020Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:22.5492830Z Checking out 3.6.1 of package ‘google-ads-on-device-conversion-ios-sdk’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:22.8937210Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:22.9948080Z Creating working copy of package ‘gtm-session-fetcher’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:23.1060130Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:23.1236680Z Checking out 5.3.0 of package ‘gtm-session-fetcher’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:23.2778610Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:23.3402130Z Creating working copy of package ‘GoogleAppMeasurement’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:24.3578670Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:24.3723750Z Checking out 12.16.0 of package ‘GoogleAppMeasurement’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:24.7281700Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:24.7785110Z Creating working copy of package ‘GoogleUtilities’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:24.9623580Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:24.9895930Z Checking out 8.1.2 of package ‘GoogleUtilities’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:25.2471460Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:25.3441230Z Creating working copy of package ‘leveldb’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:25.5859750Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:25.5968730Z Checking out 1.22.5 of package ‘leveldb’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:25.8022660Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:25.9733090Z Creating working copy of package ‘GoogleDataTransport’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:26.2961420Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:26.3189560Z Checking out 10.1.0 of package ‘GoogleDataTransport’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:27.1854340Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:27.3044360Z Creating working copy of package ‘nanopb’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:27.4999560Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:27.5130150Z Checking out 2.30910.1 of package ‘nanopb’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:28.1870950Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:28.3729450Z Creating working copy of package ‘abseil-cpp-binary’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:28.7256900Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:28.7384240Z Checking out 1.2024072200.0 of package ‘abseil-cpp-binary’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:28.7891420Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:28.9227700Z Creating working copy of package ‘promises’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:29.2354360Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:29.2503580Z Checking out 2.4.1 of package ‘promises’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:29.5342990Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:29.6312230Z Creating working copy of package ‘app-check’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:29.7907910Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:29.8015490Z Checking out 11.3.1 of package ‘app-check’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.0717870Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.2302250Z Creating working copy of package ‘interop-ios-for-google-sdks’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.3835020Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.3944760Z Checking out 101.0.0 of package ‘interop-ios-for-google-sdks’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.5034670Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.6009910Z Creating working copy of package ‘grpc-binary’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.7873720Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.8099140Z Checking out 1.69.1 of package ‘grpc-binary’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.9128590Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:30.9857560Z Creating working copy of package ‘firebase-ios-sdk’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:31.7974770Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:31.8079450Z Checking out 12.16.0 of package ‘firebase-ios-sdk’
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:58:39.0431390Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:38.9623970Z 2026-07-14 16:59:38.960 xcodebuild[16257:47350] Writing error result bundle to /var/folders/k8/j7r3p6cx43xdqhzy2rmp6tqr0000gn/T/ResultBundle_2026-14-07_16-59-0038.xcresult
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:39.6071020Z xcodebuild: error: Could not resolve package dependencies:
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:39.6108160Z   failed downloading 'https://dl.google.com/firebase/ios/bin/firestore/12.16.0/rc0/FirebaseFirestoreInternal.zip' which is required by binary target 'FirebaseFirestoreInternal': downloadError("The network connection was lost.")
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:39.6146060Z   failed downloading 'https://dl.google.com/firebase/ios/bin/grpc/1.69.1/rc0/grpc.zip' which is required by binary target 'grpc': downloadError("The network connection was lost.")
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:39.6158550Z   fatalError
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:39.6176680Z 
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:39.9607400Z failed downloading 'https://dl.google.com/firebase/ios/bin/firestore/12.16.0/rc0/FirebaseFirestoreInternal.zip' which is required by binary target 'FirebaseFirestoreInternal': downloadError("The network connection was lost.")failed downloading 'https://dl.google.com/firebase/ios/bin/grpc/1.69.1/rc0/grpc.zip' which is required by binary target 'grpc': downloadError("The network connection was lost.")fatalError=== xcodebuild DONE at 16:59:39Z; exit=74 ===
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:39.9636640Z === Archive directory check ===
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:39.9736170Z ls: ./SmartSpeedCompanion.xcarchive: No such file or directory
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:39.9762340Z *** FATAL: xcodebuild failed with exit 74 ***
+Build and Release Signed IPA	Build Archive (Unsigned for SPM targets)	2026-07-14T16:59:40.0128570Z ##[error]Process completed with exit code 74.

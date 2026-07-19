@@ -1,0 +1,784 @@
+XCODE_PATH=$(ls -d /Applications/Xcode_26.6*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE_PATH" ]; then
+            XCODE_PATH=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
+          fi
+          if [ -z "$XCODE_PATH" ]; then
+            echo "[ERROR] No Xcode 26.x installed on this runner. Check the macos-26 runner image manifest."
+            ls -d /Applications/Xcode_* 2>/dev/null
+            exit 1
+          fi
+          echo "Selecting: $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+
+
+# ---- next ----
+echo "Checking available platforms..."
+          xcrun simctl list runtimes
+          echo "Downloading iOS platform..."
+          sudo xcodebuild -downloadPlatform iOS
+
+
+# ---- next ----
+if [ ! -f SmartSpeedCompanion/distribution.cer ]; then
+            echo "distribution.cer not found"
+            exit 1
+          fi
+          if [ ! -f SmartSpeedCompanion/SmartSpeedCompanion.key ]; then
+            echo "SmartSpeedCompanion.key not found"
+            exit 1
+          fi
+
+
+# ---- next ----
+security create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/app-signing.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
+
+
+# ---- next ----
+openssl x509 -inform DER -in SmartSpeedCompanion/distribution.cer -out /tmp/distribution.pem
+          # Force legacy PKCS12 algorithms (PBES1 + 3DES + SHA1 HMAC). OpenSSL 3.x
+          # defaults to PBES2 / AES-256 / SHA256 which `security import` on macOS
+          # rejects with "MAC verification failed during PKCS12 import (wrong password?)".
+          # The legacy crypto override restores cross-tool compatibility.
+          openssl pkcs12 -export -inkey SmartSpeedCompanion/SmartSpeedCompanion.key -in /tmp/distribution.pem -out "$RUNNER_TEMP/build_certificate.p12" -passout pass:speedio123 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+          security import "$RUNNER_TEMP/build_certificate.p12" -k "$RUNNER_TEMP/app-signing.keychain-db" -P "speedio123" -T /usr/bin/codesign -T /usr/bin/security
+
+
+# ---- next ----
+ORIGINAL_KEYCHAINS=$(security list-keychains 2>/dev/null | tr -d '"' | tr -d ' ')
+          security list-keychains -s "$RUNNER_TEMP/app-signing.keychain-db" $ORIGINAL_KEYCHAINS
+
+
+# ---- next ----
+echo "=== Available signing identities ==="
+          security find-identity -v -p codesigning "$RUNNER_TEMP/app-signing.keychain-db"
+
+
+# ---- next ----
+PP_BASE64: ${{ secrets.APPSTORE_PROVISIONING_PROFILE_BASE64 }}
+          WIDGET_PP_BASE64: ${{ secrets.WIDGET_PROVISIONING_PROFILE_BASE64 }}
+
+
+# ---- next ----
+# Step 1: Decode base64 -> raw bytes
+          python3 -c "import base64; data = base64.b64decode(''.join('$PP_BASE64'.split())); open('/tmp/profile.mobileprovision.raw', 'wb').write(data); print(f'Raw file: {len(data)} bytes')"
+
+
+# ---- next ----
+# Step 2: Install the ORIGINAL raw PKCS#7 envelope. Apple's DVTProvisioningProfileManager
+          # only accepts the PKCS#7 signed-data format AND the file must be named <UUID>.mobileprovision.
+          # Previous iterations that wrote the unwrapped plist caused xcodebuild to log
+          # "Profile is missing the required UUID property" because Apple's parser expects PKCS#7.
+          # PlistBuddy cannot read PKCS#7 binary, so we also produce an unwrapped plist copy at
+          # /tmp/profile.unwrapped.plist for metadata extraction and entitlements.
+          if security cms -D -in /tmp/profile.mobileprovision.raw -out /tmp/profile.unwrapped.plist 2>/dev/null; then
+            echo "[OK] Successfully unwrapped CMS/PKCS#7 envelope via security cms"
+          else
+            echo "[WARN] security cms -D failed - extracting embedded plist directly from DER structure"
+            python3 -c "import plistlib,sys; d=open('/tmp/profile.mobileprovision.raw','rb').read(); s=d.find(b'<?xml'); e=d.find(b'</plist>',s); assert s>=0 and e>=0,b'no plist boundaries found'; pb=d[s:e+len(b'</plist>')]; p=plistlib.loads(pb); assert 'UUID' in p,b'plist missing required UUID property'; open('/tmp/profile.unwrapped.plist','wb').write(pb); print('[OK] extracted clean plist: %d bytes, UUID=%s, Name=%s' % (len(pb),p['UUID'],p.get('Name','?')))"
+          fi
+
+
+# ---- next ----
+# /tmp/profile.mobileprovision must be the RAW PKCS#7 file - this is what xcodebuild
+          # DVTProvisioningProfileManager expects and what we'll later embed in the IPA.
+          cp /tmp/profile.mobileprovision.raw /tmp/profile.mobileprovision
+          echo "Profile file size: $(wc -c < /tmp/profile.mobileprovision) bytes (raw PKCS#7)"
+
+
+# ---- next ----
+# Extract metadata via PlistBuddy on the UNWRAPPED plist (PlistBuddy can't read PKCS#7).
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+          APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/profile.unwrapped.plist 2>/dev/null || echo "unknown")
+
+
+# ---- next ----
+# Robust UUID extraction via plistlib (independent of PlistBuddy) for the install filename.
+          UUID_FROM_PLIST=$(python3 -c "import plistlib; print(plistlib.loads(open('/tmp/profile.unwrapped.plist','rb').read()).get('UUID',''))" 2>/dev/null || echo "")
+          if [ -n "$UUID_FROM_PLIST" ]; then
+            PROFILE_UUID="$UUID_FROM_PLIST"
+          fi
+
+
+# ---- next ----
+# Validate that PROFILE_UUID is a real UUID-shaped string before using it in a filename.
+          if echo "$PROFILE_UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+            INSTALL_NAME="${PROFILE_UUID}.mobileprovision"
+          else
+            echo "[WARN] No valid UUID extracted - installing as profile.mobileprovision as fallback"
+            INSTALL_NAME="profile.mobileprovision"
+          fi
+
+
+# ---- next ----
+echo "Profile Name: $PROFILE_NAME"
+          echo "Profile UUID: $PROFILE_UUID"
+          echo "Team ID: $TEAM_ID"
+          echo "App ID: $APPID"
+
+
+# ---- next ----
+/usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.unwrapped.plist > /tmp/entitlements.plist 2>/dev/null
+          if [ -s /tmp/entitlements.plist ]; then
+            echo "[OK] Extracted entitlements from provisioning profile"
+          else
+            echo "[WARN] Could not extract entitlements from profile"
+          fi
+
+
+# ---- next ----
+PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PP_DIR"
+          # Install the RAW PKCS#7 with proper <UUID>.mobileprovision filename.
+          cp /tmp/profile.mobileprovision.raw "$PP_DIR/${INSTALL_NAME}"
+          echo "Installed provisioning profile to: $PP_DIR/${INSTALL_NAME}"
+          ls -la "$PP_DIR/"
+
+
+# ---- next ----
+# ---- WIDGET EXTENSION PROFILE (opportunistic decode) -----------------
+          # Apple's altool static analyzer trips 90164 ("entitlements do not match
+          # the ones that are contained in the provisioning profile") when the
+          # widget .appex's codesign blob carries the WIDGET bid for
+          # application-identifier but every embedded.mobileprovision in the bundle
+          # tree authorizes only the HOST bid. The structural fix is a separate App
+          # Store provisioning profile for App ID `com.speedsense.app.SpeedWidget`.
+          # If you provide WIDGET_PROVISIONING_PROFILE_BASE64 we decode it here
+          # alongside the host profile; the Export step then embeds it into the
+          # .appex and signs with the widget profile's authentic :Entitlements,
+          # resolving 90164. If absent, we emit a one-shot human-readable banner
+          # explaining how to provision it; the run continues with the prior
+          # fabricated-fallback behavior so the failure mode is still observable.
+          if [ -n "$WIDGET_PP_BASE64" ]; then
+            echo
+            echo "=== Decoding WIDGET provisioning profile ==="
+            python3 -c "import base64; data = base64.b64decode(''.join('$WIDGET_PP_BASE64'.split())); open('/tmp/widget_profile.mobileprovision.raw', 'wb').write(data); print(f'WIDGET raw file: {len(data)} bytes')"
+            if security cms -D -in /tmp/widget_profile.mobileprovision.raw -out /tmp/widget_profile.unwrapped.plist 2>/dev/null; then
+              echo "[OK] Successfully unwrapped WIDGET CMS/PKCS#7 envelope via security cms"
+            else
+              echo "[WARN] security cms -D failed for WIDGET profile - extracting embedded plist directly from DER structure"
+              python3 -c "import plistlib,sys; d=open('/tmp/widget_profile.mobileprovision.raw','rb').read(); s=d.find(b'<?xml'); e=d.find(b'</plist>',s); assert s>=0 and e>=0,b'no plist boundaries found'; pb=d[s:e+len(b'</plist>')]; p=plistlib.loads(pb); assert 'UUID' in p,b'plist missing required UUID property'; open('/tmp/widget_profile.unwrapped.plist','wb').write(pb); print('[OK] extracted WIDGET plist: %d bytes, UUID=%s' % (len(pb),p['UUID']))"
+            fi
+            cp /tmp/widget_profile.mobileprovision.raw /tmp/widget_profile.mobileprovision
+            WIDGET_UUID=$(python3 -c "import plistlib; print(plistlib.loads(open('/tmp/widget_profile.unwrapped.plist','rb').read()).get('UUID',''))" 2>/dev/null || echo "")
+            WIDGET_NAME=$(/usr/libexec/PlistBuddy -c "Print :name" /tmp/widget_profile.unwrapped.plist 2>/dev/null || echo "unknown")
+            WIDGET_APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/widget_profile.unwrapped.plist 2>/dev/null || echo "unknown")
+            echo "WIDGET Profile Name: $WIDGET_NAME"
+            echo "WIDGET Profile UUID: $WIDGET_UUID"
+            echo "WIDGET App ID: $WIDGET_APPID"
+            /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/widget_profile.unwrapped.plist > /tmp/widget_entitlements.plist 2>/dev/null
+            if [ -s /tmp/widget_entitlements.plist ]; then
+              echo "[OK] WIDGET profile :Entitlements extracted (this REPLACES the on-disk widget entitlements file as signing source-of-truth)"
+              echo "----- WIDGET :Entitlements content (from profile) -----"
+              cat /tmp/widget_entitlements.plist
+              echo "-------------------------------------------------------"
+            else
+              echo "[FATAL] WIDGET profile :Entitlements extraction failed -- altool 90164 will trip"
+              exit 1
+            fi
+            if [ -n "$WIDGET_UUID" ] && echo "$WIDGET_UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+              WIDGET_INSTALL_NAME="${WIDGET_UUID}.mobileprovision"
+            else
+              echo "[WARN] No UUID-shaped string on WIDGET profile - installing as widget_profile.mobileprovision as fallback"
+              WIDGET_INSTALL_NAME="widget_profile.mobileprovision"
+            fi
+            cp /tmp/widget_profile.mobileprovision.raw "$PP_DIR/${WIDGET_INSTALL_NAME}"
+            echo "Installed WIDGET profile to: $PP_DIR/${WIDGET_INSTALL_NAME}"
+            ls -la "$PP_DIR/"
+          else
+            echo
+            echo "===================================================================="
+            echo "  [WARN] WIDGET_PROVISIONING_PROFILE_BASE64 secret is NOT set."
+            echo "         Apple's altool will reject the upload with 90164 because the"
+            echo "         widget extension has no embedded profile whose application-"
+            echo "         identifier authorizes its bundle id"
+            echo "         (com.speedsense.app.SpeedWidget)."
+            echo ""
+            echo "         One-time setup to fix this:"
+            echo "           1. Apple Developer Portal (developer.apple.com) ->"
+            echo "              'Certificates, Identifiers & Profiles' -> Identifiers."
+            echo "              Register App ID 'com.speedsense.app.SpeedWidget' as an"
+            echo "              EXPLICIT App ID (NOT a wildcard App Group) and enable"
+            echo "              the App Group 'group.com.smartspeedcompanion.app' on it"
+            echo "              (matches the host's group.com.smartspeedcompanion.app)."
+            echo "           2. Profiles -> Distribution -> App Store -> click '+'."
+            echo "              Select the widget App ID. Continue -> Generate ->"
+            echo "              Download the .mobileprovision file (e.g. Widget.mobileprovision)."
+            echo "           3. base64 -i Widget.mobileprovision | tr -d '\\n'   (Mac)."
+            echo "              Copy the resulting single-line string."
+            echo "           4. GitHub repo -> Settings -> Secrets and variables ->"
+            echo "              Actions -> 'New repository secret'."
+            echo "                Name:  WIDGET_PROVISIONING_PROFILE_BASE64"
+            echo "                Value: <paste the base64 string>"
+            echo "           5. Re-run this workflow (Actions tab -> latest run ->"
+            echo "              'Re-run jobs'). The WARN disappears and the widget is"
+            echo "              signed with its own profile (resolves 90164)."
+            echo "===================================================================="
+          fi
+
+
+# ---- next ----
+# Defense-in-depth: surface any non-zero exit from xcodebuild directly instead of
+          # letting the step finish "successfully" without an xcarchive artifact (which is
+          # what it has been doing every run since the speed-limit feature landed).
+          set -euo pipefail
+
+
+# ---- next ----
+echo "=== Available signing identities ==="
+          security find-identity -v -p codesigning "$RUNNER_TEMP/app-signing.keychain-db"
+
+
+# ---- next ----
+echo "=== Provisioning profiles ==="
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
+
+
+# ---- next ----
+# Auto-derive CFBundleVersion from the commit count. ASC rejects any upload whose
+          # CFBundleVersion isn't strictly higher than the previously uploaded one, so without
+          # this override every push reuses the static CURRENT_PROJECT_VERSION in project.yml
+          # and ASC sees the duplicate. Each push now gets a unique, automatically-monotonic
+          # build number derived from `git rev-list --count HEAD`.
+          CURRENT_BUILD=$(git rev-list --count HEAD)
+          # Auto-derive MARKETING_VERSION straight from project.yml so the
+          # workflow has no hardcoded version string and any future bump
+          # (1.1 -> 1.2 -> 2.0) propagates with zero workflow edits. The
+          # source of truth stays settings.base.MARKETING_VERSION in
+          # project.yml; this is just plumbing. Using python's regex
+          # avoids grovelling on YAML structure and works with whatever
+          # whitespace appears around the colon. We grab the FIRST match
+          # which is always the canonical settings.base entry (the
+          # later target-level override is intentionally a duplicate).
+          MARKETING_VERSION=$(python3 -c "import re,sys; txt=open('project.yml').read(); m=re.search(r'MARKETING_VERSION:\s*\"([^\"]+)\"', txt); print(m.group(1) if m else '1.1', file=sys.stderr); sys.stdout.write(m.group(1) if m else '1.1')")
+          echo "=== Auto-derived build number: ${CURRENT_BUILD} ==="
+          echo "=== MARKETING_VERSION from project.yml: ${MARKETING_VERSION} ==="
+
+
+# ---- next ----
+# Capture the real exit code without aborting on it.
+          set +e
+          # Pass MARKETING_VERSION explicitly on the xcodebuild CLI line so
+          # even if the XcodeGen-generated project has a stale cached
+          # build-setting value from a prior run, this CLI flag wins.
+          xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO PROVISIONING_PROFILE_SPECIFIER="Speedio App Store" MARKETING_VERSION="${MARKETING_VERSION}" CURRENT_PROJECT_VERSION="${CURRENT_BUILD}" -archivePath ./SmartSpeedCompanion.xcarchive
+          BUILD_EXIT=$?
+          set -e
+
+
+# ---- next ----
+echo "=== xcodebuild DONE at $(date -u +%H:%M:%SZ); exit=${BUILD_EXIT} ==="
+          echo "=== Archive directory check ==="
+          ls -la ./SmartSpeedCompanion.xcarchive 2>&1 | head -25 || true
+
+
+# ---- next ----
+if [ "${BUILD_EXIT}" -ne 0 ]; then
+            echo "*** FATAL: xcodebuild failed with exit ${BUILD_EXIT} ***"
+            exit "${BUILD_EXIT}"
+          fi
+
+
+# ---- next ----
+if [ ! -d "./SmartSpeedCompanion.xcarchive" ]; then
+            echo "*** FATAL: xcodebuild exited 0 but no .xcarchive was produced ***"
+            exit 1
+          fi
+
+
+# ---- next ----
+echo "=== Archive verified ==="
+          ls -la ./SmartSpeedCompanion.xcarchive/
+
+
+# ---- next ----
+# Nuke prior Export/IPAWork directories so a half-completed
+          # previous attempt cannot leave a stale .ipa around — we
+          # already incorrectly uploaded a 2.1.4 IPA once because
+          # `find ... -name "*.ipa" | head -1` returned an older
+          # artifact before this rm step existed. Fresh export on every
+          # run guarantees only the current archive is selectable.
+          rm -rf "$PWD/Export" "$PWD/IPAWork"
+          mkdir -p "$PWD/Export"
+          mkdir -p "$PWD/IPAWork"
+
+
+# ---- next ----
+echo "=== Exporting IPA ==="
+          python3 -c "import plistlib; plistlib.dump({'method': 'app-store-connect', 'signingStyle': 'manual', 'signingIdentity': 'Apple Distribution', 'provisioningProfileSpecifier': 'Speedio App Store', 'teamID': 'VCNBBG32P6', 'uploadBitcode': False, 'uploadSymbols': True}, open('$PWD/exportOptions.plist', 'wb'))"
+
+
+# ---- next ----
+echo "=== Locating IPA ==="
+          IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "[ERROR] No IPA file found"
+            exit 1
+          fi
+          echo "[OK] IPA found: $IPA_PATH"
+          echo "=== Always force inner-appex re-sign with on-disk entitlements (verbose) ==="
+          # xcodebuild -exportArchive with a manual signing identity DOES write
+          # embedded.mobileprovision, but it also signs the inner .appex with whatever
+          # entitlements can be derived from the host profile's :Entitlements dict.
+          # When that dict does not include per-target capabilities (e.g. the widget's
+          # com.apple.security.application-groups key), Apple's altool static
+          # validator rejects the upload with:
+          #
+          #   Missing Code Signing Entitlements (90166). No entitlements found in bundle
+          #   'com.speedsense.app.SpeedWidget' for executable '.../SmartSpeedCompanionWidget'
+          #
+          # AND/OR (same error code, same root cause class, different bundle):
+          #   'com.speedsense.app' for executable 'Payload/.../SmartSpeedCompanion'.
+          #
+          # The on-disk `Resources/Entitlements/<Name>.entitlements` files are treated
+          # as source of truth: re-sign every inner .appex with its matching on-disk
+          # entitlements file before re-sealing the host. Apple requires leaf-then-parent
+          # order so the host's signature wraps the inner seals. --generate-entitlement-der
+          # is required since iOS 15 so the OS reads the enforced-entitlements blob correctly.
+          #
+          # This block is intentionally verbose. Every meaningful step echoes its
+          # arguments, exit code, and post-condition to the build log so a 90166
+          # regression is diagnosable from the GH Actions log alone -- no need to
+          # round-trip outside the workflow to know "did codesign fail?" or "is the
+          # Apple Distribution identity even in this keychain?".
+
+
+# ---- next ----
+if [ ! -f /tmp/profile.mobileprovision ]; then
+            echo "[FATAL] /tmp/profile.mobileprovision not found!"
+            exit 1
+          fi
+
+
+# ---- next ----
+# Resolve the entitlements directory against the repo root so the path does
+          # not shift when the script `cd`'s into $PWD/IPAWork below. The previous
+          # CWD-relative "../SmartSpeedCompanion/Resources/Entitlements/..." silently
+          # missed on runners whose $PWD differed from expectations.
+          ENT_DIR="${GITHUB_WORKSPACE:-$PWD}/SmartSpeedCompanion/Resources/Entitlements"
+          # Signing source-of-truth is /tmp/entitlements.plist -- the profile's
+          # :Entitlements dict, extracted earlier in the workflow via
+          #   PlistBuddy -x -c "Print :Entitlements" /tmp/profile.unwrapped.plist > /tmp/entitlements.plist
+          # That file is guaranteed to contain the App ID + keychain-access-groups
+          # + team-identifier entries Apple expects, regardless of any state of the
+          # .entitlements files under Resources/Entitlements/ in the working tree.
+          # We hit a case on commit 7782c7d where Resources/Entitlements/*.entitlements
+          # showed up as a 181-byte <dict/> plist at runtime even though git ls-tree HEAD
+          # said those blobs had real content; signing with the empty dict propagated
+          # up to the binary's entitlements blob and altool rejected with 90166.
+          HOST_ENT="/tmp/entitlements.plist"
+          echo
+          echo "[DBG-PROF] Profile :Entitlements dict (extracted from profile):"
+          if [ -f /tmp/entitlements.plist ]; then
+            /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.unwrapped.plist 2>&1 | head -80 || true
+          else
+            echo "  /tmp/entitlements.plist not found -- profile extraction failed upstream"
+          fi
+          echo
+          echo "[DBG-ENTDIR] Entitlements directory: $ENT_DIR"
+          ls -la "$ENT_DIR"
+          echo
+          echo "[DBG-ENTFILES] On-disk entitlements source-of-truth (full content, reference only -- NOT used for signing anymore):"
+          for f in "$ENT_DIR"/*.entitlements; do
+            echo "  ----- $f -----"
+            cat "$f"
+            echo
+          done
+          echo
+          echo "[DBG-API-ENT] /tmp/entitlements.plist content (ACTUAL signing source-of-truth):"
+          if [ -f /tmp/entitlements.plist ]; then
+            cat /tmp/entitlements.plist
+          else
+            echo "  /tmp/entitlements.plist missing -- profile extraction failed upstream and signing will use empty entitlements (regression risk)"
+          fi
+          echo
+          echo "[DBG-IDENT] Codesign identities in keychain:"
+          security find-identity -v -p codesigning "$RUNNER_TEMP/app-signing.keychain-db" 2>&1 | head -20 || true
+          echo
+
+
+# ---- next ----
+# Unpack the IPA, preserve any original META-INF/ for repack later.
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-signing.keychain-db"
+          rm -rf "$PWD/IPAWork"
+          mkdir -p "$PWD/IPAWork"
+          cd "$PWD/IPAWork"
+          unzip -o "$IPA_PATH" > /dev/null
+          # Preserve META-INF from the original IPA (xcodebuild -exportArchive includes
+          # com.apple.ZipMetadata.plist; some scanner paths parse it for re-auth).
+          if unzip -l "$IPA_PATH" 2>/dev/null | awk '{print $NF}' | grep -q '^META-INF/'; then
+            unzip -o "$IPA_PATH" 'META-INF/*' -d "$PWD/IPAWork" > /dev/null 2>&1 || true
+            echo "[OK] Preserved META-INF/ from original IPA:"
+            ls -la "$PWD/IPAWork/META-INF/" 2>&1
+          else
+            echo "[INFO] No META-INF/ in original IPA"
+          fi
+
+
+# ---- next ----
+APP_BUNDLE=$(find . -path './Payload/*.app' -type d | head -1)
+          # Fallback for non-standard archive layouts
+          if [ -z "$APP_BUNDLE" ]; then
+            APP_BUNDLE=$(find . -name "*.app" -type d | head -1)
+          fi
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "[FATAL] No .app bundle found in IPA"
+            find . -type d
+            exit 1
+          fi
+          echo
+          echo "[DBG-BUNDLE] Found app bundle: $APP_BUNDLE"
+          echo "[DBG-BUNDLE] Files inside bundle BEFORE re-sign:"
+          find "$APP_BUNDLE" -type f 2>&1 | sort
+          echo
+          echo "[DBG-BUNDLE] Inner .appex list:"
+          if [ -d "$APP_BUNDLE/PlugIns" ]; then
+            ls -la "$APP_BUNDLE/PlugIns"/*.appex 2>&1 || echo "  (no .appex in PlugIns)"
+          else
+            echo "  (no PlugIns/ dir)"
+          fi
+
+
+# ---- next ----
+cp /tmp/profile.mobileprovision "$APP_BUNDLE/embedded.mobileprovision"
+          echo "[OK] Embedded provisioning profile (host): $APP_BUNDLE/embedded.mobileprovision"
+
+
+# ---- next ----
+# Diagnostic dump: what embedded.mobileprovision is already in each .appex
+          # BEFORE we re-sign.  xcodebuild -exportArchive may have placed a profile
+          # whose ApplicationIdentifier does NOT match the .appex's CFBundleIdentifier
+          # (e.g. host profile "com.speedsense.app" in widget "com.speedsense.app.SpeedWidget")
+          # which surfaces as a different ASC error class.  Force-printing the AppID
+          # per-appex here so the build log makes any mismatch obvious at a glance.
+          echo
+          echo "[DBG-WIDGET-PROF] Existing embedded profiles in inner extensions:"
+          for __APPEX_DBG in "$APP_BUNDLE/PlugIns"/*.appex; do
+            [ -d "$__APPEX_DBG" ] || continue
+            __APPEX_NAME_DBG="$(basename "$__APPEX_DBG" .appex)"
+            __APPEX_BID_DBG="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$__APPEX_DBG/Info.plist" 2>/dev/null || echo "(no Info.plist)")"
+            if [ -f "$__APPEX_DBG/embedded.mobileprovision" ]; then
+              if security cms -D -in "$__APPEX_DBG/embedded.mobileprovision" -out /tmp/_appex_prof.plist 2>/dev/null; then
+                __APPID_DBG="$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/_appex_prof.plist 2>/dev/null || echo "(none)")"
+                if [ "$__APPID_DBG" = "$__APPEX_BID_DBG" ]; then
+                  echo "  $__APPEX_NAME_DBG: profile AppID=$__APPID_DBG matches bundle id [OK]"
+                else
+                  echo "  $__APPEX_NAME_DBG: profile AppID=$__APPID_DBG MISMATCH vs bundle id $__APPEX_BID_DBG [--]"
+                fi
+              else
+                echo "  $__APPEX_NAME_DBG: could not parse embedded.mobileprovision [--]"
+              fi
+            else
+              echo "  $__APPEX_NAME_DBG: no embedded.mobileprovision [--]"
+            fi
+          done
+
+
+# ---- next ----
+# Decide whether to sign widget with its own profile (preferred, resolves
+          # 90164) or fall back to a fabricated /tmp/widget_entitlements.plist (works
+          # around 90046 but trips 90164 because there's still no embedded profile
+          # authorizing the widget bid).  WIDGET_USE_PROFILE=1 requires the
+          # WIDGET_PROVISIONING_PROFILE_BASE64 secret to be set up in the Decode
+          # and install provisioning profile step above.
+          echo
+          echo "[DBG-WIDGET-AVAIL] WIDGET-specific profile decoded?"
+          if [ -f /tmp/widget_profile.mobileprovision ] && [ -s /tmp/widget_entitlements.plist ]; then
+            echo "[DBG-WIDGET-AVAIL] YES -- widget will be embedded with its own profile (resolves 90164)."
+            WIDGET_USE_PROFILE=1
+          else
+            echo "[WARN] NO -- widget will use the fabricated fallback (90164 expected). See banner in Decode step."
+            WIDGET_USE_PROFILE=0
+          fi
+
+
+# ---- next ----
+# Build /tmp/widget_entitlements.plist -- widget-specific entitlements with
+          # a correctly-formatted application-identifier.  Apple's App Store Connect
+          # static analyzer rejects 90046 when the widget's codesign blob carries the
+          # host's application-identifier value (host bid) because the widget's
+          # CFBundleIdentifier is `<host bid>.SpeedWidget` -- it must be formatted
+          # `<TEAMID>.<widget bid>` not `<TEAMID>.<host bid>`.  When the widget
+          # profile was decoded above, /tmp/widget_entitlements.plist already holds
+          # the widget profile's authentic :Entitlements -- we keep it as-is.  When
+          # no widget profile is available we fall back to fabricating a minimal
+          # blob from the host profile's team identifier.
+          echo
+          echo "[DBG-WIDGET-ENT] /tmp/widget_entitlements.plist content (signing source-of-truth for widget):"
+          if [ "$WIDGET_USE_PROFILE" -eq 0 ]; then
+            echo "[DBG-WIDGET-ENT] No widget profile -- fabricating minimal plist."
+            python3 - <<'PY' || { echo "[FATAL] widget entitlements builder failed"; exit 1; }
+          import plistlib, sys
+          host = plistlib.load(open('/tmp/entitlements.plist', 'rb'))
+          TEAM = host.get('com.apple.developer.team-identifier', 'VCNBBG32P6')
+          WIDGET_BID = 'com.speedsense.app.SpeedWidget'
+          widget = {
+              'application-identifier': f'{TEAM}.{WIDGET_BID}',
+              'com.apple.developer.team-identifier': TEAM,
+          }
+          plistlib.dump(widget, open('/tmp/widget_entitlements.plist', 'wb'), fmt=plistlib.FMT_XML)
+          print(f"Wrote /tmp/widget_entitlements.plist with TEAM={TEAM}, WIDGET_BID={WIDGET_BID}")
+          print(f"Widget keys: {sorted(widget.keys())}")
+          PY
+          else
+            echo "[DBG-WIDGET-ENT] Using widget profile's :Entitlements -- no fabrication needed."
+          fi
+          cat /tmp/widget_entitlements.plist
+          echo
+
+
+# ---- next ----
+# Sign leaves FIRST. Capture codesign RC explicitly and fail-loud on any
+          # non-zero so a silent quota/keychain/block-format failure never wipes
+          # out a re-sign attempt without trace.
+          echo
+          echo "=== Re-signing inner extensions (leaves first) ==="
+          for APPEX in "$APP_BUNDLE/PlugIns"/*.appex; do
+            [ -d "$APPEX" ] || continue
+            # Embed the widget-specific provisioning profile when available so its
+            # embedded :Entitlements.application-identifier (widget bid) matches the
+            # widget codesign blob's application-identifier (also widget bid). This
+            # is the structural fix for altool 90164. When no widget profile is
+            # available we leave the .appex profile-less and rely on the fabricated
+            # codesign blob alone -- which trips 90164 because the validator falls
+            # back to the nearest ancestor's profile (the host's, which authorizes
+            # only the host bid).
+            if [ "$WIDGET_USE_PROFILE" -eq 1 ]; then
+              cp /tmp/widget_profile.mobileprovision "$APPEX/embedded.mobileprovision"
+              echo "[DBG-SIGN] APPEX=$APPEX -- embedded WIDGET profile from /tmp/widget_profile.mobileprovision"
+            else
+              echo "[DBG-SIGN] APPEX=$APPEX -- NO embedded WIDGET profile (fallback path; 90164 expected)"
+            fi
+            ENT_NAME="$(basename "$APPEX" .appex)"
+            # Inner extensions sign with /tmp/widget_entitlements.plist (built
+            # above) -- a minimal entitlements blob whose application-identifier
+            # is correctly formatted for THIS widget bundle id.  The host-signed
+            # /tmp/entitlements.plist has application-identifier set for the
+            # HOST bid, which triggered 90046 when used here.  Building the
+            # widget side plist via the [DBG-WIDGET-ENT] block above is the
+            # structural fix -- DBG-WIDGET-PROF will surface if xcodebuild
+            # itself placed anything in widget.appex, and the DBG-ENTS
+            # post-re-sign dump confirms what actually went onto the binary.
+            ENT_FILE="/tmp/widget_entitlements.plist"
+            echo
+            echo "[DBG-SIGN] APPEX=$APPEX"
+            echo "[DBG-SIGN]   identity:    Apple Distribution"
+            echo "[DBG-SIGN]   entitlements: $ENT_FILE"
+            if [ -f "$ENT_FILE" ]; then
+              codesign --force --sign "Apple Distribution" --entitlements "$ENT_FILE" --generate-entitlement-der "$APPEX"
+              RC=$?
+              echo "[DBG-SIGN] codesign rc=$RC"
+              if [ "$RC" -ne 0 ]; then
+                echo "[FATAL] codesign failed for $APPEX (rc=$RC)"
+                exit "$RC"
+              fi
+              echo "[OK] Re-signed $APPEX"
+            else
+              echo "[WARN] No on-disk entitlements for $ENT_NAME; signing without entitlements"
+              codesign --force --sign "Apple Distribution" --generate-entitlement-der "$APPEX"
+              RC=$?
+              echo "[DBG-SIGN] codesign rc=$RC (no entitlements)"
+              if [ "$RC" -ne 0 ]; then
+                echo "[FATAL] codesign failed for $APPEX (rc=$RC)"
+                exit "$RC"
+              fi
+            fi
+          done
+
+
+# ---- next ----
+# Sign parent LAST so its seal wraps the already-signed nested bundles.
+          echo
+          echo "[DBG-SIGN] HOST=$APP_BUNDLE"
+          echo "[DBG-SIGN]   identity:    Apple Distribution"
+          echo "[DBG-SIGN]   entitlements: $HOST_ENT"
+          codesign --force --sign "Apple Distribution" --entitlements "$HOST_ENT" --generate-entitlement-der "$APP_BUNDLE"
+          RC=$?
+          echo "[DBG-SIGN] codesign rc=$RC"
+          if [ "$RC" -ne 0 ]; then
+            echo "[FATAL] codesign failed for host (rc=$RC)"
+            exit "$RC"
+          fi
+          echo "[OK] Re-signed host"
+
+
+# ---- next ----
+# Post-re-sign verification -- if any binary here lacks entitlements,
+          # altool will reject with 90166.  This is the canary for "did my last fix
+          # actually take?".
+          echo
+          echo "=== Post-re-sign: codesign -dvvv (full seal/cert/authority chain) ==="
+          HOST_BIN_NAME="$(basename "$APP_BUNDLE" .app)"
+          echo "[DBG-VRF] --- host binary: $APP_BUNDLE/$HOST_BIN_NAME ---"
+          codesign -dvvv "$APP_BUNDLE/$HOST_BIN_NAME" 2>&1 | head -50 || true
+          for APPEX in "$APP_BUNDLE/PlugIns"/*.appex; do
+            [ -d "$APPEX" ] || continue
+            APPEX_NAME="$(basename "$APPEX" .appex)"
+            echo "[DBG-VRF] --- inner extension: $APPEX/$APPEX_NAME ---"
+            codesign -dvvv "$APPEX/$APPEX_NAME" 2>&1 | head -30 || true
+          done
+
+
+# ---- next ----
+echo
+          echo "=== Post-re-sign: signed entitlements (XML, clean stdout) ==="
+          echo "[DBG-ENTS] --- host: $HOST_BIN_NAME ---"
+          codesign -d --entitlements :- "$APP_BUNDLE/$HOST_BIN_NAME" 2>&1 || true
+          for APPEX in "$APP_BUNDLE/PlugIns"/*.appex; do
+            [ -d "$APPEX" ] || continue
+            APPEX_NAME="$(basename "$APPEX" .appex)"
+            echo "[DBG-ENTS] --- inner: $APPEX_NAME ---"
+            codesign -d --entitlements :- "$APPEX/$APPEX_NAME" 2>&1 || true
+          done
+
+
+# ---- next ----
+# Repackage via `ditto -c -k --keepParent --sequesterRsrcAndKeepParent`,
+          # not plain `zip`.  Plain `zip` silently strips the extended attributes and
+          # resource forks Apple's static analyzer (and iOS 15+ enforced-entitlement
+          # path) depend on for code-signature validation.  Without those xattrs the
+          # IPA can pass `codesign --verify` on disk yet still be rejected by altool
+          # with 90166.  `ditto` is Apple's blessed tool for repackaging signed IPAs
+          # and preserves xattr/appleDouble/com.apple.metadata correctly.
+          echo
+          echo "=== Repackaging via ditto (Apple-approved for signed IPAs) ==="
+          TMP_IPA="$PWD/IPAWork/Speedio-repacked.ipa"
+          rm -f "$TMP_IPA"
+          # `--sequesterRsrcAndKeepParent` is NOT a recognized ditto flag on the
+          # macOS 26 runner we use -- a prior iteration of this script shipped with
+          # that flag and the entire repack step exited non-zero before altool ran.
+          # The valid flags are `--sequesterRsrc` (store resource forks as AppleDouble)
+          # and `--keepParent` (preserve parent directory in archive layout). Both
+          # together keep `Payload/` at top level with metadata preserved; the archive
+          # Apple wants for App Store Connect uploads.
+          ditto -c -k --keepParent Payload "$TMP_IPA"
+          RC=$?
+          echo "[DBG-DITTO] rc=$RC"
+          if [ "$RC" -ne 0 ]; then
+            echo "[FATAL] ditto repack failed (rc=$RC)"
+            exit "$RC"
+          fi
+          echo "[OK] ditto repack: $TMP_IPA (size: $(wc -c < "$TMP_IPA") bytes)"
+
+
+# ---- next ----
+# If the original IPA had META-INF/, splice it back into the ditto-built
+          # archive via a secondary `zip` step that adds files to an existing
+          # archive (zip supports this).  ditto + zip combo is the documented
+          # Apple pattern when re-packaging MIP-uploadable IPAs locally.
+          if [ -d "$PWD/IPAWork/META-INF" ]; then
+            echo "[DBG-DITTO] Splicing META-INF/ into repacked IPA"
+            (cd "$PWD/IPAWork" && zip -q "$TMP_IPA" META-INF)
+            echo "[OK] META-INF spliced"
+          fi
+
+
+# ---- next ----
+# Replace the original IPA atomically with the ditto-built twin.
+          mv -f "$TMP_IPA" "$IPA_PATH"
+          echo "[OK] Repackaged IPA replaced at: $IPA_PATH"
+          echo "[INFO] Final IPA size: $(wc -c < "$IPA_PATH") bytes"
+
+
+# ---- next ----
+# Final post-repack verification: re-extract the IPA we just wrote and
+          # dump its entitlements from the *packaged* binary.  This catches any
+          # packaging-layer regression (xattr loss, etc.) that the in-place check
+          # above could not detect.
+          echo
+          echo "=== Post-repack: verify sealed entitlements from inside the IPA ==="
+          VERIFY_DIR="$PWD/IPAWork/Verify"
+          rm -rf "$VERIFY_DIR"
+          mkdir -p "$VERIFY_DIR"
+          (cd "$VERIFY_DIR" && unzip -o "$IPA_PATH" > /dev/null)
+          VERIFY_HOST_BIN="$(find "$VERIFY_DIR" -path '*/Payload/*.app' -name "$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$VERIFY_DIR/Payload/SmartSpeedCompanion.app/Info.plist" 2>/dev/null || echo SmartSpeedCompanion)")"
+          if [ -z "$VERIFY_HOST_BIN" ] || [ ! -f "$VERIFY_HOST_BIN" ]; then
+            VERIFY_HOST_BIN="$(find "$VERIFY_DIR/Payload" -maxdepth 2 -type f -perm +111 | head -1)"
+          fi
+          if [ -n "$VERIFY_HOST_BIN" ] && [ -f "$VERIFY_HOST_BIN" ]; then
+            echo "[DBG-VERIFY-IPENT] HOST=$VERIFY_HOST_BIN"
+            codesign -d --entitlements :- "$VERIFY_HOST_BIN" 2>&1 || true
+          else
+            echo "[WARN] Could not find host executable inside repacked IPA"
+          fi
+          for APPEX in "$VERIFY_DIR/Payload/SmartSpeedCompanion.app/PlugIns"/*.appex; do
+            [ -d "$APPEX" ] || continue
+            APPEX_NAME="$(basename "$APPEX" .appex)"
+            APPEX_BIN="$APPEX/$APPEX_NAME"
+            if [ -f "$APPEX_BIN" ]; then
+              echo "[DBG-VERIFY-IPENT] APPEX=$APPEX_BIN"
+              codesign -d --entitlements :- "$APPEX_BIN" 2>&1 || true
+            fi
+          done
+          echo "[INFO] Repacked IPA contents:"
+          unzip -l "$IPA_PATH" | head -30
+
+
+# ---- next ----
+echo "=== Final IPA verification ==="
+          if unzip -l "$IPA_PATH" | grep -q "embedded.mobileprovision"; then
+            echo "[OK] embedded.mobileprovision CONFIRMED in final IPA"
+            echo "IPA size: $(wc -c < "$IPA_PATH") bytes"
+          else
+            echo "[ERROR] STILL missing embedded.mobileprovision!"
+            exit 1
+          fi
+
+
+# ---- next ----
+IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "[ERROR] No .ipa file found in Export directory"
+            find "$PWD/Export" -type f 2>/dev/null
+            exit 1
+          fi
+          echo "============================================================"
+          echo "Uploading IPA to App Store Connect (TestFlight): $IPA_PATH"
+          echo "IPA size: $(wc -c < "$IPA_PATH") bytes"
+          echo "============================================================"
+
+
+# ---- next ----
+UPLOAD_LOG=$(mktemp)
+          set +e
+          xcrun altool --upload-app --file "$IPA_PATH" --type ios --show-progress -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" 2>&1 | tee "$UPLOAD_LOG"
+          UPLOAD_EXIT=${PIPESTATUS[0]}
+          set -e
+
+
+# ---- next ----
+echo "============================================================"
+          if [ "$UPLOAD_EXIT" -eq 0 ]; then
+            echo "[OK] IPA uploaded successfully. It will appear under App Store Connect → TestFlight once processing completes (usually 1-2 minutes)."
+          else
+            echo "[WARN] altool exited with non-zero status ($UPLOAD_EXIT). The IPA build itself is fine — see diagnostics below."
+            if grep -qE "403|required contracts|FORBIDDEN_ERROR|CONTRACT_NOT_VALID" "$UPLOAD_LOG"; then
+              echo ""
+              echo "ACTION REQUIRED: 403 'You do not have required contracts'"
+              echo "Sign the Apple Developer Program License Agreement in App Store Connect:"
+              echo "  https://appstoreconnect.apple.com → (your app) → Agreements, Tax, and Banking"
+              echo "After signing, re-run this workflow (workflow_dispatch) to upload the build."
+            elif grep -qE "401|invalid username|invalid password|authentication" "$UPLOAD_LOG"; then
+              echo ""
+              echo "ACTION REQUIRED: Authentication failure"
+              echo "Regenerate an app-specific password at https://appleid.apple.com/account/manage"
+              echo "Update the APPSTORE_CONNECT_USERNAME and APPSTORE_CONNECT_PASSWORD GitHub Actions secrets."
+            else
+              echo ""
+              echo "Check the full upload log for details; the build artifact will still be uploaded below."
+            fi
+          fi
+          # Propagate altool's actual exit code so the real error reaches the GitHub
+          # Actions UI. Without this, the trailing `rm -f "$UPLOAD_LOG"` returns 0 and
+          # the step is green even when altool failed.
+          exit "$UPLOAD_EXIT"
+          rm -f "$UPLOAD_LOG"
+
+
+# ---- next ----
+name: Speedio-IPA-${{ github.run_number }}
+          path: Export/*.ipa

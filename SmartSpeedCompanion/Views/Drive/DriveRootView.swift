@@ -51,15 +51,6 @@ public struct DriveRootView: View {
                 }
                 .toolbarBackground(DesignSystem.bgPanel, for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
-            
-            #if DEBUG || DEVELOPER_BUILD
-            DeveloperTabView()
-                .tabItem {
-                    Label("Developer", systemImage: "terminal.fill")
-                }
-                .toolbarBackground(DesignSystem.bgPanel, for: .tabBar)
-                .toolbarBackground(.visible, for: .tabBar)
-            #endif
         }
         .toolbarColorScheme(.dark, for: .tabBar)
         .accentColor(Color(hex: "#00D4FF"))

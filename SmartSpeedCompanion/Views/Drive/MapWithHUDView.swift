@@ -464,7 +464,15 @@ fileprivate struct BottomTransparentHUD: View {
                         .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
-                LimitSignView(limit: driveViewModel.limit, source: driveViewModel.speedLimitSource, isLandscape: isLandscape)
+                LimitSignView(
+                    limit: driveViewModel.limit,
+                    source: driveViewModel.speedLimitSource,
+                    isLandscape: isLandscape,
+                    onTap: {
+                        Task { await driveViewModel.manualRefetchSpeedLimit() }
+                    },
+                    isRefreshing: driveViewModel.isRefreshingSpeedLimit
+                )
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
@@ -573,10 +581,19 @@ fileprivate struct LimitSignView: View {
     let limit: Int
     let source: String
     let isLandscape: Bool
+    /// User tapped the sign -> fire DriveViewModel.manualRefetchSpeedLimit().
+    /// Passed as a closure so LimitSignView doesn't need an @EnvironmentObject
+    /// chain (the parent already holds driveViewModel).
+    let onTap: () -> Void
+    /// True while a tap-driven refetch is in flight. Drives a subtle
+    /// scale pulse so the user immediately sees their tap landed even
+    /// when the fetched answer matches the old one.
+    let isRefreshing: Bool
 
     var body: some View {
-        VStack(spacing: 4) {
-            ZStack {
+        Button(action: onTap) {
+            VStack(spacing: 4) {
+                ZStack {
                 Circle()
                     .fill(Color.white)
                     .frame(width: isLandscape ? 40 : 52, height: isLandscape ? 40 : 52)
@@ -615,7 +632,12 @@ fileprivate struct LimitSignView: View {
             Text(sourceChip.text)
                 .font(.system(size: isLandscape ? 8 : 10, weight: .bold))
                 .foregroundColor(sourceChip.color)
+            }
         }
+        .buttonStyle(.plain)                  // keep flat aesthetic when not pressed
+        .accessibilityLabel("Speed limit. Tap to refresh.")
+        .scaleEffect(isRefreshing ? 1.06 : 1.0)
+        .animation(.easeOut(duration: 0.25), value: isRefreshing)
     }
 
     /// Chip-style label + color for the active speed-limit source.

@@ -1,0 +1,300 @@
+ 8237  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8774310Z     
+ 8238  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8775510Z     Using response file: /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noind
+ 8239  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8776720Z     
+ 8240  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8786860Z     /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x objective-c -ivfsstatcache /Users/runner/Lib
+ 8241  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8858910Z /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -cc1 -Wundef-prefix\=TARGET_OS_ -fdiagnostics-show-
+ 8242  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8922300Z 
+ 8243  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8923420Z SetOwnerAndGroup runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.
+ 8244  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8925490Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8245  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8927130Z     /usr/sbin/chown -RH runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Interme
+ 8246  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8928160Z 
+ 8247  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8929130Z SetMode u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/
+ 8248  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8930880Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8249  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8933390Z     /bin/chmod -RH u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8250  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8934550Z 
+ 8251  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8935680Z RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8252  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8937240Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8253  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8938730Z     builtin-RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build
+ 8254  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8939820Z 
+ 8255  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8941900Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8256  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8944570Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8257  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8947680Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -strip-unsigned-binaries -strip-deterministic -strip-tool /
+ 8258  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8950630Z 
+ 8259  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8951570Z Ld /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediate
+ 8260  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8953140Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8261  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.8986770Z     /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios1
+ 8262  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9019960Z 
+ 8263  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9025600Z ScanDependencies /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/Archi
+ 8264  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9032980Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcodeproj
+ 8265  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9034230Z     
+ 8266  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9037640Z     Using response file: /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noind
+ 8267  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9041100Z     
+ 8268  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9080110Z     builtin-ScanDependencies -o /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediate
+ 8269  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9124020Z 
+ 8270  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9127060Z CompileC /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveInterm
+ 8271  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9130410Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcodeproj
+ 8272  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9130870Z     
+ 8273  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9132120Z     Using response file: /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noind
+ 8274  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9133430Z     
+ 8275  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9171350Z     /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x objective-c -ivfsstatcache /Users/runner/Lib
+ 8276  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9272680Z /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -cc1 -Wundef-prefix\=TARGET_OS_ -fdiagnostics-show-
+ 8277  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9367780Z 
+ 8278  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9368970Z SetOwnerAndGroup runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.
+ 8279  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9371390Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8280  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9372940Z     /usr/sbin/chown -RH runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Interme
+ 8281  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9373880Z 
+ 8282  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9374980Z SetMode u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/
+ 8283  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9376570Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8284  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9377980Z     /bin/chmod -RH u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8285  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9378890Z 
+ 8286  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9380000Z RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8287  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9381700Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8288  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9383300Z     builtin-RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build
+ 8289  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9384300Z 
+ 8290  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9388820Z Ld /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediate
+ 8291  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9398760Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8292  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9426400Z     /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios1
+ 8293  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9462940Z 
+ 8294  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9465470Z SetOwnerAndGroup runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.
+ 8295  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9469000Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8296  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9473690Z     /usr/sbin/chown -RH runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Interme
+ 8297  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9474780Z 
+ 8298  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9476280Z SetMode u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/
+ 8299  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9484020Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8300  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9485410Z     /bin/chmod -RH u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8301  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9486390Z 
+ 8302  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9487410Z RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8303  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9491060Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8304  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9492750Z     builtin-RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build
+ 8305  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9496690Z 
+ 8306  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9497730Z Ld /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediate
+ 8307  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9499410Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8308  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9556700Z     /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios1
+ 8309  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9581160Z 
+ 8310  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9582380Z SetOwnerAndGroup runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.
+ 8311  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9586190Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8312  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9587580Z     /usr/sbin/chown -RH runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Interme
+ 8313  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9588730Z 
+ 8314  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9589760Z SetMode u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/
+ 8315  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9599170Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8316  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9602660Z     /bin/chmod -RH u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8317  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9607420Z 
+ 8318  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9610760Z RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8319  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9612930Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8320  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9620070Z     builtin-RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build
+ 8321  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9624400Z 
+ 8322  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9630340Z SwiftDriverJobDiscovery normal arm64 Compiling resource_bundle_accessor.swift, CollectionReference+AsyncAwait.swift, DocumentReference+AsyncSequence.
+ 8323  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9673960Z 
+ 8324  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9674620Z SwiftDriver\ Compilation\ Requirements FirebaseFirestore normal arm64 com.apple.xcode.tools.swift.compiler (in target 'FirebaseFirestore' from projec
+ 8325  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9677050Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcodeproj
+ 8326  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9780120Z     builtin-Swift-Compilation-Requirements -- /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -mod
+ 8327  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9896760Z 
+ 8328  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9913120Z SwiftMergeGeneratedHeaders /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noi
+ 8329  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9918630Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8330  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9922570Z     builtin-swiftHeaderTool -arch arm64 /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Inte
+ 8331  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9927910Z 
+ 8332  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9934040Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8333  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:57.9943560Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8334  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0008960Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -strip-unsigned-binaries -strip-deterministic -strip-tool /
+ 8335  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0027740Z 
+ 8336  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0030840Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8337  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0033780Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8338  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0037070Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -strip-unsigned-binaries -strip-deterministic -strip-tool /
+ 8339  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0040260Z 
+ 8340  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0044910Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8341  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0047300Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8342  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0050250Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -strip-unsigned-binaries -strip-deterministic -strip-tool /
+ 8343  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0052830Z 
+ 8344  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0053730Z Ld /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediate
+ 8345  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0055090Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8346  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0127150Z     /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios1
+ 8347  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0154460Z 
+ 8348  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0156480Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8349  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0159090Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8350  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0162350Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -strip-unsigned-binaries -strip-deterministic -strip-tool /
+ 8351  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0166930Z 
+ 8352  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0168900Z ScanDependencies /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/Archi
+ 8353  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0171310Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcodeproj
+ 8354  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0171690Z     
+ 8355  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0172930Z     Using response file: /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noind
+ 8356  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0174260Z     
+ 8357  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0200270Z     builtin-ScanDependencies -o /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediate
+ 8358  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0213670Z 
+ 8359  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0214860Z PrecompileModule /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/Archi
+ 8360  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0216180Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcodeproj
+ 8361  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0219280Z     builtin-precompileModule /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.n
+ 8362  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0249260Z /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -cc1 -fdiagnostics-show-note-include-stack -fmacro-
+ 8363  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0285020Z 
+ 8364  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0290460Z CompileC /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveInterm
+ 8365  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0295600Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcodeproj
+ 8366  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0296070Z     
+ 8367  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0297340Z     Using response file: /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noind
+ 8368  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0298600Z     
+ 8369  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0318490Z     /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x objective-c -ivfsstatcache /Users/runner/Lib
+ 8370  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0446550Z /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -cc1 -Wundef-prefix\=TARGET_OS_ -fdiagnostics-show-
+ 8371  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0570910Z 
+ 8372  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0573820Z SetOwnerAndGroup runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.
+ 8373  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0577950Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8374  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0579780Z     /usr/sbin/chown -RH runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Interme
+ 8375  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0580710Z 
+ 8376  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0581660Z SetMode u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/
+ 8377  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0583250Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8378  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0584590Z     /bin/chmod -RH u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8379  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0585490Z 
+ 8380  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0586440Z RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8381  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0587860Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8382  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0589170Z     builtin-RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build
+ 8383  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0590090Z 
+ 8384  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0591010Z Ld /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediate
+ 8385  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0603200Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8386  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0626250Z     /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios1
+ 8387  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0663340Z 
+ 8388  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0664400Z SetOwnerAndGroup runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.
+ 8389  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0666010Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8390  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0667430Z     /usr/sbin/chown -RH runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Interme
+ 8391  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0668360Z 
+ 8392  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0669350Z SetMode u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/
+ 8393  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0671120Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8394  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0672650Z     /bin/chmod -RH u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8395  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0673650Z 
+ 8396  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0674730Z RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8397  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0676720Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8398  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0679810Z     builtin-RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build
+ 8399  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0687070Z 
+ 8400  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0720780Z SwiftDriverJobDiscovery normal arm64 Compiling resource_bundle_accessor.swift, ActionCodeInfo.swift, ActionCodeOperation.swift, ActionCodeSettings.sw
+ 8401  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0743500Z 
+ 8402  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0743980Z SwiftDriver\ Compilation\ Requirements FirebaseAuth normal arm64 com.apple.xcode.tools.swift.compiler (in target 'FirebaseAuth' from project 'Firebas
+ 8403  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0745280Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcodeproj
+ 8404  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0814710Z     builtin-Swift-Compilation-Requirements -- /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -mod
+ 8405  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0894330Z 
+ 8406  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0896320Z SwiftMergeGeneratedHeaders /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noi
+ 8407  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0905990Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8408  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0914960Z     builtin-swiftHeaderTool -arch arm64 /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Inte
+ 8409  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0921610Z 
+ 8410  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0928240Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8411  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0946860Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8412  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0949980Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -strip-unsigned-binaries -strip-deterministic -strip-tool /
+ 8413  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0973100Z 
+ 8414  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0975090Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8415  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0977890Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8416  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0984920Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -strip-unsigned-binaries -strip-deterministic -strip-tool /
+ 8417  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0992980Z 
+ 8418  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.0999570Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8419  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1017250Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8420  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1025350Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -strip-unsigned-binaries -strip-deterministic -strip-tool /
+ 8421  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1029170Z 
+ 8422  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1030100Z Ld /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediate
+ 8423  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1033480Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8424  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1079600Z     /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios1
+ 8425  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1113620Z 
+ 8426  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1115910Z CompileAssetCatalog /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/Ar
+ 8427  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1117500Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8428  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:34:58.1122170Z     /Applications/Xcode_16.2.app/Contents/Developer/usr/bin/actool --output-format human-readable-text --notices --warnings --export-dependency-info 
+ 8429  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8367830Z /* com.apple.actool.document.warnings */
+ 8430  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8371250Z /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion/Resources/Assets.xcassets:./AppIcon.appiconset/(null)[2d][114.png]: wa
+ 8431  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8372770Z /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion/Resources/Assets.xcassets:./AppIcon.appiconset/[][ipad][20x20][][][1x]
+ 8432  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8376570Z /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion/Resources/Assets.xcassets:./AppIcon.appiconset/(null)[2d][114.png]: wa
+ 8433  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8377870Z /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion/Resources/Assets.xcassets:./AppIcon.appiconset/[][ipad][20x20][][][1x]
+ 8434  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8378700Z /* com.apple.actool.compilation-results */
+ 8435  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8379650Z /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediates/S
+ 8436  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8381480Z /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediates/S
+ 8437  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8383020Z /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediates/S
+ 8438  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8385030Z /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediates/S
+ 8439  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8386120Z 
+ 8440  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8386120Z 
+ 8441  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8386650Z GenerateAssetSymbols /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion/Resources/Assets.xcassets (in target 'SmartSpeedC
+ 8442  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8387440Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8443  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8394670Z     /Applications/Xcode_16.2.app/Contents/Developer/usr/bin/actool --output-format human-readable-text --notices --warnings --export-dependency-info 
+ 8444  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8402030Z /* com.apple.actool.document.warnings */
+ 8445  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8402700Z /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion/Resources/Assets.xcassets:./AppIcon.appiconset/(null)[2d][114.png]: wa
+ 8446  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8403840Z /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion/Resources/Assets.xcassets:./AppIcon.appiconset/[][ipad][20x20][][][1x]
+ 8447  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8404690Z /* com.apple.actool.compilation-results */
+ 8448  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8405720Z /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediates/S
+ 8449  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8407530Z /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediates/S
+ 8450  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8409320Z /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermediates/S
+ 8451  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8410250Z 
+ 8452  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8410250Z 
+ 8453  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8411200Z SetOwnerAndGroup runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.
+ 8454  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8413260Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8455  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8414650Z     /usr/sbin/chown -RH runner:staff /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Interme
+ 8456  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8415520Z 
+ 8457  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8416370Z SetMode u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/
+ 8458  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8417730Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8459  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8418940Z     /bin/chmod -RH u+w,go-w,a+rX /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8460  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8419740Z 
+ 8461  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8420700Z RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediat
+ 8462  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8422200Z     cd /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/SourcePackages/checkouts/firebase-ios-sdk
+ 8463  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8423490Z     builtin-RegisterExecutionPolicyException /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build
+ 8464  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8424350Z 
+ 8465  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8424730Z SwiftDriver SmartSpeedCompanion normal arm64 com.apple.xcode.tools.swift.compiler (in target 'SmartSpeedCompanion' from project 'SmartSpeedCompanion'
+ 8466  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8425400Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8467  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8508300Z     builtin-SwiftDriver -- /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name SmartSpeed
+ 8468  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8591420Z 
+ 8469  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8592790Z CpResource /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveInte
+ 8470  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8594310Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8471  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8595780Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/runner/work/SmartSpeedCompanio
+ 8472  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8597330Z 
+ 8473  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8598630Z CopyPlistFile /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveI
+ 8474  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8600270Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8475  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8601600Z     builtin-copyPlist --convert binary1 --outdir /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/B
+ 8476  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8602860Z 
+ 8477  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8604440Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8478  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8606270Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8479  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8608070Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/runner/Library/Developer/Xcode
+ 8480  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8609790Z 
+ 8481  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8611380Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8482  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8613370Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8483  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8615160Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/runner/Library/Developer/Xcode
+ 8484  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8616840Z 
+ 8485  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8618490Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8486  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8620370Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8487  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8622260Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/runner/Library/Developer/Xcode
+ 8488  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8623950Z 
+ 8489  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8625610Z Copy /Users/runner/Library/Developer/Xcode/DerivedData/SmartSpeedCompanion-bzpdoquokxeulgfxlcpwxsfhhvwv/Build/Intermediates.noindex/ArchiveIntermedia
+ 8490  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8627400Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8491  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8629280Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/runner/Library/Developer/Xcode
+ 8492  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8631010Z 
+ 8493  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8631500Z SwiftDriver\ Compilation SmartSpeedCompanion normal arm64 com.apple.xcode.tools.swift.compiler (in target 'SmartSpeedCompanion' from project 'SmartSp
+ 8494  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8632100Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8495  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8715060Z     builtin-Swift-Compilation -- /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name Smar
+ 8496  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8798720Z 
+ 8497  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8829890Z SwiftCompile normal arm64 Compiling\ AlertEngine.swift,\ AnalyticsDashboardView.swift,\ AnalyticsViewModel.swift,\ AnimatedRingView.swift,\ AppDelega
+ 8498  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8862280Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8499  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8863930Z     builtin-swiftTaskExecution -- /Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -fronten
+ 8500  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8865740Z CompileSwift normal arm64 (in target 'SmartSpeedCompanion' from project 'SmartSpeedCompanion')
+ 8501  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:35:03.8866160Z     cd /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8502  build-and-testflight	Upload Artifacts	﻿2026-07-14T17:35:13.1317740Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSI
+ 8503  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1319120Z ##[group]Run actions/upload-artifact@v4
+ 8504  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1319320Z with:
+ 8505  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1319460Z   name: Speedio-IPA-377
+ 8506  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1319620Z   path: Export/*.ipa
+ 8507  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1319760Z   retention-days: 7
+ 8508  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1319910Z   if-no-files-found: warn
+ 8509  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1320060Z   compression-level: 6
+ 8510  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1320250Z   overwrite: false
+ 8511  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1320400Z   include-hidden-files: false
+ 8512  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.1320600Z ##[endgroup]
+ 8513  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.6457730Z (node:26063) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+ 8514  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.6459020Z (Use `node --trace-deprecation ...` to show where the warning was created)
+ 8515  build-and-testflight	Upload Artifacts	2026-07-14T17:35:13.6469440Z ##[warning]No files were found with the provided path: Export/*.ipa. No artifacts will be uploaded.
+ 8516  build-and-testflight	Post Checkout repository	﻿2026-07-14T17:35:13.6660950Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NO
+ 8517  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.6662160Z Post job cleanup.
+ 8518  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.7614340Z [command]/opt/homebrew/bin/git version
+ 8519  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.7908740Z git version 2.55.0
+ 8520  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.7930140Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/3ae7bbad-84a4-46c9-81f5-50fac3b88e7e/.gitconfig'
+ 8521  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.7936470Z Temporarily overriding HOME='/Users/runner/work/_temp/3ae7bbad-84a4-46c9-81f5-50fac3b88e7e' before making global git config changes
+ 8522  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.7937350Z Adding repository directory to the temporary git global config as a safe directory
+ 8523  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.7940090Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion
+ 8524  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.8044580Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+ 8525  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.8105700Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 
+ 8526  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.9105840Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+ 8527  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.9169480Z http.https://github.com/.extraheader
+ 8528  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.9184840Z [command]/opt/homebrew/bin/git config --local --unset-all http.https://github.com/.extraheader
+ 8529  build-and-testflight	Post Checkout repository	2026-07-14T17:35:13.9263950Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git 
+ 8530  build-and-testflight	Post Checkout repository	2026-07-14T17:35:14.0031680Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+ 8531  build-and-testflight	Post Checkout repository	2026-07-14T17:35:14.0111980Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+ 8532  build-and-testflight	Complete job	﻿2026-07-14T17:35:14.0967630Z Cleaning up orphan processes
+ 8533  build-and-testflight	Complete job	2026-07-14T17:35:14.3270310Z Terminate orphan process: pid (25647) (ibtoold)
+ 8534  build-and-testflight	Complete job	2026-07-14T17:35:14.4310430Z Terminate orphan process: pid (21178) (ibtoold)
+ 8535  build-and-testflight	Complete job	2026-07-14T17:35:15.4706780Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4. For more
+ 8536  

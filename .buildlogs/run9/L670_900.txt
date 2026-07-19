@@ -1,0 +1,230 @@
+  670  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8023700Z ^[[36;1m  xcrun xcresulttool get --path ./build.xcresult --format text 2>&1 | head -200 || true^[[0m
+  671  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8025360Z ^[[36;1melse^[[0m
+  672  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8025820Z ^[[36;1m  echo "=== SILENT COMPILE FAILURE REVEAL: skipped (no .xcresult produced) ==="^[[0m
+  673  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8026200Z ^[[36;1mfi^[[0m
+  674  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8026380Z ^[[36;1m^[[0m
+  675  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8026640Z ^[[36;1mecho "=== xcodebuild DONE at $(date -u +%H:%M:%SZ); exit=${BUILD_EXIT} ==="^[[0m
+  676  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8027400Z ^[[36;1mecho "=== Archive directory check ==="^[[0m
+  677  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8027750Z ^[[36;1mls -la ./SmartSpeedCompanion.xcarchive 2>&1 | head -25 || true^[[0m
+  678  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8034560Z ^[[36;1m^[[0m
+  679  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8034790Z ^[[36;1mif [ "${BUILD_EXIT}" -ne 0 ]; then^[[0m
+  680  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8047120Z ^[[36;1m  echo "*** FATAL: xcodebuild failed with exit ${BUILD_EXIT} ***"^[[0m
+  681  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8048360Z ^[[36;1m  exit "${BUILD_EXIT}"^[[0m
+  682  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8049360Z ^[[36;1mfi^[[0m
+  683  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8049770Z ^[[36;1m^[[0m
+  684  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8050460Z ^[[36;1mif [ ! -d "./SmartSpeedCompanion.xcarchive" ]; then^[[0m
+  685  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8051520Z ^[[36;1m  echo "*** FATAL: xcodebuild exited 0 but no .xcarchive was produced ***"^[[0m
+  686  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8052520Z ^[[36;1m  exit 1^[[0m
+  687  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8053050Z ^[[36;1mfi^[[0m
+  688  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8053450Z ^[[36;1m^[[0m
+  689  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8053900Z ^[[36;1mecho "=== Archive verified ==="^[[0m
+  690  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:27.8054600Z ^[[36;1mls -la ./SmartSpeedCompanion.xcarchive/^[[0m
+  691  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.0475310Z shell: /bin/bash -e {0}
+  692  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.0477250Z env:
+  693  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.0478200Z   KEYCHAIN_PASSWORD: build_keychain_pass
+  694  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.0479210Z ##[endgroup]
+  695  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.1533300Z === Available signing identities ===
+  696  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.2272010Z   1) 5853692E26CEDDC14B046AE322BA387BE2FA6CCD "Apple Distribution: Sreelakshmi Chintapalli (VCNBBG32P6)"
+  697  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.2296080Z      1 valid identities found
+  698  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.2296680Z === Provisioning profiles ===
+  699  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.2411630Z total 24
+  700  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.2417830Z drwxr-xr-x  3 runner  staff     96 Jul 14 17:30 .
+  701  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.2420090Z drwxr-xr-x  3 runner  staff     96 Jul 14 17:30 ..
+  702  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.2421950Z -rw-r--r--  1 runner  staff  12166 Jul 14 17:30 a10ac4cb-a250-46e8-ad8f-0ad805ab0e90.mobileprovision
+  703  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:28.2505120Z === xcodebuild archive START at 17:30:28Z ===
+  704  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.4830130Z Command line invocation:
+  705  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.4862110Z     /Applications/Xcode_16.2.app/Contents/Developer/usr/bin/xcodebuild clean archive -project SmartSpeedCompanion.xcodeproj -scheme SmartSpeedCompani
+  706  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.4974210Z 
+  707  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5074190Z User defaults from command line:
+  708  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5093720Z     IDEArchivePathOverride = /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/SmartSpeedCompanion.xcarchive
+  709  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5166000Z     IDEBuildOperationResultBundlePath = /Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/build.xcresult
+  710  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5170090Z     IDEPackageSupportUseBuiltinSCM = YES
+  711  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5174750Z 
+  712  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5175040Z Build settings from command line:
+  713  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5175410Z     CODE_SIGN_IDENTITY = -
+  714  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5203920Z     CODE_SIGNING_ALLOWED = NO
+  715  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5216420Z     CODE_SIGNING_REQUIRED = NO
+  716  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5319160Z     PROVISIONING_PROFILE_SPECIFIER = Speedio App Store
+  717  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5348210Z     SDKROOT = iphoneos18.2
+  718  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:34.5352000Z 
+  719  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:35.9847480Z Resolve Package Graph
+  720  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:36.1857340Z 
+  721  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:36.1988850Z Fetching from https://github.com/firebase/firebase-ios-sdk.git
+  722  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:30:53.2649910Z 
+  723  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:12.9671200Z Fetching from https://github.com/google/app-check.git
+  724  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:14.7441690Z 
+  725  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:14.7542860Z Fetching from https://github.com/google/interop-ios-for-google-sdks.git
+  726  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:14.7645010Z 
+  727  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:14.7702570Z Fetching from https://github.com/firebase/leveldb.git
+  728  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:15.6905260Z 
+  729  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:15.7014940Z Fetching from https://github.com/google/grpc-binary.git
+  730  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:15.7052160Z 
+  731  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:15.7052950Z Fetching from https://github.com/google/abseil-cpp-binary.git
+  732  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:16.5289680Z 
+  733  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:16.5365520Z Fetching from https://github.com/firebase/nanopb.git
+  734  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:17.1767220Z 
+  735  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:17.1877280Z Fetching from https://github.com/google/gtm-session-fetcher.git
+  736  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:17.9590610Z 
+  737  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:17.9652220Z Fetching from https://github.com/google/GoogleUtilities.git
+  738  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:18.4686780Z 
+  739  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:18.4790540Z Fetching from https://github.com/google/GoogleDataTransport.git
+  740  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:19.3409790Z 
+  741  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:19.3436180Z Fetching from https://github.com/google/GoogleAppMeasurement.git
+  742  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:19.6050320Z 
+  743  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:19.6052590Z Fetching from https://github.com/google/promises.git
+  744  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:20.4241490Z 
+  745  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:27.4242590Z Fetching from https://github.com/googleads/google-ads-on-device-conversion-ios-sdk
+  746  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:28.3440880Z 
+  747  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:34.9742810Z Creating working copy of package ‘firebase-ios-sdk’
+  748  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:35.1601780Z 
+  749  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:31:35.1615980Z Checking out 12.14.0 of package ‘firebase-ios-sdk’
+  750  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:03.2752130Z 
+  751  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:03.7462780Z Creating working copy of package ‘GoogleAppMeasurement’
+  752  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:03.9291540Z 
+  753  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:03.9315830Z Checking out 12.14.0 of package ‘GoogleAppMeasurement’
+  754  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:03.9960400Z 
+  755  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.0798710Z Creating working copy of package ‘abseil-cpp-binary’
+  756  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.1576270Z 
+  757  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.1579000Z Checking out 1.2024072200.0 of package ‘abseil-cpp-binary’
+  758  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.1977770Z 
+  759  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.3032270Z Creating working copy of package ‘app-check’
+  760  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.4591910Z 
+  761  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.4698270Z Checking out 11.3.1 of package ‘app-check’
+  762  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.7712410Z 
+  763  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.8642690Z Creating working copy of package ‘gtm-session-fetcher’
+  764  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.9704580Z 
+  765  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:04.9775840Z Checking out 5.3.0 of package ‘gtm-session-fetcher’
+  766  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.1044450Z 
+  767  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.1907290Z Creating working copy of package ‘promises’
+  768  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.2822370Z 
+  769  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.2870610Z Checking out 2.4.1 of package ‘promises’
+  770  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.4358900Z 
+  771  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.5036470Z Creating working copy of package ‘grpc-binary’
+  772  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.6017880Z 
+  773  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.6025290Z Checking out 1.69.1 of package ‘grpc-binary’
+  774  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.6632960Z 
+  775  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.7587250Z Creating working copy of package ‘GoogleUtilities’
+  776  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.9000960Z 
+  777  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:05.9009780Z Checking out 8.1.2 of package ‘GoogleUtilities’
+  778  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.0537280Z 
+  779  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.1272700Z Creating working copy of package ‘GoogleDataTransport’
+  780  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.2168680Z 
+  781  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.2279200Z Checking out 10.1.0 of package ‘GoogleDataTransport’
+  782  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.5430710Z 
+  783  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.6475910Z Creating working copy of package ‘google-ads-on-device-conversion-ios-sdk’
+  784  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.7193850Z 
+  785  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.7268590Z Checking out 3.6.1 of package ‘google-ads-on-device-conversion-ios-sdk’
+  786  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.7770950Z 
+  787  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.8270760Z Creating working copy of package ‘nanopb’
+  788  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.9210700Z 
+  789  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:06.9268570Z Checking out 2.30910.1 of package ‘nanopb’
+  790  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:07.1475190Z 
+  791  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:07.2041280Z Creating working copy of package ‘interop-ios-for-google-sdks’
+  792  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:07.2653610Z 
+  793  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:07.2693410Z Checking out 101.0.0 of package ‘interop-ios-for-google-sdks’
+  794  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:07.3019490Z 
+  795  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:07.3704450Z Creating working copy of package ‘leveldb’
+  796  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:07.4485570Z 
+  797  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:07.4513390Z Checking out 1.22.5 of package ‘leveldb’
+  798  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:32:07.6014740Z 
+  799  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8203510Z 
+  800  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8213330Z Resolved source packages:
+  801  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8227370Z   Promises: https://github.com/google/promises.git @ 2.4.1
+  802  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8229720Z   GTMSessionFetcher: https://github.com/google/gtm-session-fetcher.git @ 5.3.0
+  803  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8230980Z   abseil: https://github.com/google/abseil-cpp-binary.git @ 1.2024072200.0
+  804  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8236970Z   GoogleAdsOnDeviceConversion: https://github.com/googleads/google-ads-on-device-conversion-ios-sdk @ 3.6.1
+  805  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8289560Z   AppCheck: https://github.com/google/app-check.git @ 11.3.1
+  806  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8290250Z   GoogleAppMeasurement: https://github.com/google/GoogleAppMeasurement.git @ 12.14.0
+  807  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8291080Z   nanopb: https://github.com/firebase/nanopb.git @ 2.30910.1
+  808  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8291710Z   leveldb: https://github.com/firebase/leveldb.git @ 1.22.5
+  809  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8292620Z   InteropForGoogle: https://github.com/google/interop-ios-for-google-sdks.git @ 101.0.0
+  810  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8293480Z   Firebase: https://github.com/firebase/firebase-ios-sdk.git @ 12.14.0
+  811  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8294010Z   GoogleDataTransport: https://github.com/google/GoogleDataTransport.git @ 10.1.0
+  812  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8294700Z   GoogleUtilities: https://github.com/google/GoogleUtilities.git @ 8.1.2
+  813  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8296240Z   gRPC: https://github.com/google/grpc-binary.git @ 1.69.1
+  814  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8302980Z 
+  815  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8369560Z Writing result bundle at path:
+  816  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8402800Z 	/Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/build.xcresult
+  817  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:19.8404730Z 
+  818  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:20.2517020Z note: Using codesigning identity override: -
+  819  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.3435930Z 
+  820  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.3438050Z 
+  821  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.3439430Z Result bundle written to path:
+  822  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.3444350Z 	/Users/runner/work/SmartSpeedCompanion/SmartSpeedCompanion/build.xcresult
+  823  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.3447060Z 
+  824  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.3447740Z ** CLEAN SUCCEEDED **
+  825  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.3448160Z 
+  826  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.4807350Z Prepare packages
+  827  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.4809540Z 
+  828  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.4856910Z note: Using codesigning identity override: -
+  829  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:23.4965420Z ComputeTargetDependencyGraph
+  830  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1493710Z note: Building targets in dependency order
+  831  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1636260Z note: Target dependency graph (79 targets)
+  832  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1638600Z     Target 'SmartSpeedCompanion' in project 'SmartSpeedCompanion'
+  833  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1681740Z         ➜ Explicit dependency on target 'SmartSpeedCompanionWidget' in project 'SmartSpeedCompanion'
+  834  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1682870Z         ➜ Explicit dependency on target 'FirebaseCore' in project 'Firebase'
+  835  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1684790Z         ➜ Explicit dependency on target 'FirebaseAuth' in project 'Firebase'
+  836  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1685620Z         ➜ Explicit dependency on target 'FirebaseFirestore' in project 'Firebase'
+  837  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1686230Z         ➜ Explicit dependency on target 'FirebaseAnalytics' in project 'Firebase'
+  838  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1686960Z     Target 'FirebaseAnalytics' in project 'Firebase'
+  839  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1687620Z         ➜ Explicit dependency on target 'FirebaseAnalyticsTarget' in project 'Firebase'
+  840  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1688510Z         ➜ Explicit dependency on target 'Firebase' in project 'Firebase'
+  841  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1689200Z         ➜ Explicit dependency on target 'FirebaseCoreInternal' in project 'Firebase'
+  842  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1689790Z         ➜ Explicit dependency on target 'FirebaseCore' in project 'Firebase'
+  843  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1690500Z         ➜ Explicit dependency on target 'FirebaseInstallations' in project 'Firebase'
+  844  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1691350Z         ➜ Explicit dependency on target 'FirebaseAnalyticsWrapper' in project 'Firebase'
+  845  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1691960Z         ➜ Explicit dependency on target 'GULNSData' in project 'GoogleUtilities'
+  846  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1692750Z         ➜ Explicit dependency on target 'GULEnvironment' in project 'GoogleUtilities'
+  847  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1693400Z         ➜ Explicit dependency on target 'GULLogger' in project 'GoogleUtilities'
+  848  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1694050Z         ➜ Explicit dependency on target 'FBLPromises' in project 'Promises'
+  849  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1694760Z         ➜ Explicit dependency on target 'GULUserDefaults' in project 'GoogleUtilities'
+  850  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1695390Z         ➜ Explicit dependency on target 'GoogleAppMeasurement' in project 'GoogleAppMeasurement'
+  851  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1696240Z         ➜ Explicit dependency on target 'GULAppDelegateSwizzler' in project 'GoogleUtilities'
+  852  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1700700Z         ➜ Explicit dependency on target 'GULMethodSwizzler' in project 'GoogleUtilities'
+  853  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1702660Z         ➜ Explicit dependency on target 'GULNetwork' in project 'GoogleUtilities'
+  854  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1704600Z         ➜ Explicit dependency on target 'nanopb' in project 'nanopb'
+  855  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1705730Z     Target 'FirebaseAnalyticsTarget' in project 'Firebase'
+  856  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1707310Z         ➜ Explicit dependency on target 'Firebase' in project 'Firebase'
+  857  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1708700Z         ➜ Explicit dependency on target 'FirebaseCoreInternal' in project 'Firebase'
+  858  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1711500Z         ➜ Explicit dependency on target 'FirebaseCore' in project 'Firebase'
+  859  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1712290Z         ➜ Explicit dependency on target 'FirebaseInstallations' in project 'Firebase'
+  860  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1713210Z         ➜ Explicit dependency on target 'FirebaseAnalyticsWrapper' in project 'Firebase'
+  861  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1715970Z         ➜ Explicit dependency on target 'GULNSData' in project 'GoogleUtilities'
+  862  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1717810Z         ➜ Explicit dependency on target 'GULEnvironment' in project 'GoogleUtilities'
+  863  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1719330Z         ➜ Explicit dependency on target 'GULLogger' in project 'GoogleUtilities'
+  864  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1720740Z         ➜ Explicit dependency on target 'FBLPromises' in project 'Promises'
+  865  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1721660Z         ➜ Explicit dependency on target 'GULUserDefaults' in project 'GoogleUtilities'
+  866  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1723010Z         ➜ Explicit dependency on target 'GoogleAppMeasurement' in project 'GoogleAppMeasurement'
+  867  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1724430Z         ➜ Explicit dependency on target 'GULAppDelegateSwizzler' in project 'GoogleUtilities'
+  868  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1727980Z         ➜ Explicit dependency on target 'GULMethodSwizzler' in project 'GoogleUtilities'
+  869  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1730010Z         ➜ Explicit dependency on target 'GULNetwork' in project 'GoogleUtilities'
+  870  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1733500Z         ➜ Explicit dependency on target 'nanopb' in project 'nanopb'
+  871  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1741700Z     Target 'FirebaseAnalyticsWrapper' in project 'Firebase'
+  872  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1745520Z         ➜ Explicit dependency on target 'Firebase' in project 'Firebase'
+  873  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1751410Z         ➜ Explicit dependency on target 'FirebaseCoreInternal' in project 'Firebase'
+  874  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1754540Z         ➜ Explicit dependency on target 'FirebaseCore' in project 'Firebase'
+  875  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1762380Z         ➜ Explicit dependency on target 'FirebaseInstallations' in project 'Firebase'
+  876  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1766380Z         ➜ Explicit dependency on target 'GULNSData' in project 'GoogleUtilities'
+  877  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1768490Z         ➜ Explicit dependency on target 'GULEnvironment' in project 'GoogleUtilities'
+  878  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1773660Z         ➜ Explicit dependency on target 'GULLogger' in project 'GoogleUtilities'
+  879  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1775780Z         ➜ Explicit dependency on target 'FBLPromises' in project 'Promises'
+  880  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1778630Z         ➜ Explicit dependency on target 'GULUserDefaults' in project 'GoogleUtilities'
+  881  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1780620Z         ➜ Explicit dependency on target 'GoogleAppMeasurement' in project 'GoogleAppMeasurement'
+  882  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1782310Z         ➜ Explicit dependency on target 'GULAppDelegateSwizzler' in project 'GoogleUtilities'
+  883  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1785140Z         ➜ Explicit dependency on target 'GULMethodSwizzler' in project 'GoogleUtilities'
+  884  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1786790Z         ➜ Explicit dependency on target 'GULNetwork' in project 'GoogleUtilities'
+  885  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1788920Z         ➜ Explicit dependency on target 'nanopb' in project 'nanopb'
+  886  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1790510Z     Target 'GoogleAppMeasurement' in project 'GoogleAppMeasurement'
+  887  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1792720Z         ➜ Explicit dependency on target 'GoogleAppMeasurementTarget' in project 'GoogleAppMeasurement'
+  888  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1794820Z         ➜ Explicit dependency on target 'GULAppDelegateSwizzler' in project 'GoogleUtilities'
+  889  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1800610Z         ➜ Explicit dependency on target 'GULMethodSwizzler' in project 'GoogleUtilities'
+  890  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1802350Z         ➜ Explicit dependency on target 'GULNSData' in project 'GoogleUtilities'
+  891  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1804560Z         ➜ Explicit dependency on target 'GULNetwork' in project 'GoogleUtilities'
+  892  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1806160Z         ➜ Explicit dependency on target 'GULLogger' in project 'GoogleUtilities'
+  893  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1808280Z         ➜ Explicit dependency on target 'GULEnvironment' in project 'GoogleUtilities'
+  894  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1809550Z         ➜ Explicit dependency on target 'nanopb' in project 'nanopb'
+  895  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1811510Z         ➜ Explicit dependency on target 'GoogleAdsOnDeviceConversion' in project 'GoogleAdsOnDeviceConversion'
+  896  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1813770Z     Target 'GoogleAppMeasurementTarget' in project 'GoogleAppMeasurement'
+  897  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1816330Z         ➜ Explicit dependency on target 'GULAppDelegateSwizzler' in project 'GoogleUtilities'
+  898  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1818140Z         ➜ Explicit dependency on target 'GULMethodSwizzler' in project 'GoogleUtilities'
+  899  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T17:33:24.1820010Z         ➜ Explicit dependency on target 'GULNSData' in project 'GoogleUtilities'

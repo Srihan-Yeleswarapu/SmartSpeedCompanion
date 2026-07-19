@@ -1,0 +1,10 @@
+   36  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3632140Z ^[[36;1m  echo "=== SILENT COMPILE FAILURE REVEAL ==="^[[0m
+   37  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3633470Z ^[[36;1m  # xcodebuild 16.x requires the `object` subcommand for `get`; the^[[0m
+   38  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3634220Z ^[[36;1m  # old `--format text` invocation returns the usage line and nothing^[[0m
+   39  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3634630Z ^[[36;1m  # else. JSON is parsed by future helpers if needed; we just need^[[0m
+   40  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3635020Z ^[[36;1m  # the first 200 lines of the actual diagnostic payload.^[[0m
+   41  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3658540Z ^[[36;1m  xcrun xcresulttool get object --path ./build.xcresult --format json 2>&1 | head -200 || true^[[0m
+   42  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3660030Z ^[[36;1melse^[[0m
+   43  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3660780Z ^[[36;1m  echo "=== SILENT COMPILE FAILURE REVEAL: skipped (no .xcresult produced) ==="^[[0m
+   44  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3662930Z ^[[36;1mfi^[[0m
+   45  build-and-testflight	Build Archive (Unsigned for SPM targets)	2026-07-14T18:46:05.3663580Z ^[[36;1m^[[0m
