@@ -111,7 +111,7 @@ extension LocationManager: CLLocationManagerDelegate {
         
         guard let location = locations.last else { return }
         // Filter out stale or wildly inaccurate fixes to prevent map-going-bonkers
-        guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 200 else { return }
+        guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 100 else { return }
         DispatchQueue.main.async {
             self.latestLocation = location
             // NOTE: Per-update coordinate logging removed to reduce heat from constant 
