@@ -100,7 +100,7 @@ public class SmartSpeedLimitService: ObservableObject {
     private var consecutiveSuspectCount: Int = 0
 
     /// `45 -> 65` (arterial->highway) stays below this bar; the user's reported
-    /// `45 -> 75` flyover-resolve flicker exceeds it.
+    /// `45 -> 25` Bush Rd cross-street snap (20 mph delta) exceeds it.
     /// -- AUTHORITATIVE BASIS (research 2026-07): NO US federal rule (MUTCD /
     ///   AASHTO / FHWA) specifies a numerical max-mph-delta between adjacent
     ///   speed zones. MUTCD governs transition sign LENGTH (deceleration
@@ -108,20 +108,24 @@ public class SmartSpeedLimitService: ObservableObject {
     ///   uses the 85th-percentile design process. Work-zone management
     ///   literature treats 10-15 mph max-mph-delta as a design boundary;
     ///   beyond that, transition zones / additional signage are recommended.
-    ///   20 mph is chosen
-    ///   empirically to admit legitimate arterial->highway jumps while
-    ///   rejecting the observed 30-mph flyover flicker.
-    static let SUSPICIOUS_JUMP_MPH: Int = 20
-    /// 5 consecutive fetches with the same suspect identity -- sink-in to the
+    ///   15 mph was chosen
+    ///   empirically after TestFlight feedback showed a 45→25 cross-street
+    ///   snap (20 mph delta) was committed immediately. Lowering from 20 to
+    ///   15 catches that snap while still admitting legitimate transitions
+    ///   like 30→25 on a side street or 45→55 on a highway on-ramp.
+    static let SUSPICIOUS_JUMP_MPH: Int = 15
+    /// 3 consecutive fetches with the same suspect identity -- sink-in to the
     /// new answer instead of pinning the driver to a stale limit.
-    /// Wall-clock duration depends on fetch cadence + vehicle speed:
-    /// ~5 sec at 1 Hz GPS, ~25-45 sec at the 80 m / 250 m distance
-    /// throttles (longer at lower speeds).
+    /// Lowered from 5 to 3 so genuine road transitions sink in faster
+    /// (the heading-delta trigger at 20° now fires more re-fetches,
+    /// so suspects accumulate faster; 3 fetches at 500ms cadence ≈ 1.5 sec
+    /// of suspect data before committing).
     /// -- AUTHORITATIVE BASIS (research 2026-07): Apple provides no public
     ///   `CLGeocoder.reverseGeocodeLocation` latency SLA. HIG rate-limits
-    ///   geocoder calls but publishes no response-time guarantee. 5 was
-    ///   chosen as a safety-net debounce; nothing in Apple's docs contradicts.
-    static let SUSPICIOUS_FETCH_HOLD: Int = 5
+    ///   geocoder calls but publishes no response-time guarantee. 3 was
+    ///   chosen as a tighter debounce that still rejects flyover flicker
+    ///   (~3-5 sec typical) while accepting real transitions faster.
+    static let SUSPICIOUS_FETCH_HOLD: Int = 3
     /// Max `|new_candidate - user_GPS_speed|` at which a candidate is treated
     /// as physically plausible enough to bypass the suspect hold. Models the
     /// highway on-ramp where the driver is accelerating onto a 75 mph road.
@@ -384,9 +388,14 @@ public class SmartSpeedLimitService: ObservableObject {
         let speedDelta = abs(outcome.limit - prior.limit)
         let roadChanged = (roadName != prior.roadName) || (outcome.roadKey != prior.roadKey)
 
-        // Rule 1 -- small delta or same-road identity: commit immediately.
-        // Normal driving on the same road; doesn't flicker.
-        if speedDelta <= Self.SUSPICIOUS_JUMP_MPH || !roadChanged {
+        // Rule 1 -- small delta: commit immediately regardless of road identity.
+        // This catches normal transitions like 30→25 on a side street or small
+        // within-lane GPS drift. Removed the previous `|| !roadChanged` shortcut
+        // that let speed jumps through when the GPS briefly snapped to a cross
+        // street (e.g. 45→25 on Bush Rd). Now even a same-road jump larger than
+        // SUSPICIOUS_JUMP_MPH enters the suspect hold so the system verifies
+        // before changing the display.
+        if speedDelta <= Self.SUSPICIOUS_JUMP_MPH {
             lastStable = snapshot
             pendingSuspect = nil
             consecutiveSuspectCount = 0

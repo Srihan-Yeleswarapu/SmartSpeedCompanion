@@ -305,9 +305,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// clean baseline.
     private var lastSpeedLimitFetchHeading: Double? = nil
     /// Threshold for the heading-delta trigger (degrees, absolute delta).
-    /// 30° chosen to match "you just turned onto a new road" -- under
-    /// that is still on the same bearing / lane drift.
-    private let headingDeltaFetchThresholdDeg: Double = 30
+    /// 20° chosen so passing a cross street (e.g. Bush Rd at a 45° angle)
+    /// triggers a fresh fetch before the GPS snaps to the adjacent road.
+    /// The user's TestFlight feedback showed 30° was too lax — a 20+ degree
+    /// bearing change often means the GPS is near a cross street whose speed
+    /// limit differs from the road the user is actually on.
+    private let headingDeltaFetchThresholdDeg: Double = 20
 
 
 
@@ -1445,14 +1448,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
     /// Fires a fresh speed-limit fetch when the user's bearing has
     /// shifted by more than `headingDeltaFetchThresholdDeg` (default
-    /// 30°) since the last fetch. The fetch goes through the full
+    /// 20°) since the last fetch. The fetch goes through the full
     /// `SmartSpeedLimitService.updateSpeedLimit(...)` pipeline (NOT a
     /// parallel sqlite-only path) so the continuity guard sees the new
     /// bearing and the cache benefits from warm-up. forceRefresh=false
     /// so a recent correct answer on the same road still wins.
     ///
     /// Snaps `lastSpeedLimitFetchHeading` to `currentHeading` AFTER
-    /// firing -- so a 90° turn is ONE trigger then needs another 30°
+    /// firing -- so a 90° turn is ONE trigger then needs another 20°
     /// change to re-fire (avoids spurious re-fires on near-stationary
     /// oscillation back to the original bearing).
     private func evaluateHeadingDeltaTrigger() async {
