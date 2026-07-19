@@ -28,18 +28,23 @@
 // name-match corrects back to 45 mph.
 //
 // The guard dampens that flicker WITHOUT blocking legitimate road transitions:
-//   * Small speed delta (<= 20 mph) OR same-road identity  -> commit immediately
+//   * Small speed delta (<= SUSPICIOUS_JUMP_MPH=15 mph) AND no
+//     geocoder-provider disagreement  -> commit immediately
 //     (normal driver behavior on the same road).
-//   * Speed delta > 20 mph AND conflicting road identity   -> SUSPECT. Hold the
-//     prior committed limit for up to 5 fetches. A second fetch that reproduces
-//     the suspect identity commits it (real transition). A second fetch that
-//     disagrees (e.g. SQLite name-match wins) commits THAT, dropping the suspect.
+//   * Geocoder-provider road-name disagreement (geocoder says "same road"
+//     but provider says "different road key") -> SUSPECT regardless of delta.
+//     The geocoder is an independent ground-truth signal for "which road am I on?"
+//     and any disagreement likely means a cross-street GPS snap.
+//   * Speed delta > SUSPICIOUS_JUMP_MPH AND conflicting road identity -> SUSPECT.
+//     Hold the prior committed limit for up to 3 fetches. A second fetch that
+//     reproduces the suspect identity commits it (real transition). A second fetch
+//     that disagrees (e.g. SQLite name-match wins) commits THAT, dropping suspect.
 //   * Physics override: if `|new - currentSpeed| <= 10 mph` AND the prior limit
 //     was already off-physics, commit immediately even with a big delta. This
 //     case models a real highway on-ramp -- the driver is accelerating at 72 mph,
 //     so the 75 mph answer is the only one matching physics regardless of (false)
 //     geocode.
-//   * Sink-in: 5 consecutive suspect fetches with the same identity commit anyway
+//   * Sink-in: 3 consecutive suspect fetches with the same identity commit anyway
 //     (long-term geocode stuck -- user has clearly changed roads).
 //
 // IMPORTANT: the guard fires BEFORE cache writes, so the 75 mph flyover flicker
@@ -386,20 +391,34 @@ public class SmartSpeedLimitService: ObservableObject {
         }
 
         let speedDelta = abs(outcome.limit - prior.limit)
-        let roadChanged = (roadName != prior.roadName) || (outcome.roadKey != prior.roadKey)
 
-        // Rule 1 -- small delta: commit immediately regardless of road identity.
-        // This catches normal transitions like 30→25 on a side street or small
-        // within-lane GPS drift. Removed the previous `|| !roadChanged` shortcut
-        // that let speed jumps through when the GPS briefly snapped to a cross
-        // street (e.g. 45→25 on Bush Rd). Now even a same-road jump larger than
-        // SUSPICIOUS_JUMP_MPH enters the suspect hold so the system verifies
-        // before changing the display.
+        // Rule 1 -- small delta: commit immediately.
+        // EXCEPTION: when the geocoded road name is available and matches the
+        // prior geocoded road name (geocoder says "same road"), but the
+        // provider's road key differs from the prior provider road key
+        // (provider says "different road"), the geocoder and provider disagree.
+        // The geocoder is an independent ground-truth signal for "which road am
+        // I on?" — any disagreement likely means a cross-street GPS snap where
+        // the provider returned data for a nearby different road. Route through
+        // the suspect hold even for small deltas.
         if speedDelta <= Self.SUSPICIOUS_JUMP_MPH {
-            lastStable = snapshot
-            pendingSuspect = nil
-            consecutiveSuspectCount = 0
-            return commit(candidate: outcome, coordinate: coordinate, roadName: roadName)
+            // Geocoder-provider road-name cross-check:
+            //   roadName == prior.roadName  AND  outcome.roadKey != prior.roadKey
+            // means the geocoder says "same road" but the provider disagrees.
+            let geocoderSaysSameRoad = (roadName != nil && prior.roadName != nil && roadName == prior.roadName && !roadName!.isEmpty)
+            let providerSaysDifferentRoad = (outcome.roadKey != prior.roadKey && !outcome.roadKey.isEmpty && !prior.roadKey.isEmpty)
+            if geocoderSaysSameRoad && providerSaysDifferentRoad {
+                // Geocoder and provider disagree — likely a cross-street GPS
+                // snap. Fall through to the suspect hold below.
+                DebugLogger.shared.log("[ContinuityGuard] HOLD (geocoder-provider mismatch): prior=\(prior.limit) on '\(prior.roadName ?? "")' vs candidate=\(outcome.limit) roadKey=\(outcome.roadKey)")
+            } else {
+                // Road identity is consistent, or geocoder has no opinion
+                // (nil roadName). Commit immediately.
+                lastStable = snapshot
+                pendingSuspect = nil
+                consecutiveSuspectCount = 0
+                return commit(candidate: outcome, coordinate: coordinate, roadName: roadName)
+            }
         }
 
         // Rule 2 -- physics override. The driver is moving at the new speed;
