@@ -651,16 +651,16 @@ fileprivate struct SpeedCameraAlertBanner: View {
 
 fileprivate struct RouteSelectionCard: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
-    
+
     var body: some View {
         VStack(spacing: 12) {
             HStack {
                 Text("Select Route")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(.white)
-                
+
                 Spacer()
-                
+
                 Button(action: {
                     driveViewModel.isSelectingRoute = false
                     driveViewModel.availableRoutes = []
@@ -673,7 +673,21 @@ fileprivate struct RouteSelectionCard: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
-            
+
+            // SUBTITLE — explains the visual hierarchy to the user so
+            // the picker card and the map's bold/light polyline
+            // treatment agree. ("SUGGESTED" pill mirrors the bold cyan
+            // line on the map; "ALTERNATE" mirrors the muted white
+            // line.)
+            HStack(spacing: 6) {
+                Text("Bold line on map = the recommended route")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, -6)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     ForEach(Array(driveViewModel.availableRoutes.enumerated()), id: \.offset) { index, route in
@@ -683,21 +697,51 @@ fileprivate struct RouteSelectionCard: View {
                             }
                         }) {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Route \(index + 1)")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundColor(.white)
-                                
+                                // Tag pill — SUGGESTED on routes[0] (the
+                                // bold one), ALTERNATE on the rest. The
+                                // pill itself is filled cyan on the
+                                // recommended route and outlined on
+                                // alternatives so the picker card
+                                // visually mirrors the bold/light
+                                // polylines on the map. Mirrors the
+                                // same hierarchy so the user's eye
+                                // doesn't have to reconcile two
+                                // conflicting representations.
+                                HStack(spacing: 6) {
+                                    if index == 0 {
+                                        Text("SUGGESTED")
+                                            .font(.system(size: 9, weight: .black))
+                                            .foregroundColor(.black)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .background(DesignSystem.cyan)
+                                            .clipShape(Capsule())
+                                    } else {
+                                        Text("ALTERNATE")
+                                            .font(.system(size: 9, weight: .black))
+                                            .foregroundColor(.white.opacity(0.75))
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .overlay(
+                                                Capsule().stroke(Color.white.opacity(0.30), lineWidth: 1)
+                                            )
+                                    }
+                                    Text("Route \(index + 1)")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundColor(.white.opacity(0.75))
+                                }
+
                                 Text("\(Int(route.expectedTravelTime / 60)) min")
-                                    .font(.system(size: 20, weight: .black))
-                                    .foregroundColor(DesignSystem.cyan)
-                                
+                                    .font(.system(size: 22, weight: .black))
+                                    .foregroundColor(index == 0 ? DesignSystem.cyan : .white)
+
                                 Text(String(format: "%.1f mi", route.distance * 0.000621371))
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(.white.opacity(0.6))
                             }
                             .padding(16)
-                            .frame(width: 140, alignment: .leading)
-                            .background(Color.white.opacity(0.1))
+                            .frame(width: 150, alignment: .leading)
+                            .background(index == 0 ? Color.white.opacity(0.16) : Color.white.opacity(0.08))
                             .cornerRadius(16)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 16)

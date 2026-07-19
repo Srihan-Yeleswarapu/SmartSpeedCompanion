@@ -426,12 +426,43 @@ public struct LiveMapView: UIViewRepresentable {
         // camera animation) on every UIViewRepresentable invalidate.
         var lastAppliedMapStyle: DriveViewModel.MapStyleChoice? = nil
         var lastAppliedShowPOIs: Bool? = nil
-        /// Tracks the last `DriveViewModel.MapPitchMode` we forwarded to
-        /// `MKMapView.setCamera`. Used by the pitch-override short-circuit
-        /// in `updateUIView` so a repeat-tap on the same mode (e.g. user
-        /// taps 3D → auto → 3D again) re-applies the camera change
-        /// rather than no-op'ing the equality check.
+        // Tracks the last `DriveViewModel.MapPitchMode` we forwarded to
+        // `MKMapView.setCamera`. Used by the pitch-override short-circuit
+        // in `updateUIView` so a repeat-tap on the same mode (e.g. user
+        // taps 3D → auto → 3D again) re-applies the camera change
+        // rather than no-op'ing the equality check.
         var lastAppliedPitchMode: DriveViewModel.MapPitchMode? = nil
+        // Last-known fingerprint of the alternative-routes list (count +
+        // hash of distances + isSelectingRoute). Used by
+        // `updateOverlaysIfNeeded` to decide when to rebuild the
+        // alternative-route polylines — we deliberately do NOT rebuild
+        // them on every 500 ms GPS tick, only when the route list
+        // actually changes.
+        //
+        // `Optional<Int>` (not `Int` with sentinel `-1`) so a Hasher
+        // collision that happens to hash to exactly `-1` cannot silently
+        // match our reset sentinel and produce a stale "no rebuild
+        // needed" verdict.
+        var lastAltRouteFingerprint: Int? = nil
+
+        /// Stable fingerprint of the alternative-routes list. We hash
+        /// count + (distance, expectedTravelTime, name) per route so the
+        /// signature flips whenever the user re-runs
+        /// `MKDirections.calculate()`. `name` matters because in dense
+        /// city grids two entirely different route geometries can
+        /// coincidentally have identical distance + ETA to the second,
+        /// and we want the polyline set to actually rebuild in that
+        /// case (instead of silently reusing the stale overlay set).
+        static func altRouteFingerprint(for routes: [MKRoute]) -> Int {
+            var hasher = Hasher()
+            hasher.combine(routes.count)
+            for r in routes {
+                hasher.combine(Int(r.distance))
+                hasher.combine(Int(r.expectedTravelTime))
+                hasher.combine(r.name)
+            }
+            return hasher.finalize()
+        }
         // Maneuver annotation we own — ref so we don't churn annotations on
         // every GPS ping.
         private var maneuverAnnotation: ManeuverAnnotation? = nil
@@ -527,7 +558,18 @@ public struct LiveMapView: UIViewRepresentable {
             // Throttling: only rebuild history every 5 points to save battery
             let historyChanged = currentReadingCount >= lastHistoryCounts.safeCount + lastHistoryCounts.overCount + 5
             
-            guard routeChanged || historyChanged || (isNavigating && lastRouteDistance == 0) else { return }
+            guard routeChanged || historyChanged || (isNavigating && lastRouteDistance == 0) else {
+                // ALTERNATIVE-ROUTE FINGERPRINT: rebuild when availableRoutes
+                // count changes during the route-selection step. We hash
+                // count + a stable signature (sum of distances) so the check
+                // doesn't fire on every 500 ms GPS tick.
+                let fp = vm.isSelectingRoute ? Self.altRouteFingerprint(for: vm.availableRoutes) : -1
+                if vm.isSelectingRoute && fp != lastAltRouteFingerprint {
+                    rebuildOverlays(mapView, viewModel: vm)
+                    lastAltRouteFingerprint = fp
+                }
+                return
+            }
             
             // Perform the overlay rebuild only when data changed
             rebuildOverlays(mapView, viewModel: vm)
@@ -546,8 +588,12 @@ public struct LiveMapView: UIViewRepresentable {
             mapView.removeOverlays(mapView.overlays)
             mapView.removeAnnotations(mapView.annotations.filter { !($0 is MKUserLocation) })
 
+            // Has any route work to render at all?
+            let hasAvailableRoutes = viewModel.isSelectingRoute && !viewModel.availableRoutes.isEmpty
+            let hasActiveRoute = viewModel.isNavigating && viewModel.currentRoute != nil
+
             // Route polyline + destination
-            if viewModel.isNavigating, let route = viewModel.currentRoute {
+            if hasActiveRoute, let route = viewModel.currentRoute {
                 // Glow layer (drawn first, sits BELOW the route line)
                 let glowLine = GlowPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
                 glowLine.glowColor = UIColor(DesignSystem.cyan)
@@ -567,21 +613,6 @@ public struct LiveMapView: UIViewRepresentable {
                     destinationAnnotation.coordinate = dest.placemark.coordinate
                     destinationAnnotation.title = dest.name
                     mapView.addAnnotation(destinationAnnotation)
-                }
-
-                // Speed-camera annotations get the native MapKit clustering
-                // treatment so a state full of cameras collapses into a single
-                // numeric badge when zoomed out (Apple Maps behavior). The
-                // 5 km radius matches SpeedCameraService.getNearbyCameras's
-                // default — wider dumps the entire AZ-511 catalog onto the map.
-                if !SpeedCameraService.shared.cameras.isEmpty {
-                    let nearby = SpeedCameraService.shared.getNearbyCameras(
-                        to: viewModel.locationManager.latestLocation ?? CLLocation()
-                    )
-                    for camera in nearby.prefix(60) {
-                        let ann = SpeedCameraAnnotation(camera: camera)
-                        mapView.addAnnotation(ann)
-                    }
                 }
 
                 // MKMapRect auto-fit: when a fresh route appears and we
@@ -606,10 +637,72 @@ public struct LiveMapView: UIViewRepresentable {
                     )
                     hasAutoFramedRoute = true
                 }
+            } else if hasAvailableRoutes {
+                // ROUTE-SELECTION STEP — user is choosing between routes.
+                // MKDirections returns routes sorted by `expectedTravelTime`
+                // ascending, so [0] is always the "suggested" (fastest).
+                // Draw that one bold (cyan glow + cyan stroke, same look as
+                // the in-progress navigation line) and every other route
+                // lighter (white-with-opacity, thinner) so the user
+                // visually understands which is the recommended one and
+                // how much extra time/distance each alternative costs.
+                renderAlternativeRoutes(mapView, routes: viewModel.availableRoutes, viewModel: viewModel)
+                // Auto-frame to fit the union of all routes + the user
+                // once on first appearance, so the user sees all options
+                // on screen simultaneously. PICKER-STATE EDGE PADDING:
+                // top:200 / bottom:60 (inverted from the active-nav path
+                // because the `RouteSelectionCard` is at the top — it sits
+                // in `geo.safeAreaInsets.top + 12 ... +16` blocks plus its
+                // own ~120pt intrinsic height — while the BOTTOM HUD is
+                // hidden by the parent's `if !driveViewModel.isSelectingRoute`
+                // gate. Using the active-nav padding (top:80, bottom:200)
+                // here would frame the route directly underneath the
+                // picker card while leaving the bottom wasted. Apple's
+                // Maps app uses a roughly 165/55 split for this exact
+                // scenario; we round to 200/60 for a tiny safety margin.
+                if !hasAutoFramedRoute {
+                    var rect: MKMapRect = .null
+                    for r in viewModel.availableRoutes {
+                        rect = rect.union(r.polyline.boundingMapRect)
+                    }
+                    if let userLoc = viewModel.locationManager.latestLocation {
+                        let userRect = MKMapRect(
+                            x: MKMapPoint(userLoc.coordinate).x - 1_000,
+                            y: MKMapPoint(userLoc.coordinate).y - 1_000,
+                            width: 2_000,
+                            height: 2_000
+                        )
+                        rect = rect.union(userRect)
+                    }
+                    mapView.setVisibleMapRect(
+                        rect,
+                        edgePadding: UIEdgeInsets(top: 200, left: 60, bottom: 60, right: 60),
+                        animated: true
+                    )
+                    hasAutoFramedRoute = true
+                }
             } else {
                 // Drop the auto-fit latch when navigation ends so the next
                 // navigation re-frames the polyline.
                 hasAutoFramedRoute = false
+                // Also clear the alt-route fingerprint so a fresh
+                // `selectDestinationAndCalculateRoutes` call triggers a
+                // rebuild next time the user opens the picker.
+                lastAltRouteFingerprint = nil
+            }
+
+            // Speed-camera annotations cluster normally under either state
+            // (navigating AND selecting-route both show real-world camera
+            // POIs around the user). Pull them out of the navig-only path
+            // so the picker state still respects the same camera map.
+            if !SpeedCameraService.shared.cameras.isEmpty {
+                let nearby = SpeedCameraService.shared.getNearbyCameras(
+                    to: viewModel.locationManager.latestLocation ?? CLLocation()
+                )
+                for camera in nearby.prefix(60) {
+                    let ann = SpeedCameraAnnotation(camera: camera)
+                    mapView.addAnnotation(ann)
+                }
             }
 
             // Maneuver annotation — a large arrow dropped at the upcoming
@@ -647,6 +740,61 @@ public struct LiveMapView: UIViewRepresentable {
             buildHistoryOverlays(mapView, viewModel: viewModel)
         }
         
+        /// Renders ALL of `routes` as map polylines during the route-selection
+        /// step (`isSelectingRoute == true`). Routes[0] — the one
+        /// `MKDirections` returns as the fastest / recommended — gets the
+        /// same BOLD cyan-glow look as the in-progress navigation line so
+        /// the user immediately understands which is "the suggested one".
+        /// Routes 1..n — typically slower or longer — get a LIGHTER
+        /// muted-white stroke at ~half the line weight so visually they
+        /// read as "alternatives" without stealing attention from the
+        /// suggested route.
+        ///
+        /// We deliberately do NOT use dashed lines for alternatives so the
+        /// visual hierarchy reads unambiguously: bold = pick me, light =
+        /// ok if you insist. (TestFlight 2.2.x user feedback: "show the
+        /// routes on the map ... show the suggested one in a more bold
+        /// way, and show the slower ones or more distance in lighter
+        /// way").
+        private func renderAlternativeRoutes(_ mapView: MKMapView, routes: [MKRoute], viewModel: DriveViewModel) {
+            for (idx, route) in routes.enumerated() {
+                let pts = route.polyline.points()
+                let cnt = route.polyline.pointCount
+                if idx == 0 {
+                    // BOLD: same cyan glow + cyan stroke as the active
+                    // navigation line so the "suggested" route is visually
+                    // identical to what the user will see once they tap GO.
+                    let glow = GlowPolyline(points: pts, count: cnt)
+                    glow.glowColor = UIColor(DesignSystem.cyan)
+                    mapView.addOverlay(glow, level: .aboveRoads)
+                    let polyline = NavPolyline(points: pts, count: cnt)
+                    polyline.statusColor = UIColor(DesignSystem.cyan)
+                    polyline.isRouteOverlay = true
+                    polyline.useGradient = viewModel.gradientRouteEnabled
+                    mapView.addOverlay(polyline, level: .aboveRoads)
+                } else {
+                    // LIGHT: muted white-with-opacity, thinner. Visible on
+                    // both the dark (mutedDark) and light (standard /
+                    // satellite) map styles without competing with the
+                    // bold cyan route for attention.
+                    let alt = AltRoutePolyline(points: pts, count: cnt)
+                    alt.routeIndex = idx
+                    mapView.addOverlay(alt, level: .aboveRoads)
+                }
+            }
+
+            // Single destination annotation. We previously re-added this
+            // per-route in earlier revision cycles which produced duplicate
+            // map pins; one pin is correct here since all alternatives
+            // share the same destination.
+            if let dest = viewModel.destination {
+                let destAnn = MKPointAnnotation()
+                destAnn.coordinate = dest.placemark.coordinate
+                destAnn.title = dest.name
+                mapView.addAnnotation(destAnn)
+            }
+        }
+
         private func buildHistoryOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
             guard let session = viewModel.sessionRecorder.currentSession, !session.readings.isEmpty else { return }
             
@@ -723,6 +871,26 @@ public struct LiveMapView: UIViewRepresentable {
                 let renderer = MKPolylineRenderer(polyline: polyline)
                 renderer.strokeColor = polyline.glowColor.withAlphaComponent(0.3)
                 renderer.lineWidth = 14.0
+                renderer.lineCap = .round
+                renderer.lineJoin = .round
+                return renderer
+            }
+
+            // ALTERNATIVE-ROUTE POLYLINE — drawn noticeably thinner and
+            // with reduced opacity so the user visually reads it as
+            // "secondary" against the bold cyan "suggested" line drawn
+            // above. We use white-with-opacity on purpose so the
+            // contrast holds across `muteDark`, `standard`, and
+            // `satellite` map styles — a desaturated cyan vanishes on
+            // satellite imagery, and pure dark gray vanishes on the
+            // dark map. The 0.65 alpha is just high enough for legibility
+            // against neutral-white road colors on Standard; the 4.0 pt
+            // lineWidth (vs 7.0 for the bold suggested route) reinforces
+            // "lighter" weight even when the color contrast is low.
+            if let polyline = overlay as? AltRoutePolyline {
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                renderer.strokeColor = UIColor.white.withAlphaComponent(0.65)
+                renderer.lineWidth = 4.0
                 renderer.lineCap = .round
                 renderer.lineJoin = .round
                 return renderer
@@ -821,6 +989,24 @@ class NavPolyline: MKPolyline {
 
 class GlowPolyline: MKPolyline {
     var glowColor: UIColor = .systemCyan
+}
+
+/// Lighter-weight polyline used for ALTERNATIVE routes during the
+/// route-selection step (`isSelectingRoute == true`). MKDirections
+/// returns routes sorted by `expectedTravelTime` ascending, so the
+/// first route is always the "suggested" one — we render it with the
+/// bold cyan-glow `NavPolyline` + `GlowPolyline` pair (same look as the
+/// active navigation line). Every other route in the list is rendered
+/// with this alternative subtype so the renderer can paint it
+/// thinner and with reduced opacity.
+///
+/// `routeIndex` is the position in `availableRoutes` (1 for the first
+/// alternative, 2 for the second, …). We don't use it for style right
+/// now, but we keep it around so future iterations can stratify
+/// further (e.g. draw the second-faster route slightly less opaque
+/// than the slower one).
+class AltRoutePolyline: MKPolyline {
+    var routeIndex: Int = 1
 }
 
 /// Marker annotation for the upcoming turn point. MKMarkerAnnotationView picks
