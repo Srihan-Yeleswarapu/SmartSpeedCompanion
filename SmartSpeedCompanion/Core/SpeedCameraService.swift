@@ -9,7 +9,8 @@ public struct SpeedCamera: Codable, Identifiable, Sendable {
     public let direction: String?
     public let latitude: Double
     public let longitude: Double
-    public let location: String?    public let sortOrder: Int?
+    public let location: String?
+    public let sortOrder: Int?
 
     /// Convenience accessor for MapKit code paths that want a single
     /// `CLLocationCoordinate2D` instead of separate latitude/longitude
