@@ -295,6 +295,19 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// path inside the method itself.
     private var lastManualRefetchAt: Date = .distantPast
     private let manualRefetchThrottle: TimeInterval = 0.6
+    /// Captures the user's heading degrees the last time we fired any
+    /// "fresh" speed-limit fetch (heading-delta trigger). When the
+    /// absolute bearing delta from `currentHeading` exceeds
+    /// `headingDeltaFetchThresholdDeg`, the forward-facing pipeline
+    /// fires another fetch -- this is an ADDITIONAL trigger alongside
+    /// the existing speed/distance-driven fetches, not a replacement.
+    /// Reset to nil in `endNavigation()` so each drive starts with a
+    /// clean baseline.
+    private var lastSpeedLimitFetchHeading: Double? = nil
+    /// Threshold for the heading-delta trigger (degrees, absolute delta).
+    /// 30° chosen to match "you just turned onto a new road" -- under
+    /// that is still on the same bearing / lane drift.
+    private let headingDeltaFetchThresholdDeg: Double = 30
 
 
 
@@ -439,6 +452,13 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 }
                 // Sync position to Firebase for potential multi-device/dashboard features
                 AuthenticationManager.shared.updateLastLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
+                // Heading-delta trigger: a 30+ degree bearing change
+                // forces a fresh fetch even mid-route. Pre-cache of the
+                // route ahead + heading-triggered re-fetches are the
+                // two "more smooth" adds per the user's request; the
+                // existing throttled fetches remain in place. Fire-and-
+                // forget so we don't block the GPS sink block.
+                Task { await self.evaluateHeadingDeltaTrigger() }
             }
             .store(in: &cancellables)
 
@@ -741,14 +761,50 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let polylinePoints = route.polyline.points()
         let pointCount = route.polyline.pointCount
         var coordinates: [CLLocationCoordinate2D] = []
-        
-        // Sample the route every 30 points (~500m to 1km) to cover the whole path
-        for i in stride(from: 0, to: pointCount, by: 30) {
+
+        // Sample every 10 points (~150-300m) for denser ahead-of-time
+        // coverage than the old every-30-points (~500m-1km) cadence.
+        // User asked that we "fetch all the roads the user will be on
+        // ahead of time" -- denser sampling catches on-ramps, exits,
+        // and named cross-roads that sparse sampling skipped.
+        for i in stride(from: 0, to: pointCount, by: 10) {
             coordinates.append(polylinePoints[i].coordinate)
         }
         if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
-        
+
+        // Layer 1: SQLite pre-cache. Existing path, no network hit.
         await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
+
+        // Layer 2: live-provider ahead-of-time pre-fetch. Fires
+        // `SmartSpeedLimitService.prefetchAheadOfRoute(...)` for every
+        // sample coord with bounded concurrency (4 in flight). Skips
+        // the continuity guard so the user's actual GPS-driven
+        // continuity is untouched -- see SpeedLimitService.swift doc on
+        // `prefetchAheadOfRoute` for why bypassing the guard matters.
+        //
+        // The pre-cache runs in a fire-and-let-finish Task so this
+        // method returns promptly and `startNavigation` isn't blocked
+        // on ~500ms-per-point round-trips on a long drive.
+        let coordinatesForWarmup = coordinates
+        let roadNameForWarmup: String? = nil
+        Task { @MainActor in
+            await withTaskGroup(of: Void.self) { group in
+                var inflight = 0
+                for coord in coordinatesForWarmup {
+                    group.addTask {
+                        await SmartSpeedLimitService.shared.prefetchAheadOfRoute(
+                            at: coord, roadName: roadNameForWarmup
+                        )
+                    }
+                    inflight += 1
+                    if inflight >= 4 {
+                        await group.next()
+                        inflight = 0
+                    }
+                }
+                await group.waitForAll()
+            }
+        }
     }
     
     /// Alternative start navigation that triggers the calculation internally (legacy/direct support).
@@ -787,6 +843,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         rerouteTimer = nil
         self.stepStageFlags.removeAll()
         self.spokenCameraKeys.removeAll()
+        // Reset the heading-delta baseline so the next drive starts clean.
+        self.lastSpeedLimitFetchHeading = nil
         // Drop maneuver scratch state so the next navigation starts clean.
         // (Look Around scratch state removed in TestFlight 2.2.0 / FB10.)
         self.nextManeuverCoordinate = nil
@@ -1362,6 +1420,69 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             forceRefresh: true
         )
         DebugLogger.shared.log("manualRefetchSpeedLimit: completed (limit=\(limit)).")
+    }
+
+    // MARK: - Heading-delta trigger
+    //
+    // Whenever the user's bearing shifts by >30° from the last
+    // speed-limit fetch (post-turn behavior forces this fresh), fire a
+    // normal `SmartSpeedLimitService.updateSpeedLimit(...)` call. This
+    // is ADDITIVE to the existing GPS-distance / speed-throttled fetch
+    // pipeline -- it doesn't replace anything, just adds a new trigger
+    // so the next HUD reflects the new road the user just turned onto.
+    // The existing throttle + cache wins keep network pressure
+    // unchanged in steady state.
+
+    /// Robust shortest-path bearing delta in [-180, 180]. Wraps the
+    /// raw `(to - from)` modulo 360 and corrects for the ±180
+    /// ambiguity so a 350-→10° turn reads as 20°, not -340°.
+    private func angleDelta(from a: Double, to b: Double) -> Double {
+        var diff = (b - a).truncatingRemainder(dividingBy: 360)
+        if diff > 180 { diff -= 360 }
+        if diff < -180 { diff += 360 }
+        return diff
+    }
+
+    /// Fires a fresh speed-limit fetch when the user's bearing has
+    /// shifted by more than `headingDeltaFetchThresholdDeg` (default
+    /// 30°) since the last fetch. The fetch goes through the full
+    /// `SmartSpeedLimitService.updateSpeedLimit(...)` pipeline (NOT a
+    /// parallel sqlite-only path) so the continuity guard sees the new
+    /// bearing and the cache benefits from warm-up. forceRefresh=false
+    /// so a recent correct answer on the same road still wins.
+    ///
+    /// Snaps `lastSpeedLimitFetchHeading` to `currentHeading` AFTER
+    /// firing -- so a 90° turn is ONE trigger then needs another 30°
+    /// change to re-fire (avoids spurious re-fires on near-stationary
+    /// oscillation back to the original bearing).
+    private func evaluateHeadingDeltaTrigger() async {
+        guard let heading = currentHeading else { return }
+        let baseline: Double
+        if let last = lastSpeedLimitFetchHeading {
+            baseline = last
+        } else {
+            // First GPS tick with a usable heading -- baseline it so we
+            // don't fire a redundant fetch. The SpeedEngine's normal
+            // distance-throttled fetches are doing the first-fetch job.
+            lastSpeedLimitFetchHeading = heading
+            return
+        }
+        let delta = abs(angleDelta(from: baseline, to: heading))
+        guard delta > headingDeltaFetchThresholdDeg else { return }
+        guard let coord = locationManager.latestLocation?.coordinate else { return }
+
+        let mps = locationManager.latestLocation?.speed ?? 0
+        let currentSpeedMph = mps * 2.23694
+
+        _ = await SmartSpeedLimitService.shared.updateSpeedLimit(
+            at: coord,
+            heading: heading,
+            currentSpeedMph: currentSpeedMph,
+            roadName: nil,
+            forceRefresh: false
+        )
+        lastSpeedLimitFetchHeading = heading
+        DebugLogger.shared.log("DriveViewModel: heading-delta refetch (delta=\(Int(delta))°).")
     }
 
     /// Promotes an MKMapItem out to Apple Maps for full-fidelity directions,

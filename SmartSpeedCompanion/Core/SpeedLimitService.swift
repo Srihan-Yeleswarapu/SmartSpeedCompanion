@@ -199,6 +199,40 @@ public class SmartSpeedLimitService: ObservableObject {
         )
     }
 
+    /// Pre-warm the response cache for a coordinate WITHOUT touching the
+    /// continuity guard or the @Published `currentLimit`/`dataSource`.
+    /// Used by `DriveViewModel.cacheRouteSegments(_:)` to bake live-provider
+    /// answers for every polyline sample on an upcoming route so the
+    /// driver's first real GPS tick at that coord is a cache hit instead of
+    /// a cold call.
+    ///
+    /// Drives ONLY `cache.store(...)`. Does NOT mutate `lastStable` and does
+    /// NOT commit (so the user's actual GPS-driven continuity path is
+    /// undisturbed by route-ahead fetches -- a 50-mile route's 100 pre-
+    /// cache calls would otherwise leave `lastStable` at the LAST sample
+    /// coordinate, ~50 miles off-route, and trigger an unwarranted
+    /// SUSPECT-HOLD on the driver's first moving tick).
+    public func prefetchAheadOfRoute(
+        at coordinate: CLLocationCoordinate2D,
+        roadName: String? = nil
+    ) async {
+        let outcome = await resolveCandidate(
+            at: coordinate,
+            heading: nil,
+            currentSpeedMph: 0,
+            roadName: roadName,
+            forceRefresh: false
+        )
+        guard !outcome.isMiss, outcome.limit > 0 else { return }
+        let resp = SpeedLimitResponse(
+            speedLimitMph: outcome.limit,
+            roadKey: outcome.roadKey,
+            providerName: outcome.providerName,
+            detail: outcome.detail
+        )
+        Task { await cache.store(resp, at: coordinate, roadName: roadName) }
+    }
+
     // MARK: - Candidate resolution (decision-tree)
 
     /// Internal value type: a candidate answer from the resolver chain, OR a
