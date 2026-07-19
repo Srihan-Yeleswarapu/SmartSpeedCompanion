@@ -447,6 +447,13 @@ public struct LiveMapView: UIViewRepresentable {
         // needed" verdict.
         var lastAltRouteFingerprint: Int? = nil
 
+        /// Tracks whether `isSelectingRoute` was true on the previous
+        /// `updateOverlaysIfNeeded` call. When the user dismisses the
+        /// route-picker (X button), `isSelectingRoute` flips to false
+        /// and the fingerprint check short-circuits — without this
+        /// tracker the stale route polylines stay on the map.
+        var lastIsSelectingRoute: Bool = false
+
         /// Stable fingerprint of the alternative-routes list. We hash
         /// count + (distance, expectedTravelTime, name) per route so the
         /// signature flips whenever the user re-runs
@@ -560,7 +567,17 @@ public struct LiveMapView: UIViewRepresentable {
             // Throttling: only rebuild history every 5 points to save battery
             let historyChanged = currentReadingCount >= lastHistoryCounts.safeCount + lastHistoryCounts.overCount + 5
             
-            guard routeChanged || historyChanged || (isNavigating && lastRouteDistance == 0) else {
+            // Detect when the user dismissed the route picker (isSelectingRoute
+            // transitioned true→false). When this happens the overlay fingerprint
+            // check short-circuits because vm.isSelectingRoute is now false, so
+            // stale route polylines would remain drawn on the map. We jump to
+            // rebuildOverlays which calls removeOverlays(…) first, clearing them.
+            let routePickerDismissed = lastIsSelectingRoute && !vm.isSelectingRoute
+            // Also detect new route-selection step so the initial fingerprint
+            // rebuild fires (new routes from a fresh search).
+            let routePickerOpened = !lastIsSelectingRoute && vm.isSelectingRoute
+            
+            guard routeChanged || historyChanged || (isNavigating && lastRouteDistance == 0) || routePickerDismissed || routePickerOpened else {
                 // ALTERNATIVE-ROUTE FINGERPRINT: rebuild when availableRoutes
                 // count changes during the route-selection step. We hash
                 // count + a stable signature (sum of distances) so the check
@@ -569,6 +586,7 @@ public struct LiveMapView: UIViewRepresentable {
                 if vm.isSelectingRoute && fp != lastAltRouteFingerprint {
                     rebuildOverlays(mapView, viewModel: vm)
                     lastAltRouteFingerprint = fp
+                    lastIsSelectingRoute = true
                 }
                 return
             }
@@ -578,6 +596,7 @@ public struct LiveMapView: UIViewRepresentable {
             
             // Update tracking state
             lastIsNavigating = isNavigating
+            lastIsSelectingRoute = vm.isSelectingRoute
             lastRouteDistance = currentRouteDistance
             let readings = vm.sessionRecorder.currentSession?.readings ?? []
             let safeCount = readings.filter { !$0.overLimit }.count
