@@ -1457,6 +1457,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// oscillation back to the original bearing).
     private func evaluateHeadingDeltaTrigger() async {
         guard let heading = currentHeading else { return }
+        // Defense-in-depth against stationary compass drift. The
+        // existing init-level Course-over-Compass already falls back to
+        // compass trueHeading when loc.speed < 2 m/s, but a stopped car
+        // + momentarily-rotated phone (e.g. user adjusting a mounted
+        // phone at a stoplight) can spike compass 30-45° and fire a
+        // spurious refetch. A hard speed gate here cuts that case.
+        let mpsGate = locationManager.latestLocation?.speed ?? 0
+        guard mpsGate > 2.0 else { return }
         let baseline: Double
         if let last = lastSpeedLimitFetchHeading {
             baseline = last
