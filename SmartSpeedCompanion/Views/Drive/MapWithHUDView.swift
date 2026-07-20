@@ -100,7 +100,7 @@ public struct MapWithHUDView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     } // Group — top section
-                    .offset(y: -20)
+                    .offset(y: -30)
 
                     Spacer()
 
