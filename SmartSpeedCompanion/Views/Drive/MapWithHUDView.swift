@@ -118,9 +118,8 @@ public struct MapWithHUDView: View {
                                     }
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 16)
-                                    .padding(.vertical, 10)
-                                    .glassStyle(cornerRadius: 20)
-                                    .shadow(color: DesignSystem.cyan.opacity(0.3), radius: 10)
+                                    .padding(.vertical, 10)                            .liquidGlassChip(cornerRadius: 20, tint: DesignSystem.cyan.opacity(0.06), interactive: true)
+                            .shadow(color: DesignSystem.cyan.opacity(0.25), radius: 8)
                                 }
                                 .padding(.leading, 16)
                                 .padding(.bottom, 8)
@@ -206,7 +205,7 @@ fileprivate struct NavigationInstructionCard: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .glassStyle()
+        .liquidGlass(interactive: true)
     }
     
     private func formatDistance(_ distance: CLLocationDistance) -> String {
@@ -286,14 +285,7 @@ fileprivate struct SearchBarView: View {
             }
             .padding(.horizontal, 12)
             .frame(height: 48)
-            .background(DesignSystem.LiquidGlass.material)
-            .background(DesignSystem.glassVibrancy)
-            .cornerRadius(14)
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(DesignSystem.glassBorder, lineWidth: DesignSystem.LiquidGlass.borderWidth)
-            )
-            .shadow(color: DesignSystem.LiquidGlass.shadowColor, radius: 8, x: 0, y: 6)
+            .liquidGlassChip(cornerRadius: 14, tint: DesignSystem.cyan.opacity(0.04), interactive: true)
             
             if isFocused && !driveViewModel.recentSearches.isEmpty {
                 let filteredSearches = searchText.isEmpty ? driveViewModel.recentSearches : driveViewModel.recentSearches.filter { $0.lowercased().contains(searchText.lowercased()) }
@@ -361,7 +353,7 @@ fileprivate struct SearchBarView: View {
                         }
                         .frame(maxHeight: 240)
                     }
-                    .glassStyle(cornerRadius: 16)
+                    .liquidGlass(cornerRadius: 16, interactive: true)
                     .padding(.top, 2)
                 }
             }
@@ -412,7 +404,7 @@ fileprivate struct SearchBarView: View {
                     }
                     .frame(maxHeight: 320)
                 }
-                .glassStyle(cornerRadius: 16)
+                .liquidGlass(cornerRadius: 16, interactive: true)
                 .padding(.top, 2)
             }
         }
@@ -465,49 +457,90 @@ fileprivate struct BottomTransparentHUD: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            // Road name chip — floats centered, no background. Hidden
-            // when nil (first 1-2 GPS ticks before the geocode resolves,
+            // Road name chip — glass chip floating centered above the HUD.
+            // Hidden when nil (first 1-2 GPS ticks before the geocode resolves,
             // or after `clearNativeMapCache` runs at end-session, or on
             // a parking lot where geocode returns no thoroughfare).
             if let roadName = driveViewModel.currentRoadName, !roadName.isEmpty {
                 Text(roadName.uppercased())
                     .font(.system(size: isLandscape ? 9 : 10, weight: .black, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.white.opacity(0.72))
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .liquidGlassChip(cornerRadius: 8, tint: DesignSystem.cyan.opacity(0.03))
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.bottom, 2)
             }
 
-            HStack(alignment: .bottom, spacing: 0) {
-                SpeedReadout(isLandscape: isLandscape)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button(action: {
-                    if driveViewModel.isRecording {
-                        driveViewModel.endSession()
-                    } else {
-                        driveViewModel.startSession()
+            // GlassEffectContainer wraps the bottom row for optimal
+            // native Liquid Glass rendering on iOS 26+ (morphing,
+            // shared blur, efficient compositing). Falls back to the
+            // HStack on older iOS.
+            if #available(iOS 26, *) {
+                GlassEffectContainer(spacing: 0) {
+                    HStack(alignment: .bottom, spacing: 0) {
+                        SpeedReadout(isLandscape: isLandscape)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button(action: {
+                            if driveViewModel.isRecording {
+                                driveViewModel.endSession()
+                            } else {
+                                driveViewModel.startSession()
+                            }
+                        }) {
+                            Text(driveViewModel.isRecording ? "STOP" : "START")
+                                .font(.system(size: isLandscape ? 12 : 14, weight: .black))
+                                .foregroundColor(driveViewModel.isRecording ? .white : .black)
+                                .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
+                                .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
+                                .clipShape(Capsule())
+                                .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        LimitSignView(
+                            limit: driveViewModel.limit,
+                            source: driveViewModel.speedLimitSource,
+                            isLandscape: isLandscape,
+                            onTap: {
+                                Task { await driveViewModel.manualRefetchSpeedLimit() }
+                            },
+                            isRefreshing: driveViewModel.isRefreshingSpeedLimit
+                        )
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                }) {
-                    Text(driveViewModel.isRecording ? "STOP" : "START")
-                        .font(.system(size: isLandscape ? 12 : 14, weight: .black))
-                        .foregroundColor(driveViewModel.isRecording ? .white : .black)
-                        .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
-                        .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
-                        .clipShape(Capsule())
-                        .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
                 }
-                .frame(maxWidth: .infinity, alignment: .center)
-                LimitSignView(
-                    limit: driveViewModel.limit,
-                    source: driveViewModel.speedLimitSource,
-                    isLandscape: isLandscape,
-                    onTap: {
-                        Task { await driveViewModel.manualRefetchSpeedLimit() }
-                    },
-                    isRefreshing: driveViewModel.isRefreshingSpeedLimit
-                )
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
+                HStack(alignment: .bottom, spacing: 0) {
+                    SpeedReadout(isLandscape: isLandscape)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button(action: {
+                        if driveViewModel.isRecording {
+                            driveViewModel.endSession()
+                        } else {
+                            driveViewModel.startSession()
+                        }
+                    }) {
+                        Text(driveViewModel.isRecording ? "STOP" : "START")
+                            .font(.system(size: isLandscape ? 12 : 14, weight: .black))
+                            .foregroundColor(driveViewModel.isRecording ? .white : .black)
+                            .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
+                            .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
+                            .clipShape(Capsule())
+                            .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    LimitSignView(
+                        limit: driveViewModel.limit,
+                        source: driveViewModel.speedLimitSource,
+                        isLandscape: isLandscape,
+                        onTap: {
+                            Task { await driveViewModel.manualRefetchSpeedLimit() }
+                        },
+                        isRefreshing: driveViewModel.isRefreshingSpeedLimit
+                    )
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
             }
         }
         // NO .glassStyle() — each widget floats independently over the
@@ -558,6 +591,10 @@ fileprivate struct SpeedReadout: View {
             }
         }
         .frame(minWidth: isLandscape ? 110 : 132, alignment: .leading)
+        .padding(.leading, 14)
+        .padding(.trailing, 18)
+        .padding(.vertical, 10)
+        .liquidGlassChip(cornerRadius: 20, tint: DesignSystem.colorForStatus(driveViewModel.status).opacity(0.04))
     }
 
     /// Same `%H:%M:%S` formatting the legacy `SpeedHUDPill.formatDuration`
@@ -595,9 +632,8 @@ fileprivate struct MapPitchToggleButton: View {
                 .font(.system(size: isLandscape ? 11 : 12, weight: .black, design: .rounded))
                 .foregroundColor(.black)
                 .frame(width: isLandscape ? 38 : 44, height: isLandscape ? 38 : 44)
-                .background(Color.white.opacity(0.95))
+                .liquidGlassChip(cornerRadius: 10, tint: Color.white.opacity(0.40), interactive: true)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .shadow(color: .black.opacity(0.25), radius: 5, y: 2)
         }
         .accessibilityLabel("Camera pitch: \(driveViewModel.mapPitchMode.shortLabel). Tap to cycle 2D, 3D, auto.")
     }
@@ -662,6 +698,9 @@ fileprivate struct LimitSignView: View {
                 }
                 .offset(y: isLandscape ? -2 : -1)
             }
+            .padding(6) // glass circle behind the limit sign
+            .background(Circle().fill(Material.ultraThinMaterial))
+            .clipShape(Circle())
 
             Text(sourceChip.text)
                 .font(.system(size: isLandscape ? 8 : 10, weight: .bold))
@@ -824,7 +863,7 @@ fileprivate struct RouteSelectionCard: View {
                 .padding(.bottom, 16)
             }
         }
-        .glassStyle(cornerRadius: 24)
+        .liquidGlass(cornerRadius: 24, interactive: true)
     }
 }
 
@@ -859,8 +898,7 @@ fileprivate struct NavigationShortcutsRow: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                         .foregroundColor(.white)
-                        .background(Color.white.opacity(0.12))
-                        .cornerRadius(18)
+                        .liquidGlassChip(cornerRadius: 18, interactive: true)
                 }
                 Menu {
                     Button("Gas") { Task { await driveViewModel.searchNearby(category: .gasStation) } }
@@ -875,8 +913,7 @@ fileprivate struct NavigationShortcutsRow: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                         .foregroundColor(.white)
-                        .background(Color.white.opacity(0.12))
-                        .cornerRadius(18)
+                        .liquidGlassChip(cornerRadius: 18, interactive: true)
                 }
             }
             .padding(.horizontal, 4)
@@ -940,12 +977,9 @@ fileprivate struct NearbyAmenitiesCard: View {
             }
 
             Color.clear.frame(height: 8)
-        }        .background(DesignSystem.bgPanel)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(DesignSystem.cyan.opacity(0.25), lineWidth: 1)
-        )
+        }
+        .padding(.vertical, 8)
+        .liquidGlassChip(cornerRadius: 18, tint: DesignSystem.cyan.opacity(0.06), interactive: true)
     }
 }
 
