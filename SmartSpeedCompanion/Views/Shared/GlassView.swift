@@ -22,16 +22,18 @@ public extension View {
     ///   - hasInnerGlow: Whether to render the top gradient glow + edge highlight (default true).
     ///   - tint: Optional accent color overlay (e.g. `.cyan.opacity(0.06)` for branded glass).
     ///   - interactive: Whether the glass responds to touch/pointer (default false). Only for tappable elements.
-    @ViewBuilder
+    /// Full Liquid Glass panel — ideal for cards, floating widgets, and containers.
+    /// Built with a custom multi-layer ZStack for full rendering control.
+    /// - Parameters:
+    ///   - cornerRadius: Corner radius for the glass shape (default 20).
+    ///   - hasInnerGlow: Whether to render the top gradient glow + edge highlight (default true).
+    ///   - tint: Optional accent color overlay (e.g. `.cyan.opacity(0.06)` for branded glass).
+    ///   - interactive: Reserved for future native API adoption (currently no-op).
     func liquidGlass(cornerRadius: CGFloat = DesignSystem.LiquidGlass.cornerRadius,
                      hasInnerGlow: Bool = true,
                      tint: Color? = nil,
                      interactive: Bool = false) -> some View {
-        if #available(iOS 26, *) {
-            _nativeGlass(cornerRadius: cornerRadius, tint: tint, interactive: interactive)
-        } else {
-            _fallbackGlass(cornerRadius: cornerRadius, hasInnerGlow: hasInnerGlow, tint: tint, interactive: interactive)
-        }
+        _fallbackGlass(cornerRadius: cornerRadius, hasInnerGlow: hasInnerGlow, tint: tint)
     }
 
     /// Compact Liquid Glass chip — zero extra padding, minimal shadow.
@@ -39,50 +41,16 @@ public extension View {
     /// - Parameters:
     ///   - cornerRadius: Corner radius for the glass shape (default 14).
     ///   - tint: Optional accent color overlay.
-    ///   - interactive: Whether the glass responds to touch/pointer (default false).
-    @ViewBuilder
+    ///   - interactive: Reserved for future native API adoption (currently no-op).
     func liquidGlassChip(cornerRadius: CGFloat = 14,
                          tint: Color? = nil,
                          interactive: Bool = false) -> some View {
-        if #available(iOS 26, *) {
-            _nativeGlassChip(cornerRadius: cornerRadius, tint: tint, interactive: interactive)
-        } else {
-            _fallbackGlassChip(cornerRadius: cornerRadius, tint: tint)
-        }
+        _fallbackGlassChip(cornerRadius: cornerRadius, tint: tint)
     }
 
-    // MARK: - Native (iOS 26+)
+    // MARK: - Implementation
 
-    @available(iOS 26, *)
-    private func _nativeGlass(cornerRadius: CGFloat, tint: Color?, interactive: Bool) -> some View {
-        let style: GlassEffectStyle = {
-            if let tint {
-                interactive ? .regular.tint(tint).interactive() : .regular.tint(tint)
-            } else {
-                interactive ? .regular.interactive() : .regular
-            }
-        }()
-        return self
-            .padding()
-            .glassEffect(style, in: .rect(cornerRadius: cornerRadius))
-    }
-
-    @available(iOS 26, *)
-    private func _nativeGlassChip(cornerRadius: CGFloat, tint: Color?, interactive: Bool) -> some View {
-        let style: GlassEffectStyle = {
-            if let tint {
-                interactive ? .regular.tint(tint).interactive() : .regular.tint(tint)
-            } else {
-                interactive ? .regular.interactive() : .regular
-            }
-        }()
-        return self
-            .glassEffect(style, in: .rect(cornerRadius: cornerRadius))
-    }
-
-    // MARK: - Fallback (< iOS 26)
-
-    private func _fallbackGlass(cornerRadius: CGFloat, hasInnerGlow: Bool, tint: Color?, interactive: Bool) -> some View {
+    private func _fallbackGlass(cornerRadius: CGFloat, hasInnerGlow: Bool, tint: Color?) -> some View {
         self
             .padding()
             .background(

@@ -473,74 +473,37 @@ fileprivate struct BottomTransparentHUD: View {
                     .frame(maxWidth: .infinity, alignment: .center)
             }
 
-            // GlassEffectContainer wraps the bottom row for optimal
-            // native Liquid Glass rendering on iOS 26+ (morphing,
-            // shared blur, efficient compositing). Falls back to the
-            // HStack on older iOS.
-            if #available(iOS 26, *) {
-                GlassEffectContainer(spacing: 0) {
-                    HStack(alignment: .bottom, spacing: 0) {
-                        SpeedReadout(isLandscape: isLandscape)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Button(action: {
-                            if driveViewModel.isRecording {
-                                driveViewModel.endSession()
-                            } else {
-                                driveViewModel.startSession()
-                            }
-                        }) {
-                            Text(driveViewModel.isRecording ? "STOP" : "START")
-                                .font(.system(size: isLandscape ? 12 : 14, weight: .black))
-                                .foregroundColor(driveViewModel.isRecording ? .white : .black)
-                                .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
-                                .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
-                                .clipShape(Capsule())
-                                .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        LimitSignView(
-                            limit: driveViewModel.limit,
-                            source: driveViewModel.speedLimitSource,
-                            isLandscape: isLandscape,
-                            onTap: {
-                                Task { await driveViewModel.manualRefetchSpeedLimit() }
-                            },
-                            isRefreshing: driveViewModel.isRefreshingSpeedLimit
-                        )
-                            .frame(maxWidth: .infinity, alignment: .trailing)
+            // Bottom row — three independent floating widgets over the map.
+            // SpeedReadout (leading), START/STOP (center), LimitSignView (trailing).
+            HStack(alignment: .bottom, spacing: 0) {
+                SpeedReadout(isLandscape: isLandscape)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(action: {
+                    if driveViewModel.isRecording {
+                        driveViewModel.endSession()
+                    } else {
+                        driveViewModel.startSession()
                     }
+                }) {
+                    Text(driveViewModel.isRecording ? "STOP" : "START")
+                        .font(.system(size: isLandscape ? 12 : 14, weight: .black))
+                        .foregroundColor(driveViewModel.isRecording ? .white : .black)
+                        .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
+                        .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
+                        .clipShape(Capsule())
+                        .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
                 }
-            } else {
-                HStack(alignment: .bottom, spacing: 0) {
-                    SpeedReadout(isLandscape: isLandscape)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(action: {
-                        if driveViewModel.isRecording {
-                            driveViewModel.endSession()
-                        } else {
-                            driveViewModel.startSession()
-                        }
-                    }) {
-                        Text(driveViewModel.isRecording ? "STOP" : "START")
-                            .font(.system(size: isLandscape ? 12 : 14, weight: .black))
-                            .foregroundColor(driveViewModel.isRecording ? .white : .black)
-                            .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
-                            .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
-                            .clipShape(Capsule())
-                            .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    LimitSignView(
-                        limit: driveViewModel.limit,
-                        source: driveViewModel.speedLimitSource,
-                        isLandscape: isLandscape,
-                        onTap: {
-                            Task { await driveViewModel.manualRefetchSpeedLimit() }
-                        },
-                        isRefreshing: driveViewModel.isRefreshingSpeedLimit
-                    )
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                LimitSignView(
+                    limit: driveViewModel.limit,
+                    source: driveViewModel.speedLimitSource,
+                    isLandscape: isLandscape,
+                    onTap: {
+                        Task { await driveViewModel.manualRefetchSpeedLimit() }
+                    },
+                    isRefreshing: driveViewModel.isRefreshingSpeedLimit
+                )
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         // NO .glassStyle() — each widget floats independently over the
