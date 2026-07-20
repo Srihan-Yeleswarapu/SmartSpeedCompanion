@@ -28,13 +28,11 @@ public struct MapWithHUDView: View {
 
                 // Overlay content
                 VStack(spacing: 0) {
-                    // Top section — zero offset so the search bar + 3D
-                    // toggle sit at their natural position with safe-area
-                    // padding only. TestFlight 2.2.0 (b397) feedback from
-                    // srihan.yeleswarapu@gmail.com: the search bar / 3D
-                    // button were "out of frame" and needed to come down
-                    // 50 px from the previous -50 offset (which had pushed
-                    // them too close to the status bar). The group offset
+                    // Top section — slight -10 offset lifts the search bar
+                    // + 3D toggle up by 10 px from the previous 0 position.
+                    // TestFlight 2.2.0 (b397) follow-up from
+                    // srihan.yeleswarapu@gmail.com: they were still a bit
+                    // too low and needed to come up 10 px. The group offset
                     // is purely visual so the Spacer below still expands
                     // to fill the middle.
                     Group {
@@ -103,16 +101,17 @@ public struct MapWithHUDView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     } // Group — top section
-                    .offset(y: 0)
+                    .offset(y: -10)
 
                     Spacer()
 
-                    // Bottom section — slight +20 offset nudges the speed
-                    // readout / START button / limit sign up by 30 px from
-                    // the previous +50 position, per TestFlight 2.2.0 (b397)
-                    // feedback: "move the speed, start, and speed limit up
-                    // by 30 px." The offset is purely visual so the Spacer
-                    // above still expands to fill the middle.
+                    // Bottom section — +35 offset nudges the speed readout /
+                    // START button / limit sign down by 15 px from the
+                    // previous +20 position, per TestFlight 2.2.0 (b397)
+                    // follow-up from srihan.yeleswarapu@gmail.com: "they
+                    // need to go down by like 15 px." The offset is purely
+                    // visual so the Spacer above still expands to fill the
+                    // middle.
                     Group {
                         // Re-center button — always visible when map is detached
                         if driveViewModel.isMapDetached {
@@ -153,7 +152,7 @@ public struct MapWithHUDView: View {
                                 .padding(.bottom, geo.safeAreaInsets.bottom + 12)
                         }
                     } // Group — bottom section
-                    .offset(y: 20)
+                    .offset(y: 35)
                 }
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: driveViewModel.isNavigating)
