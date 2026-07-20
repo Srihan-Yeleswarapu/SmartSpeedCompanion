@@ -104,7 +104,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
 
                 self.consecutiveSeconds += 1
 
-                if self.consecutiveSeconds >= 3 {
+                if self.consecutiveSeconds >= 1 {
                     self.audioAlertActive = true
 
                     let now = Date()
