@@ -557,7 +557,6 @@ fileprivate struct SpeedReadout: View {
         .padding(.leading, 14)
         .padding(.trailing, 18)
         .padding(.vertical, 10)
-        .liquidGlassChip(cornerRadius: 20, tint: DesignSystem.colorForStatus(driveViewModel.status).opacity(0.04))
     }
 
     /// Same `%H:%M:%S` formatting the legacy `SpeedHUDPill.formatDuration`
