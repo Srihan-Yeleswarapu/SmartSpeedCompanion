@@ -481,15 +481,6 @@ fileprivate struct BottomTransparentHUD: View {
                     .frame(maxWidth: .infinity, alignment: .center)
             }
 
-            // Buffer chip — amber pill showing the user's speed buffer setting
-            // so they always know their safety margin at a glance. This was
-            // previously only visible in the unused SpeedDisplayView (dead code);
-            // now it floats here above the bottom row. The amber color visually
-            // ties it to the BUFFER label from the old SpeedDisplayView
-            // and the BufferSliderView's amber track.
-            BufferChipView(isLandscape: isLandscape)
-                .frame(maxWidth: .infinity, alignment: .center)
-
             // Bottom row — three independent floating widgets over the map.
             // SpeedReadout (leading), START/STOP (center), LimitSignView (trailing).
             HStack(alignment: .bottom, spacing: 0) {
@@ -959,34 +950,6 @@ fileprivate struct NearbyAmenitiesCard: View {
         }
         .padding(.vertical, 8)
         .liquidGlassChip(cornerRadius: 18, tint: DesignSystem.cyan.opacity(0.06), interactive: true)
-    }
-}
-
-// MARK: - Buffer Chip
-//
-// Floating amber pill that shows the user's current speed buffer setting
-// (e.g. "+5 MPH") so they always see their safety margin while driving.
-// Previously this info was only visible in the unused SpeedDisplayView;
-// brought into the live HUD per user request.
-fileprivate struct BufferChipView: View {
-    @EnvironmentObject var driveViewModel: DriveViewModel
-    let isLandscape: Bool
-
-    var body: some View {
-        let system = SpeedFormatting.measurementSystem()
-        let value = Int(SpeedFormatting.displayBuffer(
-            forMph: Double(driveViewModel.speedEngine.userBuffer),
-            measurementSystem: system))
-        let unit = SpeedFormatting.unitLabelLong(measurementSystem: system)
-        let sign = value > 0 ? "+" : ""
-        let label = "\(sign)\(value) \(unit)"
-
-        Text(label)
-            .font(.system(size: isLandscape ? 9 : 11, weight: .black, design: .monospaced))
-            .foregroundColor(DesignSystem.amber)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .liquidGlassChip(cornerRadius: 8, tint: DesignSystem.amber.opacity(0.06))
     }
 }
 
