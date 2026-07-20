@@ -132,11 +132,15 @@ public struct LiveMapView: UIViewRepresentable {
         scale.translatesAutoresizingMaskIntoConstraints = false
         map.addSubview(scale)
 
-        // Bottom-trailing stack: compass + explicit user-tracking button.
-        // (The system pitch toggle is rendered separately via
-        //  `pitchButtonVisibility = .visible` on the MKMapView itself —
-        //  there is no UIKit MapKit class named MKPitchToggle to host
-        //  here.) All controls are free on-device.
+        // Top-trailing stack below the search row: compass + explicit
+        // user-tracking button positioned under the SwiftUI 3D toggle
+        // button so all chrome controls sit near each other in the top
+        // right. Per TestFlight 2.2.0 (b397) feedback from
+        // srihan.yeleswarapu@gmail.com: "Bring the compass and direction
+        // buttons right below the 3D button with some padding ofc."
+        // The 3D pill sits in the search HStack at safeAreaInsets.top + 8
+        // + 48pt search bar height; we start the compass at +72 to clear
+        // the row with ~16pt gap.
         guard #available(iOS 17.0, *) else {
             NSLayoutConstraint.activate([
                 scale.topAnchor.constraint(equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 10),
@@ -163,11 +167,13 @@ public struct LiveMapView: UIViewRepresentable {
             scale.topAnchor.constraint(equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 10),
             scale.leadingAnchor.constraint(equalTo: map.leadingAnchor, constant: 16),
 
+            // Compass + tracking button repositioned to top-right, below
+            // the SwiftUI search bar / 3D toggle row.
             compass.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
-            compass.bottomAnchor.constraint(equalTo: map.safeAreaLayoutGuide.bottomAnchor, constant: -180),
+            compass.topAnchor.constraint(equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 72),
 
             trackingButton.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
-            trackingButton.bottomAnchor.constraint(equalTo: compass.topAnchor, constant: -10)
+            trackingButton.topAnchor.constraint(equalTo: compass.bottomAnchor, constant: 8)
         ])
     }
     

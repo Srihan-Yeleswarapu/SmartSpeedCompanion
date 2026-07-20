@@ -28,19 +28,15 @@ public struct MapWithHUDView: View {
 
                 // Overlay content
                 VStack(spacing: 0) {
-                    // Top section — pushed toward the top edge but pulled back
-                    // 50 px from the previous (±100) values so the search bar /
-                    // nav card clear the status bar instead of being clipped
-                    // behind it. TestFlight 2.2.x (b394) feedback from
-                    // srihan.yeleswarapu@gmail.com: "Take the top elements
-                    // down like 50 px down and for the bottom stuff, bring
-                    // that up 50 px." The user clarified the elements should
-                    // "just enough [be] sitting on the border" — so we
-                    // halved the magnitude of the offset rather than zeroing
-                    // it: we still lean toward the edge, but only enough to
-                    // sit just inside the safe area. The offset is purely
-                    // visual so the Spacer below still expands to fill the
-                    // middle.
+                    // Top section — zero offset so the search bar + 3D
+                    // toggle sit at their natural position with safe-area
+                    // padding only. TestFlight 2.2.0 (b397) feedback from
+                    // srihan.yeleswarapu@gmail.com: the search bar / 3D
+                    // button were "out of frame" and needed to come down
+                    // 50 px from the previous -50 offset (which had pushed
+                    // them too close to the status bar). The group offset
+                    // is purely visual so the Spacer below still expands
+                    // to fill the middle.
                     Group {
                         // Offline banner (TestFlight 2.1.4 feedback:
                     // "if the user has no wifi, show an alert saying
@@ -107,18 +103,16 @@ public struct MapWithHUDView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     } // Group — top section
-                    .offset(y: -50)
+                    .offset(y: 0)
 
                     Spacer()
 
-                    // Bottom section — pushed toward the bottom edge but pulled
-                    // back 50 px from the previous (±100) values so the speed
-                    // readout / START button / limit sign clear the home
-                    // indicator / tab bar instead of being clipped. Mirrors
-                    // the 19 Jul 2026 behavior-change request: reduce the
-                    // magnitude by 50 px on each side so elements just sit on
-                    // the safe-area border. See top section comment for full
-                    // rationale.
+                    // Bottom section — slight +20 offset nudges the speed
+                    // readout / START button / limit sign up by 30 px from
+                    // the previous +50 position, per TestFlight 2.2.0 (b397)
+                    // feedback: "move the speed, start, and speed limit up
+                    // by 30 px." The offset is purely visual so the Spacer
+                    // above still expands to fill the middle.
                     Group {
                         // Re-center button — always visible when map is detached
                         if driveViewModel.isMapDetached {
@@ -159,7 +153,7 @@ public struct MapWithHUDView: View {
                                 .padding(.bottom, geo.safeAreaInsets.bottom + 12)
                         }
                     } // Group — bottom section
-                    .offset(y: 50)
+                    .offset(y: 20)
                 }
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: driveViewModel.isNavigating)
