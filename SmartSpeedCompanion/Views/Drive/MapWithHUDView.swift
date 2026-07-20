@@ -28,13 +28,12 @@ public struct MapWithHUDView: View {
 
                 // Overlay content
                 VStack(spacing: 0) {
-                    // Top section — slight -10 offset lifts the search bar
-                    // + 3D toggle up by 10 px from the previous 0 position.
+                    // Top section — -20 offset lifts the search bar + 3D
+                    // toggle up by 10 px more from the previous -10 position.
                     // TestFlight 2.2.0 (b397) follow-up from
-                    // srihan.yeleswarapu@gmail.com: they were still a bit
-                    // too low and needed to come up 10 px. The group offset
-                    // is purely visual so the Spacer below still expands
-                    // to fill the middle.
+                    // srihan.yeleswarapu@gmail.com: nearly there, just needed
+                    // another 10 px up. The group offset is purely visual so
+                    // the Spacer below still expands to fill the middle.
                     Group {
                         // Offline banner (TestFlight 2.1.4 feedback:
                     // "if the user has no wifi, show an alert saying
@@ -101,15 +100,15 @@ public struct MapWithHUDView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     } // Group — top section
-                    .offset(y: -10)
+                    .offset(y: -20)
 
                     Spacer()
 
-                    // Bottom section — +35 offset nudges the speed readout /
-                    // START button / limit sign down by 15 px from the
-                    // previous +20 position, per TestFlight 2.2.0 (b397)
-                    // follow-up from srihan.yeleswarapu@gmail.com: "they
-                    // need to go down by like 15 px." The offset is purely
+                    // Bottom section — +45 offset nudges the speed readout /
+                    // START button / limit sign down by 10 px more from the
+                    // previous +35 position, per TestFlight 2.2.0 (b397)
+                    // follow-up from srihan.yeleswarapu@gmail.com: just
+                    // needed another 10 px down. The offset is purely
                     // visual so the Spacer above still expands to fill the
                     // middle.
                     Group {
@@ -152,7 +151,7 @@ public struct MapWithHUDView: View {
                                 .padding(.bottom, geo.safeAreaInsets.bottom + 12)
                         }
                     } // Group — bottom section
-                    .offset(y: 35)
+                    .offset(y: 45)
                 }
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: driveViewModel.isNavigating)
