@@ -28,7 +28,11 @@ public struct MapWithHUDView: View {
 
                 // Overlay content
                 VStack(spacing: 0) {
-                    // Offline banner (TestFlight 2.1.4 feedback:
+                    // Top section — moved up 100 px toward the top edge per user's
+                    // pixel-based layout request (19 Jul 2026). The offset is purely
+                    // visual so the Spacer below still expands to fill the middle.
+                    Group {
+                        // Offline banner (TestFlight 2.1.4 feedback:
                     // "if the user has no wifi, show an alert saying
                     // please turn on WiFi or cellular data"). Visible only
                     // when NWPathMonitor reports !satisfied. Pinned to the
@@ -92,48 +96,55 @@ public struct MapWithHUDView: View {
                             .padding(.horizontal, 16)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
+                    } // Group — top section
+                    .offset(y: -100)
 
                     Spacer()
 
-                    // Re-center button — always visible when map is detached
-                    if driveViewModel.isMapDetached {
-                        HStack {
-                            Button(action: {
-                                driveViewModel.isMapDetached = false
-                            }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "location.fill")
-                                        .font(.system(size: 16, weight: .bold))
-                                    Text("Re-center")
-                                        .font(.system(size: 13, weight: .bold))
+                    // Bottom section — moved down 100 px toward the bottom edge.
+                    // Uses the same visual-offset approach as the top section.
+                    Group {
+                        // Re-center button — always visible when map is detached
+                        if driveViewModel.isMapDetached {
+                            HStack {
+                                Button(action: {
+                                    driveViewModel.isMapDetached = false
+                                }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "location.fill")
+                                            .font(.system(size: 16, weight: .bold))
+                                        Text("Re-center")
+                                            .font(.system(size: 13, weight: .bold))
+                                    }
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .glassStyle(cornerRadius: 20)
+                                    .shadow(color: DesignSystem.cyan.opacity(0.3), radius: 10)
                                 }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .glassStyle(cornerRadius: 20)
-                                .shadow(color: DesignSystem.cyan.opacity(0.3), radius: 10)
+                                .padding(.leading, 16)
+                                .padding(.bottom, 8)
+                                .transition(.scale.combined(with: .opacity))
+
+                                Spacer()
                             }
-                            .padding(.leading, 16)
-                            .padding(.bottom, 8)
-                            .transition(.scale.combined(with: .opacity))
-
-                            Spacer()
                         }
-                    }
 
-                    if !driveViewModel.isSelectingRoute && !driveViewModel.isSearchingLocally {
-                        // Bottom chrome redesign — NO panel background.
-                        // The SpeedReadout (leading), START/STOP pill
-                        // (center), and LimitSignView (trailing) are three
-                        // independent floating widgets that just sit over
-                        // the map; the road-name chip floats centered
-                        // above them. All padding is handled internally by
-                        // `BottomTransparentHUD` so the parent only sets
-                        // safe-area + horizontal breathing room.
-                        BottomTransparentHUD(isLandscape: isLandscape)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, geo.safeAreaInsets.bottom + 12)
-                    }
+                        if !driveViewModel.isSelectingRoute && !driveViewModel.isSearchingLocally {
+                            // Bottom chrome redesign — NO panel background.
+                            // The SpeedReadout (leading), START/STOP pill
+                            // (center), and LimitSignView (trailing) are three
+                            // independent floating widgets that just sit over
+                            // the map; the road-name chip floats centered
+                            // above them. All padding is handled internally by
+                            // `BottomTransparentHUD` so the parent only sets
+                            // safe-area + horizontal breathing room.
+                            BottomTransparentHUD(isLandscape: isLandscape)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, geo.safeAreaInsets.bottom + 12)
+                        }
+                    } // Group — bottom section
+                    .offset(y: 100)
                 }
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: driveViewModel.isNavigating)
@@ -228,14 +239,14 @@ fileprivate struct SearchBarView: View {
     
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(DesignSystem.cyan)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 14, weight: .bold))
                 
                 TextField("Where to?", text: $searchText)
                     .foregroundColor(.white)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .focused($isFocused)
                     .submitLabel(.search)
                     .onSubmit {
@@ -269,12 +280,20 @@ fileprivate struct SearchBarView: View {
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.white.opacity(0.4))
+                            .font(.system(size: 12))
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .frame(height: 40)
-            .glassStyle()
+            .padding(.horizontal, 12)
+            .frame(height: 48)
+            .background(DesignSystem.LiquidGlass.material)
+            .background(DesignSystem.glassVibrancy)
+            .cornerRadius(14)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(DesignSystem.glassBorder, lineWidth: DesignSystem.LiquidGlass.borderWidth)
+            )
+            .shadow(color: DesignSystem.LiquidGlass.shadowColor, radius: 8, x: 0, y: 6)
             
             if isFocused && !driveViewModel.recentSearches.isEmpty {
                 let filteredSearches = searchText.isEmpty ? driveViewModel.recentSearches : driveViewModel.recentSearches.filter { $0.lowercased().contains(searchText.lowercased()) }
