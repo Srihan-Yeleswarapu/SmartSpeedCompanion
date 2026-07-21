@@ -371,17 +371,22 @@ public struct CameraDecisionEngine: Sendable {
     // or the instruction reads like a complex junction), Google Maps tilts
     // the camera slightly more top-down (+5° pitch) so the user can see
     // the full intersection geometry at a glance.
+    //
+    // NOTE: The scaling INCREASES (more top-down) as the vehicle gets
+    // CLOSER to the intersection, so the driver sees the full junction
+    // geometry at the moment it matters most. At 400 m the effect is
+    // subtle (barely noticeable +0.25°); by 20 m it reaches the full +5°.
     // ═══════════════════════════════════════════════════════════════════════
     private static func complexIntersectionPitch(instruction: String,
                                                   distanceToTurn dist: CLLocationDistance) -> Double {
-        guard dist < 400, dist > 20 else { return 0.0 }
+        guard dist < 400, dist > 0 else { return 0.0 }
         let lower = instruction.lowercased()
         let isComplex = lower.contains("then") || lower.contains(";")
                      || lower.contains("to ")    // "Turn left to merge onto..."
                      || (lower.contains("onto") && lower.contains("then"))
         guard isComplex else { return 0.0 }
-        // Full +5° adjustment when within 400 m, scaling down as we pass the turn
-        let t = dist / 400.0
+        // Scale from 0 at 400 m to 1 at 0 m, then multiply by +5°
+        let t = min((400.0 - dist) / 380.0, 1.0) // 0 at 400 m, 1 at ≤20 m
         return 5.0 * t
     }
 
