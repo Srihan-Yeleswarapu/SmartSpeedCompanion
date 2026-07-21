@@ -30,16 +30,14 @@ jobs:
           HERE_API_KEY: ${{ secrets.HERE_API_KEY }}
         run: |
           if [ -n "$HERE_API_KEY" ]; then
-            cat > SmartSpeedCompanion/Configuration/HERE-Config.plist << EOF
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>api_key</key>
-                <string>${HERE_API_KEY}</string>
-            </dict>
-            </plist>
-            EOF
+            echo '<?xml version="1.0" encoding="UTF-8"?>' > SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '<plist version="1.0">' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '<dict>' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '    <key>api_key</key>' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo "    <string>${HERE_API_KEY}</string>" >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '</dict>' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '</plist>' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
             echo "[OK] HERE-Config.plist created (api_key: ${#HERE_API_KEY} chars)"
           else
             echo "[WARN] HERE_API_KEY secret not set; HERE provider will be unavailable"

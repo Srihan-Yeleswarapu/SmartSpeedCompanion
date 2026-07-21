@@ -44,16 +44,14 @@ jobs:
           HERE_API_KEY: ${{ secrets.HERE_API_KEY }}
         run: |
           if [ -n "$HERE_API_KEY" ]; then
-            cat > SmartSpeedCompanion/Configuration/HERE-Config.plist << EOF
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>api_key</key>
-                <string>${HERE_API_KEY}</string>
-            </dict>
-            </plist>
-            EOF
+            echo '<?xml version="1.0" encoding="UTF-8"?>' > SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '<plist version="1.0">' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '<dict>' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '    <key>api_key</key>' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo "    <string>${HERE_API_KEY}</string>" >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '</dict>' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
+            echo '</plist>' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
             echo "[OK] HERE-Config.plist created (api_key: ${#HERE_API_KEY} chars)"
           else
             echo "[WARN] HERE_API_KEY secret not set; HERE provider will be unavailable"
@@ -61,24 +59,6 @@ jobs:
 
       - name: Generate Xcode project
         run: xcodegen generate
-        env:
-          HERE_API_KEY: ${{ secrets.HERE_API_KEY }}
-        run: |
-          if [ -n "$HERE_API_KEY" ]; then
-            cat > SmartSpeedCompanion/Configuration/HERE-Config.plist << EOF
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>api_key</key>
-                <string>${HERE_API_KEY}</string>
-            </dict>
-            </plist>
-            EOF
-            echo "[OK] HERE-Config.plist created (api_key: ${#HERE_API_KEY} chars)"
-          else
-            echo "[WARN] HERE_API_KEY secret not set; HERE provider will be unavailable"
-          fi
 
       - name: Download iOS platform for Xcode
         run: |
@@ -251,7 +231,7 @@ jobs:
               echo "       'group.com.smartspeedcompanion.app'."
               echo "    2. Profiles -> Distribution -> App Store -> '+'."
               echo "       Select that App ID -> Generate -> Download the .mobileprovision."
-              echo "    3. Recompute base64: 'base64 -i Widget.mobileprovision | tr -d '\\n'"
+              echo "    3. Recompute base64: 'base64 -i Widget.mobileprovision | tr -d '\\n''"
               echo "       Update GH secret WIDGET_PROVISIONING_PROFILE_BASE64 with the new value."
               echo "    4. Re-run this workflow."
               echo "===================================================================="
@@ -342,7 +322,7 @@ jobs:
           # whitespace appears around the colon. We grab the FIRST match
           # which is always the canonical settings.base entry (the
           # later target-level override is intentionally a duplicate).
-          MARKETING_VERSION=$(python3 -c "import re,sys; txt=open('project.yml').read(); m=re.search(r'MARKETING_VERSION:\s*\"([^\"]+)\"', txt); print(m.group(1) if m else '1.1', file=sys.stderr); sys.stdout.write(m.group(1) if m else '1.1')")
+          MARKETING_VERSION=$(python3 -c "import re,sys; txt=open('project.yml').read(); m=re.search(r'MARKETING_VERSION:\\s*\"([^\"]+)\"', txt); print(m.group(1) if m else '1.1', file=sys.stderr); sys.stdout.write(m.group(1) if m else '1.1')")
           echo "=== Auto-derived build number: ${CURRENT_BUILD} ==="
           echo "=== MARKETING_VERSION from project.yml: ${MARKETING_VERSION} ==="
 
@@ -577,18 +557,18 @@ jobs:
           if [ "$WIDGET_USE_PROFILE" -eq 0 ]; then
             echo "[DBG-WIDGET-ENT] No widget profile -- fabricating minimal plist."
             python3 - <<'PY' || { echo "[FATAL] widget entitlements builder failed"; exit 1; }
-          import plistlib, sys
-          host = plistlib.load(open('/tmp/entitlements.plist', 'rb'))
-          TEAM = host.get('com.apple.developer.team-identifier', 'VCNBBG32P6')
-          WIDGET_BID = 'com.speedsense.app.SpeedWidget'
-          widget = {
-              'application-identifier': f'{TEAM}.{WIDGET_BID}',
-              'com.apple.developer.team-identifier': TEAM,
-          }
-          plistlib.dump(widget, open('/tmp/widget_entitlements.plist', 'wb'), fmt=plistlib.FMT_XML)
-          print(f"Wrote /tmp/widget_entitlements.plist with TEAM={TEAM}, WIDGET_BID={WIDGET_BID}")
-          print(f"Widget keys: {sorted(widget.keys())}")
-          PY
+import plistlib, sys
+host = plistlib.load(open('/tmp/entitlements.plist', 'rb'))
+TEAM = host.get('com.apple.developer.team-identifier', 'VCNBBG32P6')
+WIDGET_BID = 'com.speedsense.app.SpeedWidget'
+widget = {
+    'application-identifier': f'{TEAM}.{WIDGET_BID}',
+    'com.apple.developer.team-identifier': TEAM,
+}
+plistlib.dump(widget, open('/tmp/widget_entitlements.plist', 'wb'), fmt=plistlib.FMT_XML)
+print(f"Wrote /tmp/widget_entitlements.plist with TEAM={TEAM}, WIDGET_BID={WIDGET_BID}")
+print(f"Widget keys: {sorted(widget.keys())}")
+PY
           else
             echo "[DBG-WIDGET-ENT] Using widget profile's :Entitlements -- no fabrication needed."
           fi
@@ -714,127 +694,4 @@ jobs:
           RC=$?
           echo "[DBG-DITTO] rc=$RC"
           if [ "$RC" -ne 0 ]; then
-            echo "[FATAL] ditto repack failed (rc=$RC)"
-            exit "$RC"
-          fi
-          echo "[OK] ditto repack: $TMP_IPA (size: $(wc -c < "$TMP_IPA") bytes)"
-
-          # If the original IPA had META-INF/, splice it back into the ditto-built
-          # archive via a secondary `zip` step that adds files to an existing
-          # archive (zip supports this).  ditto + zip combo is the documented
-          # Apple pattern when re-packaging MIP-uploadable IPAs locally.
-          if [ -d "$PWD/IPAWork/META-INF" ]; then
-            echo "[DBG-DITTO] Splicing META-INF/ into repacked IPA"
-            (cd "$PWD/IPAWork" && zip -q "$TMP_IPA" META-INF)
-            echo "[OK] META-INF spliced"
-          fi
-
-          # Replace the original IPA atomically with the ditto-built twin.
-          mv -f "$TMP_IPA" "$IPA_PATH"
-          echo "[OK] Repackaged IPA replaced at: $IPA_PATH"
-          echo "[INFO] Final IPA size: $(wc -c < "$IPA_PATH") bytes"
-
-          cd "$PWD"
-
-          # Final post-repack verification: re-extract the IPA we just wrote and
-          # dump its entitlements from the *packaged* binary.  This catches any
-          # packaging-layer regression (xattr loss, etc.) that the in-place check
-          # above could not detect.
-          echo
-          echo "=== Post-repack: verify sealed entitlements from inside the IPA ==="
-          VERIFY_DIR="$PWD/IPAWork/Verify"
-          rm -rf "$VERIFY_DIR"
-          mkdir -p "$VERIFY_DIR"
-          (cd "$VERIFY_DIR" && unzip -o "$IPA_PATH" > /dev/null)
-          VERIFY_HOST_BIN="$(find "$VERIFY_DIR" -path '*/Payload/*.app' -name "$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$VERIFY_DIR/Payload/SmartSpeedCompanion.app/Info.plist" 2>/dev/null || echo SmartSpeedCompanion)")"
-          if [ -z "$VERIFY_HOST_BIN" ] || [ ! -f "$VERIFY_HOST_BIN" ]; then
-            VERIFY_HOST_BIN="$(find "$VERIFY_DIR/Payload" -maxdepth 2 -type f -perm +111 | head -1)"
-          fi
-          if [ -n "$VERIFY_HOST_BIN" ] && [ -f "$VERIFY_HOST_BIN" ]; then
-            echo "[DBG-VERIFY-IPENT] HOST=$VERIFY_HOST_BIN"
-            codesign -d --entitlements :- "$VERIFY_HOST_BIN" 2>&1 || true
-          else
-            echo "[WARN] Could not find host executable inside repacked IPA"
-          fi
-          for APPEX in "$VERIFY_DIR/Payload/SmartSpeedCompanion.app/PlugIns"/*.appex; do
-            [ -d "$APPEX" ] || continue
-            APPEX_NAME="$(basename "$APPEX" .appex)"
-            APPEX_BIN="$APPEX/$APPEX_NAME"
-            if [ -f "$APPEX_BIN" ]; then
-              echo "[DBG-VERIFY-IPENT] APPEX=$APPEX_BIN"
-              codesign -d --entitlements :- "$APPEX_BIN" 2>&1 || true
-            fi
-          done
-          echo "[INFO] Repacked IPA contents:"
-          unzip -l "$IPA_PATH" | head -30
-
-          echo "=== Final IPA verification ==="
-          if unzip -l "$IPA_PATH" | grep -q "embedded.mobileprovision"; then
-            echo "[OK] embedded.mobileprovision CONFIRMED in final IPA"
-            echo "IPA size: $(wc -c < "$IPA_PATH") bytes"
-          else
-            echo "[ERROR] STILL missing embedded.mobileprovision!"
-            exit 1
-          fi
-
-      - name: Upload to TestFlight (App Store Connect)
-        # Upload the IPA so it appears under App Store Connect → TestFlight for the
-        # Speedio bundle id. This step is now a HARD FAIL on altool errors so the real
-        # error reaches the GitHub Actions UI — the prior `continue-on-error: true` plus
-        # a trailing `rm -f "$UPLOAD_LOG"` (which always exited 0) silently masked bad
-        # uploads as green even when altool returned a real error. The IPA binary is
-        # still preserved as a workflow artifact regardless of upload outcome via the
-        # unconditional `Upload Artifacts` step further down.
-        run: |
-          IPA_PATH=$(find "$PWD/Export" -name "*.ipa" -type f | head -1)
-          if [ -z "$IPA_PATH" ]; then
-            echo "[ERROR] No .ipa file found in Export directory"
-            find "$PWD/Export" -type f 2>/dev/null
-            exit 1
-          fi
-          echo "============================================================"
-          echo "Uploading IPA to App Store Connect (TestFlight): $IPA_PATH"
-          echo "IPA size: $(wc -c < "$IPA_PATH") bytes"
-          echo "============================================================"
-
-          UPLOAD_LOG=$(mktemp)
-          set +e
-          xcrun altool --upload-app --file "$IPA_PATH" --type ios --show-progress -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" 2>&1 | tee "$UPLOAD_LOG"
-          UPLOAD_EXIT=${PIPESTATUS[0]}
-          set -e
-
-          echo "============================================================"
-          if [ "$UPLOAD_EXIT" -eq 0 ]; then
-            echo "[OK] IPA uploaded successfully. It will appear under App Store Connect → TestFlight once processing completes (usually 1-2 minutes)."
-          else
-            echo "[WARN] altool exited with non-zero status ($UPLOAD_EXIT). The IPA build itself is fine — see diagnostics below."
-            if grep -qE "403|required contracts|FORBIDDEN_ERROR|CONTRACT_NOT_VALID" "$UPLOAD_LOG"; then
-              echo ""
-              echo "ACTION REQUIRED: 403 'You do not have required contracts'"
-              echo "Sign the Apple Developer Program License Agreement in App Store Connect:"
-              echo "  https://appstoreconnect.apple.com → (your app) → Agreements, Tax, and Banking"
-              echo "After signing, re-run this workflow (workflow_dispatch) to upload the build."
-            elif grep -qE "401|invalid username|invalid password|authentication" "$UPLOAD_LOG"; then
-              echo ""
-              echo "ACTION REQUIRED: Authentication failure"
-              echo "Regenerate an app-specific password at https://appleid.apple.com/account/manage"
-              echo "Update the APPSTORE_CONNECT_USERNAME and APPSTORE_CONNECT_PASSWORD GitHub Actions secrets."
-            else
-              echo ""
-              echo "Check the full upload log for details; the build artifact will still be uploaded below."
-            fi
-          fi
-          # Propagate altool's actual exit code so the real error reaches the GitHub
-          # Actions UI. Without this, the trailing `rm -f "$UPLOAD_LOG"` returns 0 and
-          # the step is green even when altool failed.
-          exit "$UPLOAD_EXIT"
-          rm -f "$UPLOAD_LOG"
-
-      - name: Upload Artifacts
-        # Always upload the IPA artifact, even when the TestFlight upload step failed.
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Speedio-IPA-${{ github.run_number }}
-          path: Export/*.ipa
-          retention-days: 7
+            echo "[FATAL] ditto repack failed (rc=$RC"
