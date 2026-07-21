@@ -38,32 +38,6 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         // buttons are always accessible. This matches Apple Maps' CarPlay
         // behavior where the HUD never auto-hides during guidance.
         mapTemplate.automaticallyHidesNavigationBar = false
-        
-        // Show the user's blue dot on the CarPlay map so the driver
-        // always sees their current location.
-        mapTemplate.showCurrentLocation = true
-        
-        // ── Pan gesture handlers ─────────────────────────────────────
-        // Detect when the user manually pans the map so the system can
-        // differentiate between auto-tracking and manual interaction.
-        // When the user pans, we set isMapDetached = true; when they
-        // stop and the camera settles, the DriveViewModel or LiveMapView
-        // can re-engage tracking after a timeout.
-        mapTemplate.panBeganHandler = { [weak self] _ in
-            Task { @MainActor in
-                self?.viewModel.isMapDetached = true
-            }
-        }
-        mapTemplate.panEndedHandler = { [weak self] _ in
-            // The map stops auto-following until the user taps the
-            // "re-center" button. DriveViewModel's existing
-            // isMapDetached property is observed by LiveMapView.
-            Task { @MainActor in
-                // No immediate action — the next camera update will
-                // respect isMapDetached. A future "re-center" button
-                // can set isMapDetached back to false.
-            }
-        }
 
         // Navigation Bar Buttons (Top - Representing the 25% overlay conceptually).
         // Placeholder labels honor Settings → UNITS so a metric user's first
@@ -219,7 +193,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
                             // pushing a preview (showTripPreviews) while a pop
                             // is still in-flight can leave the stack in an
                             // inconsistent state.
-                            self?.interfaceController?.popTemplate(animated: true) { _ in
+                            self?.interfaceController?.popTemplate(animated: true) { _, _ in
                                 self?.presentTripPreview(for: mapItem)
                             }
                         }
@@ -272,24 +246,11 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
                     overviewButtonTitle: "Overview"
                 )
 
-                // Register handlers BEFORE showing the preview to avoid any
-                // race where CarPlay invokes the handlers during presentation
-                // setup before they're assigned.
-                mapTemplate.tripPreviewsSelectedHandler = { [weak self] _, _ in
-                    Task { @MainActor in
-                        self?.mapTemplate.hideTripPreviews()
-                        self?.navigationManager.startNavigation(route: route, destination: destination)
-                    }
-                }
-                mapTemplate.tripPreviewsCanceledHandler = { [weak self] in
-                    Task { @MainActor in
-                        self?.mapTemplate.hideTripPreviews()
-                    }
-                }
-
                 // Present the trip preview on the map template.
-                // This shows the route overview with "Start" and "Overview"
-                // buttons. The map zooms out to show the full route.
+                // CarPlay auto-manages the "Start"/"Overview" buttons and
+                // starts navigation automatically from the CPTrip/
+                // CPRouteChoice when the user taps "Start". No delegate
+                // needed — CarPlay handles it.
                 mapTemplate.showTripPreviews(
                     [trip],
                     textConfiguration: previewText
