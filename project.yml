@@ -38,13 +38,13 @@ settings:
     # greater than 2.1.4, raising `40478` ("Invalid Version. The
     # build with the version X can't be imported because a later
     # version has been closed for new build submissions"). So values
-    # like `1.0`, `1.1`, `1.2`, `2.0`, `2.1.0`..`2.1.4` are now
-    # permanently invalid for this App ID. We bumped to 2.2.0 to
-    # clear that floor; every future shipped version must be `>= 2.2.1`
-    # for the same reason.
+    # like `1.0`, `1.1`, `1.2`, `2.0`, `2.1.0`..`2.1.4`, `2.2.0` are now
+    # permanently invalid for this App ID. We bumped to 2.3.0 to clear
+    # that floor; every future shipped version must be `>= 2.3.0` for the
+    # same reason.
     #
     # To ship a new ASC release going forward:
-    #   1. Bump this value (e.g. "2.2.0" -> "2.2.1" -> "3.0.0"). The
+    #   1. Bump this value (e.g. "2.3.0" -> "2.3.1" -> "3.0.0"). The
     #      pipeline auto-extracts it via a python3 regex inside
     #      `distribute.yml`'s archive step and passes it on the
     #      xcodebuild CLI as `MARKETING_VERSION=...`, so no workflow
@@ -61,8 +61,8 @@ settings:
     # `distribute.yml` and overrides this static value on the CLI.
     # Keep the literal below only as a local-dev fallback so previews
     # in Xcode don't show "(null)".
-    MARKETING_VERSION: "2.2.0"
-    CURRENT_PROJECT_VERSION: "4"
+    MARKETING_VERSION: "2.3.0"
+    CURRENT_PROJECT_VERSION: "5"
     ENABLE_BITCODE: NO
     DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
 
@@ -202,12 +202,12 @@ targets:
         # project-level default. $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION)
         # in this target's `info.properties` block above still drive the
         # baked Info.plist values.
-        MARKETING_VERSION: "2.2.0"
+        MARKETING_VERSION: "2.3.0"
         # CURRENT_PROJECT_VERSION is auto-derived at archive time in
         # distribute.yml from `git rev-list --count HEAD` -- the literal
         # "4" below only affects Xcode local-dev previews. Keep it > last
         # uploaded build number to avoid ASC duplicate detection.
-        CURRENT_PROJECT_VERSION: "4"
+        CURRENT_PROJECT_VERSION: "5"
         PRODUCT_BUNDLE_IDENTIFIER: com.speedsense.app
         INFOPLIST_FILE: SmartSpeedCompanion/Configuration/Info.plist
         CODE_SIGN_ENTITLEMENTS: SmartSpeedCompanion/Resources/Entitlements/SmartSpeedCompanion.entitlements
@@ -306,8 +306,8 @@ targets:
         # block on the SmartSpeedCompanion target's settings.base for why
         # duplicating these here matters when an older `xcodegen generate`
         # version may have cached a stale scheme-level override.
-        MARKETING_VERSION: "2.2.0"
-        CURRENT_PROJECT_VERSION: "4"
+        MARKETING_VERSION: "2.3.0"
+        CURRENT_PROJECT_VERSION: "5"
         # Bundle id is the host-app's id with a `.SpeedWidget` suffix —
         # iOS only embeds an extension into its parent app when the
         # extension's bundle id is rooted at the parent's prefix.
