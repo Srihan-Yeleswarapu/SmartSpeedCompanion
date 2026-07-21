@@ -556,19 +556,22 @@ jobs:
           echo "[DBG-WIDGET-ENT] /tmp/widget_entitlements.plist content (signing source-of-truth for widget):"
           if [ "$WIDGET_USE_PROFILE" -eq 0 ]; then
             echo "[DBG-WIDGET-ENT] No widget profile -- fabricating minimal plist."
-            python3 - <<'PY' || { echo "[FATAL] widget entitlements builder failed"; exit 1; }
-import plistlib, sys
-host = plistlib.load(open('/tmp/entitlements.plist', 'rb'))
-TEAM = host.get('com.apple.developer.team-identifier', 'VCNBBG32P6')
-WIDGET_BID = 'com.speedsense.app.SpeedWidget'
-widget = {
-    'application-identifier': f'{TEAM}.{WIDGET_BID}',
-    'com.apple.developer.team-identifier': TEAM,
-}
-plistlib.dump(widget, open('/tmp/widget_entitlements.plist', 'wb'), fmt=plistlib.FMT_XML)
-print(f"Wrote /tmp/widget_entitlements.plist with TEAM={TEAM}, WIDGET_BID={WIDGET_BID}")
-print(f"Widget keys: {sorted(widget.keys())}")
-PY
+            if ! python3 -c "
+            import plistlib, sys
+            host = plistlib.load(open('/tmp/entitlements.plist', 'rb'))
+            TEAM = host.get('com.apple.developer.team-identifier', 'VCNBBG32P6')
+            WIDGET_BID = 'com.speedsense.app.SpeedWidget'
+            widget = {
+                'application-identifier': f'{TEAM}.{WIDGET_BID}',
+                'com.apple.developer.team-identifier': TEAM,
+            }
+            plistlib.dump(widget, open('/tmp/widget_entitlements.plist', 'wb'), fmt=plistlib.FMT_XML)
+            print(f'Wrote /tmp/widget_entitlements.plist with TEAM={TEAM}, WIDGET_BID={WIDGET_BID}')
+            print(f'Widget keys: {sorted(widget.keys())}')
+            "; then
+              echo "[FATAL] widget entitlements builder failed"
+              exit 1
+            fi
           else
             echo "[DBG-WIDGET-ENT] Using widget profile's :Entitlements -- no fabrication needed."
           fi
