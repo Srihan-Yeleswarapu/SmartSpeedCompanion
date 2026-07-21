@@ -3,9 +3,9 @@ import MapKit
 
 public struct LiveMapView: UIViewRepresentable {
     @EnvironmentObject var viewModel: DriveViewModel
-    
+
     public init() {}
-    
+
     public func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
         map.delegate = context.coordinator
@@ -74,6 +74,9 @@ public struct LiveMapView: UIViewRepresentable {
         // Honor the persisted POI toggle from Settings — on by default for
         // .gasStation / .parking / .hospital / .police / .restaurant / .cafe.
         applyPOIFilter(viewModel.showApplePOIs, to: map)
+
+        // Initialize the camera system with the current camera state.
+        context.coordinator.cameraAnimator.reset(to: map)
 
         return map
     }
@@ -176,7 +179,7 @@ public struct LiveMapView: UIViewRepresentable {
             trackingButton.topAnchor.constraint(equalTo: compass.bottomAnchor, constant: 8)
         ])
     }
-    
+
     public func updateUIView(_ uiView: MKMapView, context: Context) {
         // Swap in the map style / POI filter ASAP after the underlying UserDefaults
         // value mutates from the Settings screen. Comparing via a coordinator
@@ -207,7 +210,7 @@ public struct LiveMapView: UIViewRepresentable {
             }
             return
         }
-        
+
         // Re-engage native tracking if it was released
         if uiView.userTrackingMode == .none {
             #if DEBUG || DEVELOPER_BUILD
@@ -218,22 +221,23 @@ public struct LiveMapView: UIViewRepresentable {
             uiView.setUserTrackingMode(.followWithHeading, animated: true)
             #endif
         }
-        
+
         #if DEBUG || DEVELOPER_BUILD
         if viewModel.locationManager.isMockMode {
             // Update Simulated Car position and camera manually
             context.coordinator.updateSimulatedCar(uiView, viewModel: viewModel)
         }
         #endif
-        
-        // PITCH OVERRIDE — short-circuit for user-pinned 2D/3D.
+
+        // PITCH OVERRIDE — instant short-circuit for user-pinned 2D/3D.
         //
-        // Runs BEFORE auto-altitude so a freshly-tapped `.forced3D` flips
-        // the camera immediately even while the driver is stationary
-        // (the auto-altitude's "speed < 3.0" guard would otherwise suppress
-        // the first frame when the user pins 3D at a stop light). Only
-        // fires when the mode actually changed; equality check is what
-        // made the pill's repeat-tap no-op the previous implementation.
+        // Runs BEFORE the camera system so a freshly-tapped `.forced3D`
+        // flips the camera immediately even while stationary. The
+        // `CameraAnimator` / `CameraDecisionEngine` below then maintains
+        // the pinned pitch on subsequent ticks via the
+        // `userPitchOverride` field in `CameraContext`. Only fires when
+        // the mode actually changed; equality check is what made the
+        // pill's repeat-tap no-op the previous implementation.
         let userPitchMode = viewModel.mapPitchMode
         if userPitchMode != .auto, userPitchMode != context.coordinator.lastAppliedPitchMode {
             let target = userPitchMode.targetPitch
@@ -243,10 +247,10 @@ public struct LiveMapView: UIViewRepresentable {
                 uiView.setCamera(cam, animated: true)
             }
             context.coordinator.lastAppliedPitchMode = userPitchMode
-            // Bump past the alt-cooldown for the next updateSmartAltitude
-            // tick so it doesn't immediately undo our pin via its own
-            // setCamera call.
-            context.coordinator.lastCameraChangeTime = Date()
+            // Reset the camera animator's internal state so the next tick
+            // starts from the new pinned camera position rather than
+            // trying to interpolate from the old one.
+            context.coordinator.cameraAnimator.reset(to: uiView)
         } else if userPitchMode == .auto {
             // Releasing back to auto: clear the latch so a future pin to
             // the same mode re-applies (otherwise tapping
@@ -254,180 +258,37 @@ public struct LiveMapView: UIViewRepresentable {
             context.coordinator.lastAppliedPitchMode = .auto
         }
 
-        // Adjust camera altitude (pitch + zoom) without breaking tracking mode
-        updateSmartAltitude(uiView, context: context)
-        
+        // Camera system: build context and let the decision engine + animator
+        // smoothly update altitude and pitch without breaking tracking mode.
+        let cameraCtx = CameraContext(
+            speed: viewModel.speed,
+            speedLimit: viewModel.limit,
+            isNavigating: viewModel.isNavigating,
+            isRecording: viewModel.isRecording,
+            distanceToNextTurn: viewModel.distanceToNextTurn,
+            instruction: viewModel.nextManeuverInstruction,
+            maneuverImageName: viewModel.nextManeuverImageName,
+            destinationDistance: viewModel.distanceToDestination,
+            hasRoute: viewModel.currentRoute != nil,
+            userPitchOverride: viewModel.mapPitchMode
+        )
+        context.coordinator.cameraAnimator.update(mapView: uiView, context: cameraCtx)
+
         // Update overlays only when necessary (not every single frame)
         context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
     }
-    
-    // MARK: - Smart Altitude Adjustment
-    // We ONLY change altitude and pitch, not the center coordinate.
-    // Native followWithHeading handles re-centering perfectly.
-    private func updateSmartAltitude(_ uiView: MKMapView, context: Context) {
-        let speed = viewModel.speed
-        let limit = viewModel.limit
-        let distanceToTurn = viewModel.distanceToNextTurn
-        let isNavigating = viewModel.isNavigating
-        let isRecording = viewModel.isRecording
-        
-        let currentAltitude = uiView.camera.centerCoordinateDistance
-        let currentPitch = Double(uiView.camera.pitch)
-        
-        // ─── STATIONARY GUARD ──────────────────────────────────────────────────
-        // If the device is not moving, never change the zoom level.
-        if speed < 3.0 { // Approx 6 mph
-            return
-        }
-        
-        var targetAltitude: Double = 1000
-        var targetPitch: Double = 0
-        var zoomReason = "unk"
 
-        // 3D flyover (baked-in default — was a user toggle pre-2.2.x).
-        // Only kicks in when actively navigating, well above city speeds, with
-        // no turn coming up soon, so it always lands in the conditions where
-        // a tilted, pulled-back highway perspective looks good.
-        if isNavigating && distanceToTurn > 4000 && speed > 50 {
-            targetAltitude = max(targetAltitude, 3500)
-            targetPitch = 55
-            zoomReason += "+flyover"
-        }
-        
-        // ─── LOGICAL ZOOM STATE (Hysteresis-ready) ──────────────────────────────
-        // We use speed + limit to determine a "Base Level" then apply overrides.
-        if isNavigating {
-            targetPitch = 45
-            
-            // Determine base altitude based on speed AND limit for stability
-            // If the road is a high-speed road (limit > 55), we stay zoomed out even if slowing down slightly.
-            if limit > 55 || speed > 55 {
-                targetAltitude = 1800
-                zoomReason = "highway"
-            } else if limit > 35 || speed > 35 {
-                targetAltitude = 1200
-                zoomReason = "suburban"
-            } else if speed < 18 {
-                targetAltitude = 500
-                zoomReason = "city-slow"
-            } else {
-                targetAltitude = 800
-                zoomReason = "city"
-            }
-            
-            // ─── OVERRIDES ──────────────────────────────────────────────────────
-            
-            // Turn proximity override (OVERRIDES speed-based zoom).
-            // TestFlight v2.1.4: zoom in once turn is within 1000 ft (~315 m,
-            // with overlap to avoid threshold jitter) and stay until made.
-            if distanceToTurn < 125 {
-                targetAltitude = 380
-                zoomReason = "turn-near"
-            } else if distanceToTurn < 315 {
-                // minTurnAlt = 400 so city base (800) drops 400m > 300m diff,
-                // ensuring the stability-engine actually fires setCamera().
-                let minTurnAlt = 400.0
-                targetAltitude = min(targetAltitude, minTurnAlt)
-                zoomReason += "+turn-appr-1kft"
-            }
-            
-            // Destination approach (closer = lower and more top-down)
-            if let dest = viewModel.destination {
-                let destLoc = dest.placemark.location ?? CLLocation()
-                let userLoc = uiView.userLocation.location ?? viewModel.locationManager.latestLocation
-                if let userLoc = userLoc {
-                    let distToDest = userLoc.distance(from: destLoc)
-                    if distToDest < 150 {
-                        targetAltitude = 280
-                        targetPitch = 30
-                        zoomReason = "arrival"
-                    } else if distToDest < 600 {
-                        targetAltitude = min(targetAltitude, 450)
-                        targetPitch = 35
-                        zoomReason += "+dest-near"
-                    }
-                }
-            }
-            
-            // Interchange/Ramp override (Needs more context of path)
-            let instruction = viewModel.nextManeuverInstruction.lowercased()
-            if instruction.contains("exit") || instruction.contains("merge") ||
-               instruction.contains("ramp") || instruction.contains("fork") {
-                // Zoom out slightly on ramps to see context
-                targetAltitude = max(targetAltitude, 800)
-                zoomReason += "+ramp"
-            }
-            
-            // Long straight (zoom out to see more road ahead)
-            if distanceToTurn > 3000 && speed > 50 {
-                targetAltitude = max(targetAltitude, 2500)
-                zoomReason += "+straight"
-            }
-            
-        } else if isRecording {
-            targetPitch = 30
-            // Simplified levels for free-driving (recording)
-            if speed > 55 {
-                targetAltitude = 2200; zoomReason = "rec-fast"
-            } else if speed > 30 {
-                targetAltitude = 1400; zoomReason = "rec-mid"
-            } else {
-                targetAltitude = 850; zoomReason = "rec-slow"
-            }
-        } else {
-            targetPitch = 0
-            targetAltitude = 2000
-            zoomReason = "idle"
-        }
-        
-        // ─── STABILITY ENGINE (Threshold + Cooldown) ─────────────────────────────
-        // We use a MUCH tighter altitude threshold (300m instead of 800m)
-        // to make the steps actually work, but a LONGER cooldown (4s)
-        // to ensure it doesn't feel frantic.
-        
-        let altDiff = abs(currentAltitude - targetAltitude)
-        let pitchDiff = abs(currentPitch - targetPitch)
-        let timeSinceLastChange = Date().timeIntervalSince(context.coordinator.lastCameraChangeTime)
-        
-        // Special case: If we are very close to a turn (<120m), we ignore the cooldown 
-        // to ensure we zoom in for the turn exactly when needed.
-        let isCriticalZoom = (distanceToTurn < 120 && isNavigating && targetAltitude < 400)
-        let cooldown = isCriticalZoom ? 1.0 : context.coordinator.cameraChangeCooldown
-        
-        // USER PIN OVERRIDE: when the user has explicitly pinned a 2D or
-        // 3D mode, the auto-altitude's computed pitch LOSES to the pin —
-        // otherwise a turn-approach zoom would kick the camera back to a
-        // non-pinned pitch even though the user just locked 2D. Both
-        // modes clamp the pitch; altitude still tracks speed/state
-        // independently so the user's view distance is preserved.
-        if viewModel.mapPitchMode == .forced3D {
-            targetPitch = 45
-        } else if viewModel.mapPitchMode == .forced2D {
-            targetPitch = 0
-        }
-
-        if (altDiff > 300 || pitchDiff > 12) && timeSinceLastChange >= cooldown {
-            DebugLogger.shared.log("CAM [\(zoomReason)]: \(Int(currentAltitude))m -> \(Int(targetAltitude))m | spd=\(Int(speed)) pinned=\(viewModel.mapPitchMode.rawValue)")
-            context.coordinator.lastCameraChangeTime = Date()
-
-            let newCamera = uiView.camera.copy() as! MKMapCamera
-            newCamera.centerCoordinateDistance = targetAltitude
-            newCamera.pitch = CGFloat(targetPitch)
-            uiView.setCamera(newCamera, animated: true)
-        }
-    }
-    
     public func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
-    
+
     public class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: LiveMapView
         private var interactionTimer: Timer?
-        // Minimum seconds between camera altitude/pitch adjustments to suppress jitter
-        // Variables must be internal (not private) so the View can access them
-        var lastCameraChangeTime: Date = .distantPast
-        let cameraChangeCooldown: TimeInterval = 4.0
+
+        /// The camera system — replaces all previous `updateSmartAltitude`
+        /// logic, cooldown timers, and altitude thresholds.
+        let cameraAnimator = CameraAnimator()
 
         // Cache the last-applied map style / POI filter / pitch mode so
         // we don't rebuild the MKMapConfiguration (and trigger a fresh
@@ -489,40 +350,40 @@ public struct LiveMapView: UIViewRepresentable {
         private var lastRouteDistance: Double = 0
         private var lastSessionReadingCount: Int = 0
         private var hasAutoFramedRoute: Bool = false
-        
+
         #if DEBUG || DEVELOPER_BUILD
         private var simulatedCarAnnotation: MKPointAnnotation?
         #endif
-        
+
         init(_ parent: LiveMapView) {
             self.parent = parent
         }
-        
+
         @objc func handleManualInteraction(_ gesture: UIGestureRecognizer) {
             if gesture.state == .began || gesture.state == .changed {
                 startManualMode(gesture.view as? MKMapView)
             }
         }
-        
+
         public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
             return true
         }
-        
+
         public func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
             // No-op here. We only detach on actual gesture recognizers to avoid
             // detaching when the system updates the altitude or follows the user.
         }
-        
+
         private func startManualMode(_ mapView: MKMapView?) {
             // First, kill any existing resume timer
             interactionTimer?.invalidate()
-            
+
             if !parent.viewModel.isMapDetached {
                 parent.viewModel.isMapDetached = true
                 mapView?.userTrackingMode = .none
                 DebugLogger.shared.log("MAP DETACHED: Manual Control")
             }
-            
+
             // Auto-resume after 10 seconds of inactivity (longer to be safe)
             interactionTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
                 Task { @MainActor in
@@ -531,12 +392,12 @@ public struct LiveMapView: UIViewRepresentable {
                 }
             }
         }
-        
+
         #if DEBUG || DEVELOPER_BUILD
         // MARK: - Simulation Management
         func updateSimulatedCar(_ mapView: MKMapView, viewModel: DriveViewModel) {
             guard let mockLocation = viewModel.locationManager.latestLocation else { return }
-            
+
             // Rebuild annotation if missing
             if simulatedCarAnnotation == nil {
                 let ann = MKPointAnnotation()
@@ -544,22 +405,22 @@ public struct LiveMapView: UIViewRepresentable {
                 mapView.addAnnotation(ann)
                 simulatedCarAnnotation = ann
             }
-            
+
             // Update coordinate
             simulatedCarAnnotation?.coordinate = mockLocation.coordinate
-            
+
             // Sync map showsUserLocation state
             if mapView.showsUserLocation != false {
                 mapView.showsUserLocation = false
             }
-            
+
             // If following, re-center map manually
             if !viewModel.isMapDetached {
                 mapView.setCenter(mockLocation.coordinate, animated: true)
             }
         }
         #endif
-        
+
         // MARK: - Smart Overlay Management
         // Only rebuild overlays when the underlying data actually changes.
         // This was the primary cause of 0.5 fps — removing and re-adding overlays every frame.
@@ -568,11 +429,11 @@ public struct LiveMapView: UIViewRepresentable {
             let currentRouteDistance = vm.currentRoute?.distance ?? 0
             let currentReadingCount = vm.sessionRecorder.currentSession?.readings.count ?? 0
             let isNavigating = vm.isNavigating
-            
+
             let routeChanged = isNavigating != lastIsNavigating || abs(currentRouteDistance - lastRouteDistance) > 1.0
             // Throttling: only rebuild history every 5 points to save battery
             let historyChanged = currentReadingCount >= lastHistoryCounts.safeCount + lastHistoryCounts.overCount + 5
-            
+
             // Detect when the user dismissed the route picker (isSelectingRoute
             // transitioned true→false). When this happens the overlay fingerprint
             // check short-circuits because vm.isSelectingRoute is now false, so
@@ -582,7 +443,7 @@ public struct LiveMapView: UIViewRepresentable {
             // Also detect new route-selection step so the initial fingerprint
             // rebuild fires (new routes from a fresh search).
             let routePickerOpened = !lastIsSelectingRoute && vm.isSelectingRoute
-            
+
             guard routeChanged || historyChanged || (isNavigating && lastRouteDistance == 0) || routePickerDismissed || routePickerOpened else {
                 // ALTERNATIVE-ROUTE FINGERPRINT: rebuild when availableRoutes
                 // count changes during the route-selection step. We hash
@@ -596,10 +457,10 @@ public struct LiveMapView: UIViewRepresentable {
                 }
                 return
             }
-            
+
             // Perform the overlay rebuild only when data changed
             rebuildOverlays(mapView, viewModel: vm)
-            
+
             // Update tracking state
             lastIsNavigating = isNavigating
             lastIsSelectingRoute = vm.isSelectingRoute
@@ -609,7 +470,7 @@ public struct LiveMapView: UIViewRepresentable {
             let overCount = readings.filter { $0.overLimit }.count
             lastHistoryCounts = (safeCount, overCount)
         }
-        
+
         private func rebuildOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
             // Remove all overlays and non-user annotations
             mapView.removeOverlays(mapView.overlays)
@@ -766,7 +627,7 @@ public struct LiveMapView: UIViewRepresentable {
             // History line (color-coded by speed status)
             buildHistoryOverlays(mapView, viewModel: viewModel)
         }
-        
+
         /// Renders ALL of `routes` as map polylines during the route-selection
         /// step (`isSelectingRoute == true`). Routes[0] — the one
         /// `MKDirections` returns as the fastest / recommended — gets the
@@ -824,10 +685,10 @@ public struct LiveMapView: UIViewRepresentable {
 
         private func buildHistoryOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
             guard let session = viewModel.sessionRecorder.currentSession, !session.readings.isEmpty else { return }
-            
+
             var safeCoords: [CLLocationCoordinate2D] = []
             var overCoords: [CLLocationCoordinate2D] = []
-            
+
             for reading in session.readings {
                 let coord = CLLocationCoordinate2D(latitude: reading.latitude, longitude: reading.longitude)
                 if reading.overLimit {
@@ -859,7 +720,7 @@ public struct LiveMapView: UIViewRepresentable {
                 mapView.addOverlay(polyline, level: .aboveRoads)
             }
         }
-        
+
         // MARK: - MKMapViewDelegate
 
         public func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
@@ -997,7 +858,7 @@ public struct LiveMapView: UIViewRepresentable {
             }
             return view
         }
-        
+
         public func mapView(_ mapView: MKMapView, didChange mode: MKUserTrackingMode, animated: Bool) {
             // If the system changed tracking mode (e.g. user rotated device), log it
             DebugLogger.shared.log("Tracking mode changed to: \(mode.rawValue)")
