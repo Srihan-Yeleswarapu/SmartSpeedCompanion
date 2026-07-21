@@ -92,6 +92,15 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         let vm = AppDelegate.sharedDriveViewModel
         self.dashboardManager = CarPlayDashboardController(dashboardController: dashboardController, viewModel: vm)
     }
+
+    func templateApplicationDashboardScene(
+        _ templateApplicationDashboardScene: CPTemplateApplicationDashboardScene,
+        didDisconnect dashboardController: CPDashboardController,
+        from window: UIWindow
+    ) {
+        self.dashboardManager = nil
+        self.dashboardController = nil
+    }
     
     // MARK: - Disconnection
     func templateApplicationScene(

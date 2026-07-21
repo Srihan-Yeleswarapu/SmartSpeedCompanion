@@ -33,6 +33,38 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
     }
     @MainActor
     private func setupTemplate() {
+        // ── Map template configuration ───────────────────────────────
+        // Keep the navigation bar visible at all times so the speed/limit
+        // buttons are always accessible. This matches Apple Maps' CarPlay
+        // behavior where the HUD never auto-hides during guidance.
+        mapTemplate.automaticallyHidesNavigationBar = false
+        
+        // Show the user's blue dot on the CarPlay map so the driver
+        // always sees their current location.
+        mapTemplate.showCurrentLocation = true
+        
+        // ── Pan gesture handlers ─────────────────────────────────────
+        // Detect when the user manually pans the map so the system can
+        // differentiate between auto-tracking and manual interaction.
+        // When the user pans, we set isMapDetached = true; when they
+        // stop and the camera settles, the DriveViewModel or LiveMapView
+        // can re-engage tracking after a timeout.
+        mapTemplate.panBeganHandler = { [weak self] _ in
+            Task { @MainActor in
+                self?.viewModel.isMapDetached = true
+            }
+        }
+        mapTemplate.panEndedHandler = { [weak self] _ in
+            // The map stops auto-following until the user taps the
+            // "re-center" button. DriveViewModel's existing
+            // isMapDetached property is observed by LiveMapView.
+            Task { @MainActor in
+                // No immediate action — the next camera update will
+                // respect isMapDetached. A future "re-center" button
+                // can set isMapDetached back to false.
+            }
+        }
+
         // Navigation Bar Buttons (Top - Representing the 25% overlay conceptually).
         // Placeholder labels honor Settings → UNITS so a metric user's first
         // frame never flashes "0 MPH" before the publisher fires (TestFlight
@@ -181,8 +213,15 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
                     let item = CPListItem(text: mapItem.name, detailText: mapItem.placemark.title)
                     item.handler = { [weak self] _, completion in
                         Task { @MainActor in
-                            self?.interfaceController?.popTemplate(animated: true, completion: nil)
-                            self?.navigationManager.startNavigation(to: mapItem)
+                            // Pop the search template first, and only show the
+                            // trip preview AFTER the pop completes. CarPlay's
+                            // template stack requires sequential transitions —
+                            // pushing a preview (showTripPreviews) while a pop
+                            // is still in-flight can leave the stack in an
+                            // inconsistent state.
+                            self?.interfaceController?.popTemplate(animated: true) { _ in
+                                self?.presentTripPreview(for: mapItem)
+                            }
                         }
                         completion()
                     }
@@ -203,6 +242,91 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
     public func showTurnByTurnList() {
         navigationManager.showManeuversList(interfaceController: interfaceController)
     }
+
+    // MARK: - Trip Preview
+
+    @MainActor
+    private func presentTripPreview(for destination: MKMapItem) {
+        // Show a trip preview with route choices before starting navigation.
+        // This is the standard CarPlay UX pattern: the user sees the route
+        // overview and can confirm before guidance begins, matching the
+        // behavior of Apple Maps and Google Maps on CarPlay.
+        Task {
+            do {
+                let route = try await navigationManager.calculateRoute(to: destination)
+                let routeChoice = CPRouteChoice(
+                    summaryVariants: ["Fastest Route — \(formatDuration(route.expectedTravelTime))"],
+                    additionalInformationVariants: ["\(formatDistance(route.distance))"],
+                    selectionSummaryVariants: ["Start Navigation"]
+                )
+                let trip = CPTrip(
+                    origin: MKMapItem.forCurrentLocation(),
+                    destination: destination,
+                    routeChoices: [routeChoice]
+                )
+                // Trip preview text config: instructional labels before the
+                // trip starts so the user knows what they're confirming.
+                let previewText = CPTripPreviewTextConfiguration(
+                    startButtonTitle: "Start",
+                    additionalRoutesButtonTitle: nil,
+                    overviewButtonTitle: "Overview"
+                )
+
+                // Register handlers BEFORE showing the preview to avoid any
+                // race where CarPlay invokes the handlers during presentation
+                // setup before they're assigned.
+                mapTemplate.tripPreviewsSelectedHandler = { [weak self] _, _ in
+                    Task { @MainActor in
+                        self?.mapTemplate.hideTripPreviews()
+                        self?.navigationManager.startNavigation(route: route, destination: destination)
+                    }
+                }
+                mapTemplate.tripPreviewsCanceledHandler = { [weak self] in
+                    Task { @MainActor in
+                        self?.mapTemplate.hideTripPreviews()
+                    }
+                }
+
+                // Present the trip preview on the map template.
+                // This shows the route overview with "Start" and "Overview"
+                // buttons. The map zooms out to show the full route.
+                mapTemplate.showTripPreviews(
+                    [trip],
+                    textConfiguration: previewText
+                )
+            } catch {
+                // Fallback: start navigation directly without preview
+                navigationManager.startNavigation(to: destination)
+            }
+        }
+    }
+
+    private func formatDuration(_ timeInterval: TimeInterval) -> String {
+        let minutes = Int(timeInterval / 60)
+        if minutes < 60 {
+            return "\(minutes) min"
+        }
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        if remainingMinutes == 0 {
+            return "\(hours) hr"
+        }
+        return "\(hours) hr \(remainingMinutes) min"
+    }
+
+    private func formatDistance(_ meters: Double) -> String {
+        let system = SpeedFormatting.measurementSystem()
+        let display = SpeedFormatting.distanceDisplay(forMeters: meters, measurementSystem: system)
+        // Use a tolerance-based check instead of exact equality to avoid
+        // floating-point truncation issues for large distances
+        // (e.g. 500.0 km stored as 499.99999999999994).
+        let isWhole = abs(display.value - display.value.rounded()) < 0.001
+        let valueStr = isWhole
+            ? "\(Int(display.value.rounded()))"
+            : String(format: "%.1f", display.value)
+        return "\(valueStr) \(display.unit)"
+    }
+
     @MainActor
     private func presentSafetyReport() {
         // Information Template for professional session summaries.
