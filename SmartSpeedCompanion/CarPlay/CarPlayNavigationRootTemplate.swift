@@ -255,32 +255,6 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
         )
     }
 
-    private func formatDuration(_ timeInterval: TimeInterval) -> String {
-        let minutes = Int(timeInterval / 60)
-        if minutes < 60 {
-            return "\(minutes) min"
-        }
-        let hours = minutes / 60
-        let remainingMinutes = minutes % 60
-        if remainingMinutes == 0 {
-            return "\(hours) hr"
-        }
-        return "\(hours) hr \(remainingMinutes) min"
-    }
-
-    private func formatDistance(_ meters: Double) -> String {
-        let system = SpeedFormatting.measurementSystem()
-        let display = SpeedFormatting.distanceDisplay(forMeters: meters, measurementSystem: system)
-        // Use a tolerance-based check instead of exact equality to avoid
-        // floating-point truncation issues for large distances
-        // (e.g. 500.0 km stored as 499.99999999999994).
-        let isWhole = abs(display.value - display.value.rounded()) < 0.001
-        let valueStr = isWhole
-            ? "\(Int(display.value.rounded()))"
-            : String(format: "%.1f", display.value)
-        return "\(valueStr) \(display.unit)"
-    }
-
     @MainActor
     private func presentSafetyReport() {
         // Information Template for professional session summaries.
