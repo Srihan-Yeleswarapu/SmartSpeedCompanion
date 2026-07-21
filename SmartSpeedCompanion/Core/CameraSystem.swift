@@ -801,7 +801,7 @@ public final class CameraAnimator {
     // Apple Maps does this naturally via its spring-based animation system.
     // Our EMA needs the tau boost manually.
     // ═══════════════════════════════════════════════════════════════════
-private var wasHighwaySpeed: Bool = false
+    private var wasHighwaySpeed: Bool = false
     private var highwayDecelUntil: Date = .distantPast
 
     // ═══════════════════════════════════════════════════════════════════
