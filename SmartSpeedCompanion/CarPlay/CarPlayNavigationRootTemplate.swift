@@ -221,45 +221,38 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate {
 
     @MainActor
     private func presentTripPreview(for destination: MKMapItem) {
-        // Show a trip preview with route choices before starting navigation.
-        // This is the standard CarPlay UX pattern: the user sees the route
-        // overview and can confirm before guidance begins, matching the
-        // behavior of Apple Maps and Google Maps on CarPlay.
-        Task {
-            do {
-                let route = try await navigationManager.calculateRoute(to: destination)
-                let routeChoice = CPRouteChoice(
-                    summaryVariants: ["Fastest Route — \(formatDuration(route.expectedTravelTime))"],
-                    additionalInformationVariants: ["\(formatDistance(route.distance))"],
-                    selectionSummaryVariants: ["Start Navigation"]
-                )
-                let trip = CPTrip(
-                    origin: MKMapItem.forCurrentLocation(),
-                    destination: destination,
-                    routeChoices: [routeChoice]
-                )
-                // Trip preview text config: instructional labels before the
-                // trip starts so the user knows what they're confirming.
-                let previewText = CPTripPreviewTextConfiguration(
-                    startButtonTitle: "Start",
-                    additionalRoutesButtonTitle: nil,
-                    overviewButtonTitle: "Overview"
-                )
+        // Show a trip preview before starting navigation — the standard
+        // CarPlay UX pattern for route confirmation.
+        //
+        // NOTE: We do NOT call navigationManager.calculateRoute(to:) here
+        // because CarPlay recalculates its own route when the user taps
+        // "Start" (no delegate intercepts it). Running a full MKDirections
+        // call just for display labels would add 2–5 s of unnecessary
+        // latency before the preview appears.
+        let routeChoice = CPRouteChoice(
+            summaryVariants: [destination.name ?? "Destination"],
+            additionalInformationVariants: [destination.placemark.title ?? ""],
+            selectionSummaryVariants: ["Start Navigation"]
+        )
+        let trip = CPTrip(
+            origin: MKMapItem.forCurrentLocation(),
+            destination: destination,
+            routeChoices: [routeChoice]
+        )
+        let previewText = CPTripPreviewTextConfiguration(
+            startButtonTitle: "Start",
+            additionalRoutesButtonTitle: nil,
+            overviewButtonTitle: "Overview"
+        )
 
-                // Present the trip preview on the map template.
-                // CarPlay auto-manages the "Start"/"Overview" buttons and
-                // starts navigation automatically from the CPTrip/
-                // CPRouteChoice when the user taps "Start". No delegate
-                // needed — CarPlay handles it.
-                mapTemplate.showTripPreviews(
-                    [trip],
-                    textConfiguration: previewText
-                )
-            } catch {
-                // Fallback: start navigation directly without preview
-                navigationManager.startNavigation(to: destination)
-            }
-        }
+        // Present the trip preview immediately.
+        // CarPlay auto-manages the "Start"/"Overview" buttons and
+        // starts navigation with its own route calculation when the
+        // user taps "Start".
+        mapTemplate.showTripPreviews(
+            [trip],
+            textConfiguration: previewText
+        )
     }
 
     private func formatDuration(_ timeInterval: TimeInterval) -> String {
