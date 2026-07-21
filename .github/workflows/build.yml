@@ -25,6 +25,26 @@ jobs:
             echo "[WARN] No Firebase secret set; proceeding without GoogleService-Info.plist"
           fi
 
+      - name: Create HERE-Config.plist (from secret)
+        env:
+          HERE_API_KEY: ${{ secrets.HERE_API_KEY }}
+        run: |
+          if [ -n "$HERE_API_KEY" ]; then
+            cat > SmartSpeedCompanion/Configuration/HERE-Config.plist << EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>api_key</key>
+                <string>${HERE_API_KEY}</string>
+            </dict>
+            </plist>
+            EOF
+            echo "[OK] HERE-Config.plist created (api_key: ${#HERE_API_KEY} chars)"
+          else
+            echo "[WARN] HERE_API_KEY secret not set; HERE provider will be unavailable"
+          fi
+
       - name: Select Xcode
         # Prefer Xcode 26.6 (matches project.yml `xcodeVersion: "26.6"`),
         # but fall back gracefully to any Xcode 26.x point release if a

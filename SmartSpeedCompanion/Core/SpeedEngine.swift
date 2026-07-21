@@ -13,12 +13,20 @@ public final class SpeedEngine: ObservableObject {
     @AppStorage("userBuffer") public var userBuffer: Int = 5 // -5 to 15 mph
     @AppStorage("measurementSystem") public var measurementSystem: String = "Imperial"
     
+    private let locationManager: LocationManager
     private let speedLimitService = SmartSpeedLimitService.shared
     private let roadGeocoder = RoadGeocoder.shared
     private var cancellables = Set<AnyCancellable>()
 
     private var smoothedSpeed: Double = 0.0
-    private let smoothingFactor: Double = 0.4    // No own throttle on road-name resolution. `RoadGeocoder` carries its
+    private let smoothingFactor: Double = 0.4
+
+    /// Fires the initial HERE batch cache setup once when the first valid,
+    /// accurate GPS location arrives. After the first trigger, this flag
+    /// is set so it never fires again.
+    private var hasFiredInitialSetup: Bool = false
+
+    // No own throttle on road-name resolution. `RoadGeocoder` carries its
     // own 50m grid-cell cache (see SmartSpeedCompanion/Core/RoadGeocoder.swift)
     // so a typical city drive costs ~1 geocode per block instead of per 1-Hz
     // GPS ping, AND the cached road name is preserved across the 50m cells so
@@ -35,6 +43,7 @@ public final class SpeedEngine: ObservableObject {
     private var lastFetchLocation: CLLocation?
     
     public init(locationManager: LocationManager) {
+        self.locationManager = locationManager
         locationManager.$latestLocation
             .compactMap { $0 }
             .receive(on: RunLoop.main)
@@ -92,7 +101,26 @@ public final class SpeedEngine: ObservableObject {
                 return
             }
             lastFetchLocation = location
-            
+
+            // ── Initial HERE batch cache setup ───────────────────
+            // Fire once on the first valid GPS tick to populate the
+            // local batch cache with speed limits from a 2.5km grid.
+            if !hasFiredInitialSetup {
+                hasFiredInitialSetup = true
+                Task {
+                    // Fire initial batch cache setup to populate the
+                    // local cache with speed limits for a ~2.5km grid.
+                    await HEREGeofenceManager.shared.performInitialSetup(
+                        around: location.coordinate
+                    )
+                    // Start geofence monitoring for just-in-time batch
+                    // fetches when driving into uncached areas.
+                    HEREGeofenceManager.shared.configure(
+                        locationManager: self.locationManager
+                    )
+                }
+            }
+
             let carHeading = location.course >= 0 ? location.course : nil
             let currentMph = isMetric ? self.speed * 0.621371 : self.speed
 

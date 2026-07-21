@@ -4,7 +4,7 @@
 // Decision tree (live-first; SQLite only as last-resort fallback):
 //   1. Spatial-grid cache lookup -> hit short-circuits everything below.
 //   2. If NetworkReachability.isConnected:
-//        Walk liveProviders in order (ArcGIS HPMS -> Overpass) -- first non-nil
+//        Walk liveProviders in order (HERE REST -> ArcGIS HPMS -> Overpass) -- first non-nil
 //        response wins. On network/parse failure for a provider, drop and try the next.
 //   3. SQLite fallback (offline, or all live providers missed) -- with ExpandedSearch
 //        retry and miss-grace window before dropping state to "No Data".
@@ -85,7 +85,14 @@ public class SmartSpeedLimitService: ObservableObject {
     ///   outage clears caches for live re-resolution.
     private let missThresholdBeforeClear: Int = 20
 
+    /// HERE Route Matching batch cache — populated on initial setup and
+    /// refreshed via just-in-time geofence triggers as the user drives.
+    private let batchCache = HERELocalBatchCache.shared
+
+    /// Live network providers — run only when online AND no offline
+    /// provider returned a result.
     private let liveProviders: [SpeedLimitProvider]
+
     private let reachability = NetworkReachability.shared
     private let cache = SpeedLimitResponseCache.shared
 
@@ -154,30 +161,19 @@ public class SmartSpeedLimitService: ObservableObject {
     ///   driving.
     static let PHYSICS_PRIOR_MARGIN_MPH: Int = 15
 
-    // MARK: - HERE intentionally disabled (Phase 3 deferred)
-    //
-    // The HERE REST provider is implemented on disk:
-    //   - SmartSpeedCompanion/Core/HERERestSpeedLimitProvider.swift
-    //   - SmartSpeedCompanion/Core/HERECredentialStore.swift
-    //   - SpeedLimitDataSource.liveHERE enum case
-    //   - sourceForProviderName(_:) "HERE REST" -> .liveHERE mapping
-    // but is intentionally NOT instantiated in liveProviders below.
-    //
-    // Do NOT re-add HERERestSpeedLimitProvider() to liveProviders without
-    // verifying (a) the user's HERE credentials are loaded in Keychain via
-    // HERECredentialStore.saveCredentials(...), and (b) a working bootstrap UI
-    // exists for end users to paste their access_key_id / access_key_secret.
-    // Without those, the provider silently returns nil on every call and the
-    // chain just spends a network round-trip on every GPS update.
-
     private init() {
         self.liveProviders = [
+            HERERestSpeedLimitProvider(),
             ArcGISHPMSSpeedLimitProvider(),
             OverpassSpeedLimitProvider(),
         ]
-        // Preload any persisted entries from disk so the very first fetch can
-        // avoid the network round-trip if the user is revisiting a road.
-        Task { await cache.loadFromDisk() }
+        // Preload the in-memory response cache from disk so the very first
+        // fetch can hit cached data without a network round-trip.
+        // The SQLite batch cache (HERELocalBatchCache) is self-persisting
+        // and requires no explicit loadFromDisk call.
+        Task {
+            await cache.loadFromDisk()
+        }
     }
 
     /// Pick the best speed limit at the user's current coord. Returns the new
@@ -288,7 +284,34 @@ public class SmartSpeedLimitService: ObservableObject {
             )
         }
 
-        // 2. Live provider chain (only when online).
+        // 2. Batch cache lookup (HERE Route Matching API results).
+        //    Uses SQLite-backed road-based cache. Primary path: look up by
+        //    road name + direction (fast, O(log n)). Fallback: spatial
+        //    nearest-neighbor query for the closest cached road point
+        //    within 50m of the user's coordinate.
+        //    Checked BEFORE the live chain so a cached road segment
+        //    returns instantly with zero network cost.
+        if let cached = await batchCache.lookup(
+            coordinate: coordinate,
+            roadName: roadName,
+            bearing: heading
+        ) {
+            return Candidate(
+                limit: cached.speedLimitMph,
+                source: .batchCache,
+                roadKey: cached.roadName + (cached.direction.isEmpty ? "" : " \(cached.direction)"),
+                providerName: "HERE Batch",
+                detail: roadName.map { "Batch cache on \($0)" } ?? "Batch cache near coord",
+                isMiss: false
+            )
+        }
+
+        // 3. Live provider chain (only when online).
+        //    NOTE: The geofence manager (HEREGeofenceManager) is the
+        //    SOLE owner of batch fetch triggers. It observes location
+        //    updates independently and fires background batch requests
+        //    when the user enters uncached zones. This service only
+        //    reads from the batch cache — it never triggers fetches.
         if reachability.isConnected {
             for provider in liveProviders {
                 do {
@@ -311,7 +334,7 @@ public class SmartSpeedLimitService: ObservableObject {
             }
         }
 
-        // 3. SQLite fallback (offline, or all live providers missed).
+        // 5. SQLite fallback (offline, or all providers missed).
         return await querySQLiteFallback(
             at: coordinate, heading: heading,
             currentSpeedMph: currentSpeedMph, roadName: roadName
@@ -513,11 +536,12 @@ public class SmartSpeedLimitService: ObservableObject {
 
     private func sourceForProviderName(_ name: String) -> SpeedLimitDataSource {
         switch name {
-        case "HERE REST": return .liveHERE
-        case "ArcGIS":    return .liveArcGIS
-        case "Overpass":  return .liveOverpass
-        case "AZ SQLite": return .localDB
-        default:          return .noData
+        case "HERE Batch": return .batchCache
+        case "HERE REST":  return .liveHERE
+        case "ArcGIS":     return .liveArcGIS
+        case "Overpass":   return .liveOverpass
+        case "AZ SQLite":  return .localDB
+        default:           return .noData
         }
     }
 }
