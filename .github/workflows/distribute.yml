@@ -697,4 +697,16 @@ jobs:
           RC=$?
           echo "[DBG-DITTO] rc=$RC"
           if [ "$RC" -ne 0 ]; then
-            echo "[FATAL] ditto repack failed (rc=$RC"
+            echo "[FATAL] ditto repack failed (rc=$RC)"
+            exit 1
+          fi
+
+          echo "=== Final IPA verification ==="
+          if unzip -l "$TMP_IPA" 2>/dev/null | grep -q "embedded.mobileprovision"; then
+            echo "[OK] embedded.mobileprovision CONFIRMED in final IPA"
+          else
+            echo "[ERROR] embedded.mobileprovision NOT FOUND in repacked IPA"
+            exit 1
+          fi
+
+          echo "=== IPA ready: $TMP_IPA ==="
