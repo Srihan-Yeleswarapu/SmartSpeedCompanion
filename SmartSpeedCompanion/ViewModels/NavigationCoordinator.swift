@@ -282,7 +282,7 @@ public final class NavigationCoordinator: ObservableObject {
     /// Fully-threaded init used by DriveViewModel.init(...) in production.
     /// Every closure has a sensible default so test fixtures only have
     /// to override the seams they care about.
-    public init(
+    internal init(
         isRecordingProvider: @escaping () -> Bool = { false },
         nearbyCamerasProvider: @escaping () -> [SpeedCamera] = { [] },
         availableRoutesProvider: @escaping () -> [MKRoute] = { [] },
@@ -441,8 +441,7 @@ public final class NavigationCoordinator: ObservableObject {
     /// none is in progress.
     public func startNavigation(to destination: MKMapItem) async {
         self.destination = destination
-        if !self.isRecordingProvider() { self.startSession() }
-        await navigationDelegate?.startNavigationTrigger(to: destination, route: nil)
+        if !self.isRecordingProvider() { self.startSession() }            await navigationDelegate?.startNavigationTrigger(to: destination, route: nil as MKRoute?)
     }
 
     /// Terminates the current navigation session. Cleans all nav-owned

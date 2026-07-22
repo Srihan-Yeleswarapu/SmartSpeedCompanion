@@ -1695,41 +1695,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
 
     // MARK: - Rerouting Logic
-    private func checkOffRouteStatus(_ location: CLLocation) {
-        guard let route = currentRoute, !isCalculatingReroute else { return }
-        
-        let distance = distanceToPolyline(location, polyline: route.polyline)
-        
-        if distance > 35.0 { 
-            let timeSinceLastReroute = Date().timeIntervalSince(lastRerouteTime)
-            
-            if timeSinceLastReroute > 3.0 { 
-                DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting.")
-                lastRerouteTime = Date()
-                isCalculatingReroute = true
-                
-                Task { @MainActor in
-                    // FIXED: Using destinationItem which is defined at line 72
-                    if let dest = self.destinationItem {
-                        await self.startNavigation(to: dest) 
-                    }
-                    self.isCalculatingReroute = false
-                }
-            }
-        }
-    }
-
-    private func distanceToPolyline(_ location: CLLocation, polyline: MKPolyline) -> CLLocationDistance {
-        var minDistance: CLLocationDistance = .greatestFiniteMagnitude
-        let points = polyline.points()
-        for i in stride(from: 0, to: polyline.pointCount, by: 5) {
-            let routeLocation = CLLocation(latitude: points[i].coordinate.latitude, longitude: points[i].coordinate.longitude)
-            let distance = location.distance(from: routeLocation)
-            if distance < minDistance { minDistance = distance }
-            if minDistance < 10 { return minDistance }
-        }
-        return minDistance
-    }
+    // NOTE: checkOffRouteStatus and distanceToPolyline were moved to
+    // NavigationCoordinator. The private copies that lived here referenced
+    // isCalculatingReroute and lastRerouteTime which are now owned by the
+    // coordinator. The GPS sink calls navigationCoordinator.checkOffRouteStatus(at:)
+    // directly, so this dead code is safe to remove.
 } // <--- THIS BRACE CLOSES THE DRIVEVIEWMODEL CLASS
 
 // MARK: - MKLocalSearchCompleterDelegate
@@ -1747,12 +1717,6 @@ extension DriveViewModel: MKLocalSearchCompleterDelegate {
         // Log on background thread, no UI update needed
         print("Completer error: \(error)")
     }
-}
-
-public protocol NavigationActionDelegate: AnyObject {
-    func startNavigationTrigger(to destination: MKMapItem, route: MKRoute?) async
-    func endNavigationTrigger() async
-    func searchDestinationTrigger(_ query: String) async -> [MKMapItem]
 }
 
 extension CLLocation {
