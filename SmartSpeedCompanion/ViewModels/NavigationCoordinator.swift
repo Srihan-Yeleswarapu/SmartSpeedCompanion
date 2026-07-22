@@ -441,7 +441,8 @@ public final class NavigationCoordinator: ObservableObject {
     /// none is in progress.
     public func startNavigation(to destination: MKMapItem) async {
         self.destination = destination
-        if !self.isRecordingProvider() { self.startSession() }            await navigationDelegate?.startNavigationTrigger(to: destination, route: nil as MKRoute?)
+        if !self.isRecordingProvider() { self.startSession() }
+        await navigationDelegate?.startNavigationTrigger(to: destination, route: nil as MKRoute?)
     }
 
     /// Terminates the current navigation session. Cleans all nav-owned
