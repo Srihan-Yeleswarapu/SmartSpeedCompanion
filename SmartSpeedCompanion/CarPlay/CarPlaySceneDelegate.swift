@@ -107,39 +107,6 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         let speedMapTemplate = root.mapTemplate
         interfaceController.setRootTemplate(speedMapTemplate, animated: true, completion: nil)
     }
-        let mapView = MKMapView(frame: window.bounds)
-        mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        mapView.overrideUserInterfaceStyle = .dark
-        mapView.showsUserLocation = true
-        mapView.userTrackingMode = .followWithHeading
-        mapView.showsCompass = true
-        
-        // Use modern MapKit configuration with realistic 3D buildings
-        if #available(iOS 16.0, *) {
-            let config = MKStandardMapConfiguration(elevationStyle: .realistic, emphasisStyle: .muted)
-            config.showsTraffic = true
-            mapView.preferredConfiguration = config
-        } else {
-            mapView.mapType = .mutedStandard
-        }
-        
-        // Clean POI filter for driving
-        mapView.pointOfInterestFilter = MKPointOfInterestFilter(including: [
-            .gasStation, .parking, .hospital, .police
-        ])
-        
-        self.carPlayMapView = mapView
-        window.rootViewController = UIViewController()
-        window.rootViewController?.view.addSubview(mapView)
-        
-        // Configure Primary Root Layout
-        navigationRoot = CarPlayNavigationRootTemplate(interfaceController: interfaceController, viewModel: vm)
-        
-        // Explicit check before accessing mapTemplate to avoid potential race condition
-        guard let root = navigationRoot else { return }
-        let speedMapTemplate = root.mapTemplate
-        interfaceController.setRootTemplate(speedMapTemplate, animated: true, completion: nil)
-    }
     
     // MARK: - Dashboard Support
     func templateApplicationDashboardScene(
