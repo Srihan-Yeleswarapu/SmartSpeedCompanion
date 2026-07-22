@@ -130,15 +130,15 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     // MARK: - Navigation Control
     public func startNavigation(route: MKRoute, destination: MKMapItem) {
         viewModel.isNavigating = true
-        viewModel.currentRoute = route
-        viewModel.destination = destination
-        
+        viewModel.navigationCoordinator.currentRoute = route
+        viewModel.navigationCoordinator.destination = destination
+
         let estimatedTime = route.expectedTravelTime
-        viewModel.eta = Date().addingTimeInterval(estimatedTime)
+        viewModel.navigationCoordinator.eta = Date().addingTimeInterval(estimatedTime)
         // Mirror CarPlay's remaining-route distance onto the ViewModel right
         // away so Siri `GetDistanceToDestinationIntent` can answer before the
         // next `evaluateNavigationProgress` tick fires.
-        viewModel.distanceToDestination = route.distance
+        viewModel.navigationCoordinator.distanceToDestination = route.distance
         
         let routeChoice = CPRouteChoice(
             summaryVariants: ["Fastest Route"],
@@ -175,14 +175,14 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         currentTrip = nil
         currentManeuver = nil
         locationCancellable?.cancel()
-        
+
         viewModel.isNavigating = false
-        viewModel.currentRoute = nil
-        viewModel.destination = nil
-        viewModel.nextManeuverInstruction = ""
-        viewModel.distanceToNextTurn = 0
-        viewModel.distanceToDestination = 0
-        viewModel.eta = nil
+        viewModel.navigationCoordinator.currentRoute = nil
+        viewModel.navigationCoordinator.destination = nil
+        viewModel.navigationCoordinator.nextManeuverInstruction = ""
+        viewModel.navigationCoordinator.distanceToNextTurn = 0
+        viewModel.navigationCoordinator.distanceToDestination = 0
+        viewModel.navigationCoordinator.eta = nil
     }
     
     private func monitorProgress() {
@@ -194,17 +194,17 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     }
     
     private func evaluateNavigationProgress(at location: CLLocation) {
-        guard let currentRoute = viewModel.currentRoute, let session = navigationSession else { return }
-        
+        guard let currentRoute = viewModel.navigationCoordinator.currentRoute, let session = navigationSession else { return }
+
         // 1. Check distance to next turn (step)
         if currentStepIndex < currentSteps.count {
             let nextStep = currentSteps[currentStepIndex]
             let stepStart = CLLocation(latitude: nextStep.polyline.coordinate.latitude,
                                        longitude: nextStep.polyline.coordinate.longitude)
-            
+
             let distance = location.distance(from: stepStart)
-            viewModel.distanceToNextTurn = distance
-            
+            viewModel.navigationCoordinator.distanceToNextTurn = distance
+
             // Advance step if within 15 meters
             if distance < 15.0 {
                 currentStepIndex += 1
@@ -212,7 +212,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
             }
         } else {
             // Reached destination
-            if let dest = viewModel.destination?.placemark.location {
+            if let dest = viewModel.navigationCoordinator.destination?.placemark.location {
                 let distToDest = location.distance(from: dest)
                 if distToDest < 50.0 {
                     // DriveViewModel.advanceToNextStep() handles the arrival announcement.
@@ -222,7 +222,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
                 }
             }
         }
-        
+
         // Update CarPlay HUD Estimates
         let totalDistance = Measurement(value: currentRoute.distance - currentRoute.distance(to: currentStepIndex), unit: UnitLength.meters)
         let timeRemaining = currentRoute.expectedTravelTime * (totalDistance.value / currentRoute.distance)
@@ -231,7 +231,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         // active navigation surface. DriveViewModel's own
         // updateNavigationProgress(...) sets this property on the phone-only
         // path; both writes converge to roughly the same value (in meters).
-        viewModel.distanceToDestination = totalDistance.value
+        viewModel.navigationCoordinator.distanceToDestination = totalDistance.value
         let travelEstimates = CPTravelEstimates(distanceRemaining: totalDistance, timeRemaining: timeRemaining)
         
         if let maneuver = currentManeuver {
@@ -244,8 +244,8 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         guard currentStepIndex < currentSteps.count else { return }
         let maneuver = currentSteps[currentStepIndex]
         
-        viewModel.nextManeuverInstruction = maneuver.instructions
-        viewModel.nextManeuverImageName = symbolName(for: maneuver)
+        viewModel.navigationCoordinator.nextManeuverInstruction = maneuver.instructions
+        viewModel.navigationCoordinator.nextManeuverImageName = symbolName(for: maneuver)
         
         let cpManeuver = CPManeuver()
         cpManeuver.instructionVariants = [maneuver.instructions]
