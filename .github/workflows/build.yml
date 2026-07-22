@@ -342,6 +342,38 @@ jobs:
             exit 1
           fi
 
+          echo "============================================================"
+          echo "Uploading IPA to App Store Connect (TestFlight): $IPA_PATH"
+          echo "IPA size: $(wc -c < "$IPA_PATH") bytes"
+          echo "============================================================"
+
+          UPLOAD_LOG=$(mktemp)
+          set +e
+          xcrun altool --upload-app --file "$IPA_PATH" --type ios --show-progress -u "${{ secrets.APPSTORE_CONNECT_USERNAME }}" -p "${{ secrets.APPSTORE_CONNECT_PASSWORD }}" 2>&1 | tee "$UPLOAD_LOG"
+          UPLOAD_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          echo "============================================================"
+          if [ "$UPLOAD_EXIT" -eq 0 ]; then
+            echo "[OK] IPA uploaded successfully. "
+            echo "It will appear in App Store Connect → TestFlight once processing completes."
+          else
+            echo "[WARN] altool exited with non-zero status ($UPLOAD_EXIT)."
+            if grep -qE "403|required contracts|CONTRACT_NOT_VALID" "$UPLOAD_LOG"; then
+              echo ""
+              echo "ACTION REQUIRED: Sign the Apple Developer Program License Agreement in App Store Connect."
+              echo "  https://appstoreconnect.apple.com → Agreements, Tax, and Banking"
+            elif grep -qE "401|invalid username|invalid password|authentication" "$UPLOAD_LOG"; then
+              echo ""
+              echo "ACTION REQUIRED: Authentication failure. Regenerate an app-specific password at"
+              echo "  https://appleid.apple.com/account/manage"
+              echo "Update the APPSTORE_CONNECT_USERNAME / APPSTORE_CONNECT_PASSWORD secrets."
+            else
+              cat "$UPLOAD_LOG"
+            fi
+          fi
+          rm -f "$UPLOAD_LOG"
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         if: always()
