@@ -481,41 +481,109 @@ fileprivate struct BottomTransparentHUD: View {
                     .frame(maxWidth: .infinity, alignment: .center)
             }
 
-            // Bottom row — three independent floating widgets over the map.
-            // SpeedReadout (leading), START/STOP (center), LimitSignView (trailing).
-            HStack(alignment: .bottom, spacing: 0) {
-                SpeedReadout(isLandscape: isLandscape)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button(action: {
-                    if driveViewModel.isRecording {
-                        driveViewModel.endSession()
-                    } else {
-                        driveViewModel.startSession()
-                    }
-                }) {
-                    Text(driveViewModel.isRecording ? "STOP" : "START")
-                        .font(.system(size: isLandscape ? 12 : 14, weight: .black))
-                        .foregroundColor(driveViewModel.isRecording ? .white : .black)
-                        .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
-                        .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
-                        .clipShape(Capsule())
-                        .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
+            // Bottom row layout — branches on orientation.
+            //
+            // Portrait (414 pt): the three widgets stay independently floating
+            // over the map because they fit naturally across the narrow width.
+            //
+            // Landscape (896 pt): they would otherwise feel disconnected —
+            // SpeedReadout pinned flush to the left edge, START alone in dead
+            // center, LimitSignView floating far on the right — and there is
+            // no visual chrome tying them together. Per TestFlight feedback
+            // ("Horizontal view isn't good."), wrap them in a single Liquid
+            // Glass dashboard bar so they read as one horizontal control strip
+            // (the same dashboard look car/HUD apps use in landscape).
+            if isLandscape {
+                // LANDSCAPE — unified dashboard bar.
+                //
+                // MODIFIER ORDER MATTERS HERE: `.liquidGlass(...)` must wrap
+                // the HStack BEFORE `.frame(maxWidth: .infinity,
+                // alignment: .center)`. Otherwise the `.frame` would
+                // expand the bar to full screen width first, and `.liquidGlass`
+                // would paint that whole wide frame instead of a tight pill
+                // around the three widgets. Putting `.liquidGlass` first
+                // gives a tight bar (≈ 320 pt wide) and the outer `.frame`
+                // just centers it in the wider parent region. (Caught by
+                // code review.)
+                //
+                // Inner padding for the bar comes from `.liquidGlass(...)`'s
+                // built-in `.padding()` (16 pt default) — we deliberately
+                // do NOT layer our own `.padding(.horizontal, 14)` because
+                // that would stack on top of the glass default and inflate
+                // the bar to ~30 pt of horizontal padding, which reads
+                // "loose band" not "tight dashboard". No `frame(.infinity)`
+                // on any child — letting each widget size naturally keeps
+                // the row tight instead of stretched across the 896 pt
+                // landscape canvas.
+                HStack(alignment: .bottom, spacing: 12) {
+                    SpeedReadout(isLandscape: true)
+                    startStopButton(isLandscape: true)
+                    LimitSignView(
+                        limit: driveViewModel.limit,
+                        source: driveViewModel.speedLimitSource,
+                        isLandscape: true,
+                        onTap: {
+                            Task { await driveViewModel.manualRefetchSpeedLimit() }
+                        },
+                        isRefreshing: driveViewModel.isRefreshingSpeedLimit
+                    )
                 }
-                .frame(maxWidth: .infinity, alignment: .center)
-                LimitSignView(
-                    limit: driveViewModel.limit,
-                    source: driveViewModel.speedLimitSource,
-                    isLandscape: isLandscape,
-                    onTap: {
-                        Task { await driveViewModel.manualRefetchSpeedLimit() }
-                    },
-                    isRefreshing: driveViewModel.isRefreshingSpeedLimit
+                .liquidGlass(
+                    cornerRadius: 26,
+                    hasInnerGlow: true,
+                    tint: DesignSystem.cyan.opacity(0.04),
+                    interactive: true
                 )
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                // PORTRAIT — three independent floating widgets (unchanged).
+                HStack(alignment: .bottom, spacing: 0) {
+                    SpeedReadout(isLandscape: false)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    startStopButton(isLandscape: false)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    LimitSignView(
+                        limit: driveViewModel.limit,
+                        source: driveViewModel.speedLimitSource,
+                        isLandscape: false,
+                        onTap: {
+                            Task { await driveViewModel.manualRefetchSpeedLimit() }
+                        },
+                        isRefreshing: driveViewModel.isRefreshingSpeedLimit
+                    )
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
             }
         }
-        // NO .glassStyle() — each widget floats independently over the
-        // map. Safe-area bottom inset is applied by the parent.
+        // NO .glassStyle() on the PORTRAIT floating-widgets path — each
+        // widget floats independently over the map. Safe-area bottom
+        // inset is applied by the parent.
+    }
+
+    // MARK: - startStopButton helper
+    //
+    // Shared START/STOP pill used by both portrait and landscape
+    // branches of `body`. Pulled out so each branch doesn't repeat the
+    // tap logic, color logic, and chip sizing. Sizing values match
+    // the legacy inline button so the visual is unchanged from the
+    // previous release regardless of orientation.
+    @ViewBuilder
+    private func startStopButton(isLandscape: Bool) -> some View {
+        Button(action: {
+            if driveViewModel.isRecording {
+                driveViewModel.endSession()
+            } else {
+                driveViewModel.startSession()
+            }
+        }) {
+            Text(driveViewModel.isRecording ? "STOP" : "START")
+                .font(.system(size: isLandscape ? 12 : 14, weight: .black))
+                .foregroundColor(driveViewModel.isRecording ? .white : .black)
+                .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
+                .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
+                .clipShape(Capsule())
+                .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
+        }
     }
 }
 
@@ -562,8 +630,16 @@ fileprivate struct SpeedReadout: View {
             }
         }
         .frame(minWidth: isLandscape ? 110 : 132, alignment: .leading)
-        .padding(.leading, 14)
-        .padding(.trailing, 18)
+        // LANDSCAPE the SpeedReadout lives inside the unified glass
+        // dashboard bar — the bar already supplies inner breathing room
+        // via `.liquidGlass(...)`'s built-in `.padding()`, so the
+        // floating-portrait 14 pt leading / 18 pt trailing only causes
+        // asymmetric left-lean inside the bar. Drop them when in
+        // landscape so the speed number visually centers with START and
+        // the limit sign. Vertical padding kept so the number breathes
+        // top-to-bottom regardless of orientation.
+        .padding(.leading, isLandscape ? 0 : 14)
+        .padding(.trailing, isLandscape ? 0 : 18)
         .padding(.vertical, 10)
     }
 
