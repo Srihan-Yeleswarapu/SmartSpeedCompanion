@@ -246,7 +246,8 @@ fileprivate struct SearchBarView: View {
     @FocusState private var isFocused: Bool
     
     var body: some View {
-        VStack(spacing: 6) {                HStack(spacing: isLandscape ? 6 : 10) {
+        VStack(spacing: 6) {
+            HStack(spacing: isLandscape ? 6 : 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(DesignSystem.cyan)
                     .font(.system(size: isLandscape ? 12 : 14, weight: .bold))
@@ -854,7 +855,8 @@ fileprivate struct NavigationShortcutsRow: View {
     let destination: MKMapItem
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {                HStack(spacing: isLandscape ? 6 : 10) {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
                 // TestFlight 2.2.0 (FB10): "Refresh Look Around" button
                 // removed per user request. Apple Maps surface via
                 // `Open in Apple Maps` below covers the destination-preview
