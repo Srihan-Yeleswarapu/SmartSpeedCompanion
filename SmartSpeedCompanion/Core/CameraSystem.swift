@@ -2,6 +2,63 @@ import Foundation
 import MapKit
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - Camera tuning source
+//
+// The three lookup tables used by `CameraDecisionEngine.computeTarget(...)`
+// — `altitudeLUT`, `pitchLUT`, and `roadTypeMultiplierLUT` — are stored in
+// `SmartSpeedCompanion/Resources/CameraTuning.json` so they can be tuned
+// without touching Swift code. At runtime they are loaded from the main
+// bundle on first reference (see `CameraTuning.loadTuning()`). The hardcoded
+// values below are preserved verbatim as compile-time fallbacks and ship in
+// the binary, so a malformed or missing JSON falls back to the last-known-
+// good behaviour without any user-visible regression.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// One (x, y) point on a camera-tuning lookup table.
+public struct LUTPoint: Codable, Sendable {
+    public let x: Double
+    public let y: Double
+}
+
+/// Decoded shape of `CameraTuning.json`. Each property is an array of points
+/// that `CameraDecisionEngine` runs through `smoothInterpolate(x:knots:)`.
+public struct CameraTuning: Codable, Sendable {
+    public let altitudeLUT: [LUTPoint]
+    public let pitchLUT: [LUTPoint]
+    public let roadTypeMultiplierLUT: [LUTPoint]
+
+    /// Read and decode the bundled `CameraTuning.json`. Returns `nil` if the
+    /// resource is missing or malformed; callers should fall back to the
+    /// compile-time constants defined alongside the LUTs.
+    public static func loadTuning() -> CameraTuning? {
+        guard let url = Bundle.main.url(forResource: "CameraTuning", withExtension: "json") else {
+            return nil
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(CameraTuning.self, from: data)
+        } catch {
+            DebugLogger.shared.log("CameraTuning.json decode FAILED: \(error.localizedDescription). Using hardcoded fallback LUTs.")
+            return nil
+        }
+    }
+
+    /// Convert a `[LUTPoint]` JSON-decoded array into the
+    /// `[(x: Double, y: Double)]` tuple array that
+    /// `CameraDecisionEngine.smoothInterpolate(x:knots:)` already accepts,
+    /// or return `fallback` when the bundle resource is unavailable.
+    /// `static let` in Swift is computed lazily and cached on first access,
+    /// so this is a one-shot cost per LUT per app launch.
+    public static func resolveLUT(
+        _ keyPath: KeyPath<CameraTuning, [LUTPoint]>,
+        fallback: [(x: Double, y: Double)]
+    ) -> [(x: Double, y: Double)] {
+        guard let tuning = loadTuning() else { return fallback }
+        return tuning[keyPath: keyPath].map { ($0.x, $0.y) }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MARK: - CameraContext
 //
 // A stateless snapshot of everything the decision engine needs to compute the
@@ -153,11 +210,14 @@ public struct TargetCameraState: Sendable {
 //  15. Ambient Micro-Movement               (ANIMATOR — stateful)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-public struct CameraDecisionEngine: Sendable {
-
-    // ── Key points for altitude interpolation ──────────────────────────────
+public struct CameraDecisionEngine: Sendable {    // ── Key points for altitude interpolation ──────────────────────────────
     // (speed_mph, altitude_m)
-    private static let altitudeLUT: [(x: Double, y: Double)] = [
+    //
+    // The hardcoded arrays below are fallbacks. The primary source of these
+    // values is `CameraTuning.json` in the app bundle (see file header). If
+    // `CameraTuning.loadTuning()` returns `nil` (bundle resource missing or
+    // malformed), we fall back to the original values.
+    private static let fallbackAltitudeLUT: [(x: Double, y: Double)] = [
         (0,   300),
         (10,  380),
         (20,  550),
@@ -176,7 +236,7 @@ public struct CameraDecisionEngine: Sendable {
 
     // ── Key points for pitch interpolation ─────────────────────────────────
     // (speed_mph, pitch_degrees)
-    private static let pitchLUT: [(x: Double, y: Double)] = [
+    private static let fallbackPitchLUT: [(x: Double, y: Double)] = [
         (0,   0),
         (5,   18),
         (15,  28),
@@ -190,7 +250,7 @@ public struct CameraDecisionEngine: Sendable {
     ]
 
     // ── Road-type altitude multipliers keyed by speed limit ────────────────
-    private static let roadTypeMultiplierLUT: [(x: Double, y: Double)] = [
+    private static let fallbackRoadTypeMultiplierLUT: [(x: Double, y: Double)] = [
         (0,   1.00),   // unknown — neutral, no adjustment
         (25,  0.85),   // residential / school zone
         (35,  0.95),   // city collector
@@ -199,6 +259,20 @@ public struct CameraDecisionEngine: Sendable {
         (65,  1.30),   // interstate
         (80,  1.40)    // high-speed interstate
     ]
+
+    /// Materialised at first reference; cached thereafter (Swift `static let`
+    /// semantics). Reads from `CameraTuning.json` and converts `[LUTPoint]`
+    /// into the ((x: Double, y: Double)) tuple shape that
+    /// `smoothInterpolate(x:knots:)` already accepts.
+    private static let altitudeLUT: [(x: Double, y: Double)] =
+        CameraTuning.resolveLUT(\.altitudeLUT, fallback: fallbackAltitudeLUT)
+
+    private static let pitchLUT: [(x: Double, y: Double)] =
+        CameraTuning.resolveLUT(\.pitchLUT, fallback: fallbackPitchLUT)
+
+    private static let roadTypeMultiplierLUT: [(x: Double, y: Double)] =
+        CameraTuning.resolveLUT(\.roadTypeMultiplierLUT, fallback: fallbackRoadTypeMultiplierLUT)
+ 
 
     // ── Turn proximity: altitude multiplier ────────────────────────────────
     // Smooth decay from 1.0 at 1000 m down to ~0.28 at 0 m.
