@@ -19,7 +19,19 @@ public final class SpeedEngine: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     private var smoothedSpeed: Double = 0.0
-    private let smoothingFactor: Double = 0.4
+    private let smoothingFactor: Double = 0.15
+
+    // ── Zero-speed deadband ──────────────────────────────────
+    /// Number of consecutive raw readings that must fall below the
+    /// `minSpeedThreshold` before we force the displayed speed to zero.
+    /// Prevents GPS noise from showing "5 mph" while the user is
+    /// stationary (holding the phone, sitting at a red light, etc.).
+    private var zeroDeadbandCount: Int = 0
+    private let minZerosBeforeStop: Int = 5
+    /// Raw speed (mph) below which we count toward the deadband.
+    private let minSpeedThreshold: Double = 3.0
+    /// Raw speed (mph) below which we force the display to exactly 0.
+    private let forceZeroThreshold: Double = 0.8
 
     /// Fires the initial HERE batch cache setup once when the first valid,
     /// accurate GPS location arrives. After the first trigger, this flag
@@ -69,24 +81,45 @@ public final class SpeedEngine: ObservableObject {
 
         // 2. Conversion and Smoothing
         // Use m/s to mph as the base internal unit for smoothing
-        let rawSpeedMph = location.speed * 2.23694 
-        
-        // Apply EMA filter: Smoothed = (New * Alpha) + (Old * (1 - Alpha))
-        // This eliminates the jitter users see during steady cruising.
-        if smoothedSpeed == 0 && rawSpeedMph > 0 {
-            smoothedSpeed = rawSpeedMph
+        let rawSpeedMph = location.speed * 2.23694
+
+        // ── Zero-speed deadband ────────────────────────────────
+        // If GPS says we're barely moving, accumulate a deadband counter.
+        // Once enough consecutive sub-threshold readings stack up, force
+        // the displayed speed to 0 — this kills the "phone on desk shows
+        // 5 mph" noise.  We do NOT return early; the speed-limit Task
+        // below must still run for initial HERE setup and limit fetching.
+        if rawSpeedMph < minSpeedThreshold {
+            zeroDeadbandCount += 1
         } else {
-            smoothedSpeed = (rawSpeedMph * smoothingFactor) + (smoothedSpeed * (1.0 - smoothingFactor))
+            zeroDeadbandCount = 0
         }
-        
-        // 3. Status Update and Display
-        let displaySpeed = isMetric ? smoothedSpeed * 1.60934 : smoothedSpeed
-        let finalSpeed = max(0, displaySpeed)
-        
-        self.speed = finalSpeed
-        
-        // Update status immediately
-        updateStatus(speed: finalSpeed, limit: Double(self.limit))
+
+        if rawSpeedMph < forceZeroThreshold || zeroDeadbandCount >= minZerosBeforeStop {
+            // Clamp display to zero without early-returning
+            smoothedSpeed = 0
+            zeroDeadbandCount = minZerosBeforeStop
+            self.speed = 0
+            self.status = .safe
+        } else {
+            // Apply EMA filter: Smoothed = (New × Alpha) + (Old × (1 − Alpha))
+            // The lower factor (0.15 vs the old 0.4) aggressively dampens
+            // GPS noise spikes without feeling sluggish on acceleration
+            // because the raw input is still blended at 1 Hz.
+            if smoothedSpeed == 0 && rawSpeedMph > 0 {
+                // First movement — seed with a damped start
+                smoothedSpeed = rawSpeedMph * 0.5
+            } else {
+                smoothedSpeed = (rawSpeedMph * smoothingFactor) + (smoothedSpeed * (1.0 - smoothingFactor))
+            }
+
+            let displaySpeed = isMetric ? smoothedSpeed * 1.60934 : smoothedSpeed
+            let finalSpeed = max(0, displaySpeed)
+            self.speed = finalSpeed
+            updateStatus(speed: finalSpeed, limit: Double(self.limit))
+        }
+
+        // ── Speed-limit & initial-setup Task block always runs ──
         
         Task { @MainActor in
             // 1. Accurate GPS check

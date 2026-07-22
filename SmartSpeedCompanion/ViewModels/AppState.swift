@@ -5,6 +5,7 @@ public class AppState: ObservableObject {
     @AppStorage("hasCompletedOnboarding") public var hasCompletedOnboarding: Bool = false
     @AppStorage("hasCompletedTutorial") public var hasCompletedTutorial: Bool = false
     @AppStorage("hasSeenTutorialTransition") public var hasSeenTutorialTransition = false
+    @AppStorage("hasSeenLocationPermission") public var hasSeenLocationPermission: Bool = false
     @AppStorage("hasSelectedState") public var hasSelectedState: Bool = false
     @AppStorage("userState") public var userState: String = ""
     // Persisted so we can present Sign In (instead of Sign Up) when a returning user signs out.
@@ -68,6 +69,7 @@ public class AppState: ObservableObject {
         hasCompletedOnboarding = false
         hasSeenTutorialTransition = false
         hasCompletedTutorial = false
+        hasSeenLocationPermission = false
     }
     
     private func setupSettingsSync() {

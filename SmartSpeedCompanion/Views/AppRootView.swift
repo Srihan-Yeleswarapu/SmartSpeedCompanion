@@ -22,6 +22,9 @@ public struct AppRootView: View {
                 TutorialTransitionView()
             } else if !appState.hasCompletedTutorial {
                 TutorialView()
+            } else if !appState.hasSeenLocationPermission {
+                LocationPermissionView()
+                    .environmentObject(driveViewModel)
             } else {
                 // Authentication is intentionally NOT a gate on the Drive UI (Apple
                 // App Store Guideline 5.1.1(v): apps may not require users to register

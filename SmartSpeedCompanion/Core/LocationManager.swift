@@ -71,6 +71,21 @@ public final class LocationManager: NSObject, ObservableObject {
         }
     }
     
+    /// Requests While-Using authorization, suitable for the first-launch
+    /// permission prompt shown after the tutorial. Upgraded to Always later
+    /// when the user starts a driving session (for CarPlay background ops).
+    /// In the iOS Simulator the location-permission dialog is theatre
+    /// (the mock-location path doesn't need it) and a "Don't Allow" tap
+    /// silently breaks the flow. Skip the request entirely on simulator.
+    public func requestWhenInUseAuthorization() {
+        #if targetEnvironment(simulator)
+        return
+        #else
+        manager.requestWhenInUseAuthorization()
+        DebugLogger.shared.log("LocationManager: Requesting WhenInUse Authorization.")
+        #endif
+    }
+
     /// Requests Always authorization, required for CarPlay background operation.
     public func requestAuthorization() {
         // In the iOS Simulator the location-permission dialog is theatre
