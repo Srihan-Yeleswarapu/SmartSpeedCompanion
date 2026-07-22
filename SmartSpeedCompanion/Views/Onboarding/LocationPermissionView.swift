@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreLocation
 
 /// Shown immediately after the tutorial (when the user taps Skip or Get Started).
 /// Explains *why* the app needs location access, then triggers the system
@@ -10,7 +11,9 @@ public struct LocationPermissionView: View {
     @State private var phase: PermissionPhase = .explain
     @State private var pulseGlow = false
 
-    private let locationManager = driveViewModel.locationManager
+    private var locationManager: LocationManager {
+        driveViewModel.locationManager
+    }
 
     public init() {}
 
@@ -140,20 +143,15 @@ public struct LocationPermissionView: View {
 
             // If permission was already granted on a previous launch,
             // skip straight to the main app.
-            if locationManager.authorizationStatus == .authorizedWhenInUse
-                || locationManager.authorizationStatus == .authorizedAlways {
+            let status = locationManager.authorizationStatus
+            let isGranted = status == .authorizedWhenInUse || status == .authorizedAlways
+            if isGranted {
                 proceedToApp()
             }
         }
         .onChange(of: locationManager.authorizationStatus) { _, newStatus in
             // After the user responds to the system dialog, proceed.
-            if newStatus == .authorizedWhenInUse || newStatus == .authorizedAlways {
-                proceedToApp()
-            } else if newStatus == .denied || newStatus == .restricted {
-                // The user declined — still let them into the app;
-                // they can enable location later from Settings.
-                proceedToApp()
-            }
+            handleAuthorizationChange(newStatus)
         }
     }
 
@@ -181,6 +179,14 @@ public struct LocationPermissionView: View {
 
     private func skipPermission() {
         proceedToApp()
+    }
+
+    private func handleAuthorizationChange(_ newStatus: CLAuthorizationStatus) {
+        let isGranted = newStatus == .authorizedWhenInUse || newStatus == .authorizedAlways
+        let isDenied  = newStatus == .denied || newStatus == .restricted
+        if isGranted || isDenied {
+            proceedToApp()
+        }
     }
 
     private func proceedToApp() {
