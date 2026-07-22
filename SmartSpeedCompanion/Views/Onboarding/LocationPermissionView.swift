@@ -191,7 +191,7 @@ public struct LocationPermissionView: View {
 
     private func proceedToApp() {
         withAnimation(.easeOut(duration: 0.3)) {
-            appState.hasSeenLocationPermission = true
+            appState.onboardingStep = appState.onboardingStep.nextCase
         }
     }
 
