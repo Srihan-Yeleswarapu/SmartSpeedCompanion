@@ -79,7 +79,7 @@ public struct OnboardingView: View {
                 currentStep += 1
             } else {
                 // Finished
-                appState.hasCompletedOnboarding = true
+                appState.onboardingStep = appState.onboardingStep.nextCase
             }
         }
     }

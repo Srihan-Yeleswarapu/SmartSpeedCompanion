@@ -95,7 +95,7 @@ public struct StateSelectionView: View {
         if selectedState == "Arizona" {
             withAnimation {
                 appState.userState = "Arizona"
-                appState.hasSelectedState = true
+                appState.onboardingStep = appState.onboardingStep.nextCase
             }
         } else {
             withAnimation {

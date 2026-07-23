@@ -10,38 +10,41 @@ public struct AppRootView: View {
         Group {
             if !appState.authManager.initialAuthChecked {
                 initializingView
-            } else if !appState.hasSelectedState {
-                // First-run funnel: state → onboarding → "how Speedio works" → tutorial → auth.
-                // IMPORTANT: this branch is checked BEFORE `isAuthenticated` so that a
-                // freshly signed-up account (for which `signUp` resets the funnel flags
-                // to `false`) is routed into the funnel, not directly into Drive.
-                StateSelectionView()
-            } else if !appState.hasCompletedOnboarding {
-                OnboardingView()
-            } else if !appState.hasSeenTutorialTransition {
-                TutorialTransitionView()
-            } else if !appState.hasCompletedTutorial {
-                TutorialView()
-            } else if !appState.hasSeenLocationPermission {
-                LocationPermissionView()
-                    .environmentObject(driveViewModel)
             } else {
+                // First-run funnel: state → survey → "how Speedio works" → tutorial → location → Drive.
+                // IMPORTANT: this branch is checked BEFORE `isAuthenticated` so that a
+                // freshly signed-up account (for which `signUp` posts `.userDidSignUp`
+                // and `resetOnboardingFunnel` rewinds `onboardingStep` back to
+                // `.stateSelection`) is routed into the funnel, not directly into Drive.
+                //
                 // Authentication is intentionally NOT a gate on the Drive UI (Apple
                 // App Store Guideline 5.1.1(v): apps may not require users to register
                 // to access features that aren't account-based — and the speedometer,
                 // alerts, navigation, and CarPlay surface are local-first and free to
-                // use). Every user — signed in or not — walks the same state →
-                // onboarding → transition → tutorial → Drive funnel.
+                // use). Every user — signed in or not — walks the same funnel.
                 //
                 // Account code paths (`AuthenticationManager`, `AuthView`,
                 // `SignInView`, `SignUpView`, Firestore sync, preference sync) are
-                // intentionally NOT removed from the codebase; they're just not
-                // surfaced here. The upcoming in-app-purchase rollout will reuse
-                // them, and a returning user with a cached Firebase session can
-                // still sign out / delete their account from Settings (gated on
-                // `isAuthenticated`).
-                DriveRootView()
-                    .environmentObject(driveViewModel)
+                // intentionally NOT removed; they're just not surfaced here. The
+                // upcoming in-app-purchase rollout will reuse them, and a returning
+                // user with a cached Firebase session can still sign out / delete
+                // their account from Settings (gated on `isAuthenticated`).
+                switch appState.onboardingStep {
+                case .stateSelection:
+                    StateSelectionView()
+                case .questions:
+                    OnboardingView()
+                case .transition:
+                    TutorialTransitionView()
+                case .tutorial:
+                    TutorialView()
+                case .locationPermission:
+                    LocationPermissionView()
+                        .environmentObject(driveViewModel)
+                case .complete:
+                    DriveRootView()
+                        .environmentObject(driveViewModel)
+                }
             }
         }
         // Track that the user has authenticated at least once on this device.

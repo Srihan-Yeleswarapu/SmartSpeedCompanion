@@ -96,6 +96,11 @@ targets:
         excludes:
           - "**/SpeedLiveActivityView.swift"
       - path: SmartSpeedCompanion/Resources/Assets.xcassets
+      # Camera tuning lookup tables bundled into the app. Loaded by
+      # `CameraTuning.loadTuning()` in `SmartSpeedCompanion/Core/CameraSystem.swift`; falls
+      # back to compile-time constants in CameraDecisionEngine if the resource is missing.
+      - path: SmartSpeedCompanion/Resources/CameraTuning.json
+        buildPhase: resources
       # Explicitly declare DB as a resource to be copied into the app bundle
       - path: SmartSpeedCompanion/Resources/ArizonaSpeedLimits.sqlite
         buildPhase: resources

@@ -16,45 +16,60 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     private var cancellables = Set<AnyCancellable>()
     
     // MARK: - Primary Scene Connection
-    func templateApplicationScene(
-        _ templateApplicationScene: CPTemplateApplicationScene,
-        didConnect interfaceController: CPInterfaceController
-    ) {
-        self.interfaceController = interfaceController
-        
-        // Pass shared ViewModel to CarPlay
-        let vm = AppDelegate.sharedDriveViewModel
-        
-        // Configure Primary Root Layout
-        navigationRoot = CarPlayNavigationRootTemplate(interfaceController: interfaceController, viewModel: vm)
-        
-        // Explicit check before accessing mapTemplate to avoid potential race condition
-        guard let root = navigationRoot else { return }
-        let speedMapTemplate = root.mapTemplate
-        
-        // Establish as primary
-        interfaceController.setRootTemplate(speedMapTemplate, animated: true, completion: nil)
-    }
-    
-    // MARK: - Window-Aware Connection (Modern CarPlay)
-    // Called on newer CarPlay systems that provide a CPWindow for direct view embedding
+    //
+    // Single modern path (iOS 14+). The previous code had two parallel
+    // `templateApplicationScene(_:didConnect:)` overloads — legacy (no
+    // window) and modern (with CPWindow). The legacy signature is
+    // `@objc optional` on `CPTemplateApplicationSceneDelegate` and CarPlay
+    // no longer dispatches it on iOS 14+ navigation apps, so the duplicate
+    // was a maintenance liability (every setup change had to land in both
+    // branches) with no runtime benefit. We keep only the window-aware
+    // variant.
+    //
+    // ── IMPORTANT — why the MKMapView is NOT removed ─────────────────
+    //
+    // A natural-looking simplification is to drop the
+    // MKMapView(frame: window.bounds) block on the grounds that
+    // "CPMapTemplate handles CarPlay map rendering." That assumption is
+    // wrong. Per Apple's CarPlay docs: CPMapTemplate is an OVERLAY
+    // controller — it manages map buttons, navigation alerts, trip
+    // estimates, safe-area insets, and the navigation bar. It does NOT
+    // render the underlying map. The app must draw the map itself onto
+    // `CPWindow` (typically with an MKMapView; Mapbox or a custom Metal
+    // renderer also work).
+    //
+    // Without this MKMapView, CarPlay shows a fully-black surface behind
+    // the CPMapTemplate overlay chrome. Verified via inference from
+    // Apple's Navigation-template documentation and the production-tested
+    // behavior of the existing window path (removing the MKMapView would
+    // regress the production navigation view). Keep it.
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
         didConnect interfaceController: CPInterfaceController,
         to window: CPWindow
     ) {
         self.interfaceController = interfaceController
-        
-        let vm = AppDelegate.sharedDriveViewModel
-        
-        // Configure a dedicated MKMapView for the CarPlay window
+        installMapViewInCarPlayWindow(window)
+        setupNavigationRoot(interfaceController: interfaceController)
+    }
+
+    // MARK: - Setup Helpers
+    //
+    // Extracted from the connection method so future re-attach flows
+    // (debug replays, app-extension hand-off, voice-flow re-init) can
+    // reuse the same wiring without duplicating setup logic.
+
+    /// Configure the dedicated MKMapView backing the CarPlay window.
+    /// CPMapTemplate overlays sit on top of this view; without it, CarPlay
+    /// shows a black background behind the overlay chrome (see MARK above).
+    private func installMapViewInCarPlayWindow(_ window: CPWindow) {
         let mapView = MKMapView(frame: window.bounds)
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         mapView.overrideUserInterfaceStyle = .dark
         mapView.showsUserLocation = true
         mapView.userTrackingMode = .followWithHeading
         mapView.showsCompass = true
-        
+
         // Use modern MapKit configuration with realistic 3D buildings
         if #available(iOS 16.0, *) {
             let config = MKStandardMapConfiguration(elevationStyle: .realistic, emphasisStyle: .muted)
@@ -63,19 +78,30 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         } else {
             mapView.mapType = .mutedStandard
         }
-        
-        // Clean POI filter for driving
+
+        // Clean POI filter for driving — only categories a driver
+        // genuinely needs while in motion.
         mapView.pointOfInterestFilter = MKPointOfInterestFilter(including: [
             .gasStation, .parking, .hospital, .police
         ])
-        
+
         self.carPlayMapView = mapView
         window.rootViewController = UIViewController()
         window.rootViewController?.view.addSubview(mapView)
-        
-        // Configure Primary Root Layout
-        navigationRoot = CarPlayNavigationRootTemplate(interfaceController: interfaceController, viewModel: vm)
-        
+    }
+
+    /// Build the navigation root and set it as the interface controller's
+    /// primary template. The explicit guard before `mapTemplate` is
+    /// preserved from the original code — it short-circuits if the
+    /// navigation-root constructor ever races (e.g., the
+    /// dismantle-on-foreground queue is still mid-flight).
+    private func setupNavigationRoot(interfaceController: CPInterfaceController) {
+        let vm = AppDelegate.sharedDriveViewModel
+        navigationRoot = CarPlayNavigationRootTemplate(
+            interfaceController: interfaceController,
+            viewModel: vm
+        )
+
         // Explicit check before accessing mapTemplate to avoid potential race condition
         guard let root = navigationRoot else { return }
         let speedMapTemplate = root.mapTemplate
@@ -103,11 +129,37 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     }
     
     // MARK: - Disconnection
+    //
+    // Single modern disconnect (iOS 14+). The previous code had two
+    // parallel overloads each doing only PART of the cleanup — the legacy
+    // `didDisconnectInterfaceController:` stopped recording/navigation
+    // and nilled the interfaceController; the modern `didDisconnect:from:`
+    // only torn down the MKMapView. CarPlay can dispatch both in some
+    // disconnect scenarios, so anything assigned to either branch ran
+    // twice. We now own the full teardown in ONE method, with the
+    // per-half work split into clearly-named private helpers.
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
-        didDisconnectInterfaceController interfaceController: CPInterfaceController
+        didDisconnect interfaceController: CPInterfaceController,
+        from window: CPWindow
     ) {
-        // Handle Disconnect logic (e.g., stop nav, pausing recorders)
+        tearDownMapView()
+        tearDownNavigation()
+    }
+
+    /// Remove the CarPlay-window MKMapView from its superview and drop
+    /// our reference so the view controller holding the CPWindow
+    /// releases promptly.
+    private func tearDownMapView() {
+        carPlayMapView?.removeFromSuperview()
+        carPlayMapView = nil
+    }
+
+    /// Stop any active drive recording and in-progress navigation, then
+    /// nil out the scene-shell references. Mirrors the single-flight
+    /// contract documented above — CarPlay runs this exact body once
+    /// per disconnect.
+    private func tearDownNavigation() {
         let vm = AppDelegate.sharedDriveViewModel
         if vm.isRecording {
             vm.endSession()
@@ -117,20 +169,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
                 await vm.endNavigation()
             }
         }
-        
-        self.carPlayMapView = nil
-        self.interfaceController = nil
-        self.navigationRoot = nil
-    }
-    
-    func templateApplicationScene(
-        _ templateApplicationScene: CPTemplateApplicationScene,
-        didDisconnect interfaceController: CPInterfaceController,
-        from window: CPWindow
-    ) {
-        // Clean up the window-based connection
-        self.carPlayMapView?.removeFromSuperview()
-        self.carPlayMapView = nil
+
         self.interfaceController = nil
         self.navigationRoot = nil
     }

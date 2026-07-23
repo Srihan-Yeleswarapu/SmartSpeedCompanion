@@ -136,7 +136,7 @@ public struct TutorialView: View {
         if isReplaying {
             dismiss()
         } else {
-            appState.hasCompletedTutorial = true
+            appState.onboardingStep = appState.onboardingStep.nextCase
         }
     }
 }

@@ -36,7 +36,7 @@ public struct TutorialTransitionView: View {
                         Button(action: {
                             withAnimation {
                                 // Proceed to tutorial flag
-                                appState.hasSeenTutorialTransition = true
+                                appState.onboardingStep = appState.onboardingStep.nextCase
                             }
                         }) {
                             Text("I Understand")

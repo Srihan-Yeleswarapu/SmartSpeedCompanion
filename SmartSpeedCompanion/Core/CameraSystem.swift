@@ -2,6 +2,63 @@ import Foundation
 import MapKit
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - Camera tuning source
+//
+// The three lookup tables used by `CameraDecisionEngine.computeTarget(...)`
+// — `altitudeLUT`, `pitchLUT`, and `roadTypeMultiplierLUT` — are stored in
+// `SmartSpeedCompanion/Resources/CameraTuning.json` so they can be tuned
+// without touching Swift code. At runtime they are loaded from the main
+// bundle on first reference (see `CameraTuning.loadTuning()`). The hardcoded
+// values below are preserved verbatim as compile-time fallbacks and ship in
+// the binary, so a malformed or missing JSON falls back to the last-known-
+// good behaviour without any user-visible regression.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// One (x, y) point on a camera-tuning lookup table.
+public struct LUTPoint: Codable, Sendable {
+    public let x: Double
+    public let y: Double
+}
+
+/// Decoded shape of `CameraTuning.json`. Each property is an array of points
+/// that `CameraDecisionEngine` runs through `smoothInterpolate(x:knots:)`.
+public struct CameraTuning: Codable, Sendable {
+    public let altitudeLUT: [LUTPoint]
+    public let pitchLUT: [LUTPoint]
+    public let roadTypeMultiplierLUT: [LUTPoint]
+
+    /// Read and decode the bundled `CameraTuning.json`. Returns `nil` if the
+    /// resource is missing or malformed; callers should fall back to the
+    /// compile-time constants defined alongside the LUTs.
+    public static func loadTuning() -> CameraTuning? {
+        guard let url = Bundle.main.url(forResource: "CameraTuning", withExtension: "json") else {
+            return nil
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(CameraTuning.self, from: data)
+        } catch {
+            DebugLogger.shared.log("CameraTuning.json decode FAILED: \(error.localizedDescription). Using hardcoded fallback LUTs.")
+            return nil
+        }
+    }
+
+    /// Convert a `[LUTPoint]` JSON-decoded array into the
+    /// `[(x: Double, y: Double)]` tuple array that
+    /// `CameraDecisionEngine.smoothInterpolate(x:knots:)` already accepts,
+    /// or return `fallback` when the bundle resource is unavailable.
+    /// `static let` in Swift is computed lazily and cached on first access,
+    /// so this is a one-shot cost per LUT per app launch.
+    public static func resolveLUT(
+        _ keyPath: KeyPath<CameraTuning, [LUTPoint]>,
+        fallback: [(x: Double, y: Double)]
+    ) -> [(x: Double, y: Double)] {
+        guard let tuning = loadTuning() else { return fallback }
+        return tuning[keyPath: keyPath].map { ($0.x, $0.y) }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MARK: - CameraContext
 //
 // A stateless snapshot of everything the decision engine needs to compute the
@@ -153,11 +210,14 @@ public struct TargetCameraState: Sendable {
 //  15. Ambient Micro-Movement               (ANIMATOR — stateful)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-public struct CameraDecisionEngine: Sendable {
-
-    // ── Key points for altitude interpolation ──────────────────────────────
+public struct CameraDecisionEngine: Sendable {    // ── Key points for altitude interpolation ──────────────────────────────
     // (speed_mph, altitude_m)
-    private static let altitudeLUT: [(x: Double, y: Double)] = [
+    //
+    // The hardcoded arrays below are fallbacks. The primary source of these
+    // values is `CameraTuning.json` in the app bundle (see file header). If
+    // `CameraTuning.loadTuning()` returns `nil` (bundle resource missing or
+    // malformed), we fall back to the original values.
+    private static let fallbackAltitudeLUT: [(x: Double, y: Double)] = [
         (0,   300),
         (10,  380),
         (20,  550),
@@ -176,7 +236,7 @@ public struct CameraDecisionEngine: Sendable {
 
     // ── Key points for pitch interpolation ─────────────────────────────────
     // (speed_mph, pitch_degrees)
-    private static let pitchLUT: [(x: Double, y: Double)] = [
+    private static let fallbackPitchLUT: [(x: Double, y: Double)] = [
         (0,   0),
         (5,   18),
         (15,  28),
@@ -190,7 +250,7 @@ public struct CameraDecisionEngine: Sendable {
     ]
 
     // ── Road-type altitude multipliers keyed by speed limit ────────────────
-    private static let roadTypeMultiplierLUT: [(x: Double, y: Double)] = [
+    private static let fallbackRoadTypeMultiplierLUT: [(x: Double, y: Double)] = [
         (0,   1.00),   // unknown — neutral, no adjustment
         (25,  0.85),   // residential / school zone
         (35,  0.95),   // city collector
@@ -199,6 +259,20 @@ public struct CameraDecisionEngine: Sendable {
         (65,  1.30),   // interstate
         (80,  1.40)    // high-speed interstate
     ]
+
+    /// Materialised at first reference; cached thereafter (Swift `static let`
+    /// semantics). Reads from `CameraTuning.json` and converts `[LUTPoint]`
+    /// into the ((x: Double, y: Double)) tuple shape that
+    /// `smoothInterpolate(x:knots:)` already accepts.
+    private static let altitudeLUT: [(x: Double, y: Double)] =
+        CameraTuning.resolveLUT(\.altitudeLUT, fallback: fallbackAltitudeLUT)
+
+    private static let pitchLUT: [(x: Double, y: Double)] =
+        CameraTuning.resolveLUT(\.pitchLUT, fallback: fallbackPitchLUT)
+
+    private static let roadTypeMultiplierLUT: [(x: Double, y: Double)] =
+        CameraTuning.resolveLUT(\.roadTypeMultiplierLUT, fallback: fallbackRoadTypeMultiplierLUT)
+ 
 
     // ── Turn proximity: altitude multiplier ────────────────────────────────
     // Smooth decay from 1.0 at 1000 m down to ~0.28 at 0 m.
@@ -491,7 +565,9 @@ public struct CameraDecisionEngine: Sendable {
 
         // ── 1. Classify the mode (informational / debug logging) ─────
         let mode = classifyMode(context)
+        #if DEBUG
         DebugLogger.shared.log("CAM mode: \(mode.rawValue) spd=\(Int(context.speed)) dtt=\(Int(context.distanceToNextTurn))")
+        #endif
 
         // ── 2. Compute base altitude from speed ───────────────────────
         altitude = computeBaseAltitude(speed: context.speed, limit: context.speedLimit,
@@ -871,7 +947,9 @@ public final class CameraAnimator {
             // The deadband + cooldown gate below will naturally hold position.
             target.priority = max(target.priority, 1)
             target.requestedAnimationTau = 1.0 // very slow, almost frozen
+            #if DEBUG
             DebugLogger.shared.log("CAM post-turn hold \(Int(postTurnHoldUntil.timeIntervalSince(now)))s left")
+            #endif
         }
 
         // NEW BEHAVIOR #12 — Route Initiation Overview Fly-Out
@@ -885,7 +963,9 @@ public final class CameraAnimator {
                 target.altitude *= routeInitAltitudeBoost
                 target.priority = max(target.priority, 2)
                 target.requestedAnimationTau = 0.3 // snappier for the fly-out
+                #if DEBUG
                 DebugLogger.shared.log("CAM route-init fly-out \(String(format: "%.2f", routeInitAltitudeBoost))×")
+                #endif
             } else {
                 routeInitAltitudeBoost = 1.0
             }
@@ -904,7 +984,9 @@ public final class CameraAnimator {
                 // ramp-zoomed level — just keep it there.
                 target.altitude = max(target.altitude, displayAltitude * 0.98)
                 target.priority = max(target.priority, 1)
+                #if DEBUG
                 DebugLogger.shared.log("CAM merge hold (phase 1/2)")
+                #endif
             } else if mergeElapsed < mergeHoldDuration + mergeRecoveryDuration {
                 // Recovery phase: smooth blend from held altitude toward computed target
                 let recoverElapsed = mergeElapsed - mergeHoldDuration
@@ -913,7 +995,9 @@ public final class CameraAnimator {
                 let desiredAlt = max(target.altitude, displayAltitude * 0.98)
                 target.altitude = displayAltitude + (desiredAlt - displayAltitude) * s
                 target.priority = max(target.priority, 1)
+                #if DEBUG
                 DebugLogger.shared.log("CAM merge recovery \(String(format: "%.0f", target.altitude))m")
+                #endif
             } else {
                 // Fully recovered
                 mergeHoldStartTime = nil
@@ -923,7 +1007,9 @@ public final class CameraAnimator {
         // NEW BEHAVIOR #14 — Highway Deceleration Slow Camera
         if now < highwayDecelUntil {
             target.requestedAnimationTau = 0.8 // much slower
+            #if DEBUG
             DebugLogger.shared.log("CAM highway decel slow (tau=0.8)")
+            #endif
         }
 
         // NEW BEHAVIOR #10 — Free-Drive Exploration Horizon
@@ -953,7 +1039,9 @@ public final class CameraAnimator {
                 let oscillation = sin(phase) * ambientOscillationAmplitude
                 target.pitch += oscillation
                 if Int(phase * 10) % 30 == 0 { // log once per ~3 seconds
+                    #if DEBUG
                     DebugLogger.shared.log("CAM ambient micro-movement")
+                    #endif
                 }
             }
         } else {
@@ -1018,7 +1106,9 @@ public final class CameraAnimator {
             && lastDTT > 0 {
             postTurnHoldUntil = now + postTurnHoldDuration
             isPostTurnHold = true
+            #if DEBUG
             DebugLogger.shared.log("CAM turn completed → post-turn hold 1.5s")
+            #endif
         }
         // Expire the hold naturally
         if now >= postTurnHoldUntil {
@@ -1031,7 +1121,9 @@ public final class CameraAnimator {
         if context.isNavigating && !wasNavigating {
             routeStartTime = now
             routeInitAltitudeBoost = 2.5
+            #if DEBUG
             DebugLogger.shared.log("CAM route initiated → fly-out 2.5×")
+            #endif
         }
         wasNavigating = context.isNavigating
 
@@ -1043,7 +1135,9 @@ public final class CameraAnimator {
             // Just left ramp/merge state
             if mergeHoldStartTime == nil {
                 mergeHoldStartTime = now
+                #if DEBUG
                 DebugLogger.shared.log("CAM ramp complete → merge hold 2s + 2s recovery")
+                #endif
             }
         }
         wasOnRamp = isOnRamp
@@ -1055,7 +1149,9 @@ public final class CameraAnimator {
         if wasHighwaySpeed && context.speed < 35 && context.isNavigating {
             highwayDecelUntil = now + 3.0
             wasHighwaySpeed = false
+            #if DEBUG
             DebugLogger.shared.log("CAM highway exit → slow camera 3s")
+            #endif
         }
     }
 
@@ -1107,7 +1203,9 @@ public final class CameraAnimator {
             return
         }
         if abs(target.altitude - prev.altitude) > 20 || abs(target.pitch - prev.pitch) > 3 {
+            #if DEBUG
             DebugLogger.shared.log("CAM [\(reason)]: \(Int(target.altitude))m \(Int(target.pitch))°")
+            #endif
             lastLoggedTarget = target
         }
     }

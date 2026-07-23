@@ -17,9 +17,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     public let speedEngine: SpeedEngine
     public let alertEngine: AlertEngine
     public let sessionRecorder: SessionRecorder
-    private var lastRerouteTime: Date = .distantPast
-    private var isCalculatingReroute: Bool = false
-    private let offRouteThreshold: CLLocationDistance = 20.0 // 20 meters (~66 feet)
+    /// Standalone navigation coordinator owning route-calc, turn-by-turn
+    /// progression, off-route detection, voice, ETA, and the reroute timer.
+    /// See `NavigationCoordinator.swift`.
+    @Published public var navigationCoordinator = NavigationCoordinator()
     
     // MARK: - Core Driving State
     /// User's current speed in MPH (always converted to MPH for the logic layer).
@@ -64,12 +65,26 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     @Published public var isNavigating: Bool = false {
         didSet { updateIdleTimer() }
     }
-    /// The MapKit route object being followed.
-    @Published public var currentRoute: MKRoute? = nil
-    /// The destination selected by the user.
-    @Published public var destination: MKMapItem? = nil
-    // Core Driving State
-    @Published public var destinationItem: MKMapItem? = nil
+    /// The MapKit route object being followed. Owned by NavigationCoordinator;
+    /// writable get/set so legacy call sites that pass through `viewModel`
+    /// remain source-compatible. Reactivity flows through `init()`'s
+    /// `navigationCoordinator.objectWillChange → DriveViewModel.objectWillChange`
+    /// sink.
+    public var currentRoute: MKRoute? {
+        get { navigationCoordinator.currentRoute }
+        set { navigationCoordinator.currentRoute = newValue }
+    }
+    /// The destination selected by the user. Owned by NavigationCoordinator.
+    public var destination: MKMapItem? {
+        get { navigationCoordinator.destination }
+        set { navigationCoordinator.destination = newValue }
+    }
+    /// Destination mirror used by the 35 m off-route detector and the
+    /// 5-minute faster-route poll. Owned by NavigationCoordinator.
+    public var destinationItem: MKMapItem? {
+        get { navigationCoordinator.destinationItem }
+        set { navigationCoordinator.destinationItem = newValue }
+    }
     /// Resolved search results for the user's manual query.
     @Published public var searchResults: [MKMapItem] = []
     /// Real-time search completion suggestions (addresses/POIs).
@@ -81,13 +96,16 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// History of recent search query strings.
     @Published public var recentSearches: [String] = []
     
-    // MARK: - Route Selection State
-    /// Indicates if we are showing the alternate route selection screen.
+    // MARK: - Route Selection State    /// Indicates if we are showing the alternate route selection screen.
     @Published public var isSelectingRoute: Bool = false
-    /// Indicates if the system is currently calculating a reroute.
-    @Published public var isRerouting: Bool = false
+    /// Indicates if the system is currently calculating a reroute. Owned by
+    /// NavigationCoordinator.
+    public var isRerouting: Bool {
+        get { navigationCoordinator.isRerouting }
+        set { navigationCoordinator.isRerouting = newValue }
+    }
     /// The list of alternate routes returned by MKDirections.
-    @Published public var availableRoutes: [MKRoute] = []
+    @Published public var availableRoutes: [MKRoute] = [] 
     
     // MARK: - Map Interaction State
     /// True if the user has manually panned the map away from current tracking.
@@ -100,14 +118,28 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     public var lastSessionToPotentialDelete: DriveSession? = nil
  
     // MARK: - Guidance Details
-    /// Spoken and displayed text for the current navigation step (e.g., "Turn Left").
-    @Published public var nextManeuverInstruction: String = ""
-    /// SFSymbol name representing the type of turn or move.
-    @Published var nextManeuverImageName: String = "arrow.up"
-    /// Meters remaining until the next maneuver point.
-    @Published public var distanceToNextTurn: CLLocationDistance = 0
-    /// Estimated time of arrival calculated based on expected route time and progress.
-    @Published public var eta: Date? = nil
+    // The following properties are owned by NavigationCoordinator. They are
+    // exposed as get/set forwarders on DriveViewModel so existing SwiftUI
+    // bindings (`viewModel.nextManeuverInstruction`, etc.) keep compiling
+    // unchanged. Changes originating in the coordinator flow back to
+    // DriveViewModel subscribers through an `objectWillChange` sink installed
+    // in `DriveViewModel.init()`.
+    public var nextManeuverInstruction: String {
+        get { navigationCoordinator.nextManeuverInstruction }
+        set { navigationCoordinator.nextManeuverInstruction = newValue }
+    }
+    public var nextManeuverImageName: String {
+        get { navigationCoordinator.nextManeuverImageName }
+        set { navigationCoordinator.nextManeuverImageName = newValue }
+    }
+    public var distanceToNextTurn: CLLocationDistance {
+        get { navigationCoordinator.distanceToNextTurn }
+        set { navigationCoordinator.distanceToNextTurn = newValue }
+    }
+    public var eta: Date? {
+        get { navigationCoordinator.eta }
+        set { navigationCoordinator.eta = newValue }
+    }
 
     /// Remaining route distance in meters to the active destination.
     /// Updated:
@@ -121,14 +153,20 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// keep the same property fresh. Reset to 0 in `clearNativeMapCache()`
     /// (fresh-drive) and in `CarPlayNavigationManager.endNavigation()`
     /// (route ended).
-    @Published public var distanceToDestination: CLLocationDistance = 0
+    public var distanceToDestination: CLLocationDistance {
+        get { navigationCoordinator.distanceToDestination }
+        set { navigationCoordinator.distanceToDestination = newValue }
+    }
 
     // MARK: - Native MapKit Features (see Apple Maps Server API notes in code comments)
 
     /// Coordinate of the upcoming maneuver (last point of the current route step).
     /// Consumed by `LiveMapView` to drop a maneuver annotation while navigating.
     /// (Look Around fetching was removed in TestFlight 2.2.0 / FB10.)
-    @Published public var nextManeuverCoordinate: CLLocationCoordinate2D? = nil
+    public var nextManeuverCoordinate: CLLocationCoordinate2D? {
+        get { navigationCoordinator.nextManeuverCoordinate }
+        set { navigationCoordinator.nextManeuverCoordinate = newValue }
+    }
 
     /// Last few MKMapItems returned by a "nearby amenities" category search.
     @Published public var nearbyAmenities: [MKMapItem] = []
@@ -357,10 +395,47 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         DebugLogger.shared.log("DriveViewModel: auto-started simulator loop (iOS Simulator detected).")
         #endif
         #endif
-        
-        self.speechSynthesizer.delegate = self
-        setupAudioSession() // Prepare the singleton AVAudioSession
-        
+
+        // Wire NavigationCoordinator with production collaborators. The
+        // closures keep the coordinator free of any DriveViewModel
+        // reference so it remains independently unit-testable. The
+        // objectWillChange sink below forwards navigation publishes
+        // into DriveViewModel so SwiftUI views reading forwarded
+        // properties (e.g. `viewModel.nextManeuverImageName`) re-render
+        // when the coordinator publishes — without this, computed
+        // forwarders would only re-read on DriveViewModel's own
+        // objectWillChange events.
+        self.navigationCoordinator = NavigationCoordinator(
+            isRecordingProvider: { [weak self] in self?.isRecording ?? false },
+            nearbyCamerasProvider: { [weak self] in self?.nearbyCameras ?? [] },
+            availableRoutesProvider: { [weak self] in self?.availableRoutes ?? [] },
+            availableRoutesSetter: { [weak self] routes in self?.availableRoutes = routes },
+            onRerouteRequest: { [weak self] dest in
+                guard let self else { return }
+                await self.selectDestinationAndCalculateRoutes(to: dest, isRerouting: true)
+                if let first = self.availableRoutes.first {
+                    await self.startNavigation(with: first, isReroute: true)
+                } else {
+                    self.navigationCoordinator.isRerouting = false
+                }
+            },
+            startSession: { [weak self] in self?.startSession() },
+            liveActivityStart: { date in
+                #if !targetEnvironment(simulator)
+                LiveActivityManager.shared.startActivity(sessionStartDate: date)
+                #endif
+            },
+            liveActivityEnd: {
+                #if !targetEnvironment(simulator)
+                LiveActivityManager.shared.endActivity()
+                #endif
+            },
+            sessionStartTimeProvider: { [weak self] in self?.sessionStartTime }
+        )
+        navigationCoordinator.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
         completer.delegate = self
         completer.resultTypes = [.pointOfInterest, .address]
         
@@ -442,16 +517,16 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                         await self?.refreshCurrentRoadName(at: coord)
                     }
                 }
-                // Advance turn-by-turn guidance
+                // Advance turn-by-turn guidance (delegated to NavigationCoordinator).
                 if self.isNavigating {
-                    self.updateNavigationProgress(at: location)
+                    self.navigationCoordinator.updateNavigationProgress(at: location)
                 }
                 // Ensure Dynamic Island / Lock Screen stays fresh
                 if self.isRecording || self.isNavigating {
                     self.updateLiveActivity()
                 }
-                if self.currentRoute != nil {
-                    self.checkOffRouteStatus(location)
+                if self.navigationCoordinator.currentRoute != nil {
+                    self.navigationCoordinator.checkOffRouteStatus(at: location)
                 }
                 // Sync position to Firebase for potential multi-device/dashboard features
                 AuthenticationManager.shared.updateLastLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
@@ -637,36 +712,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     /// Requests route options from MapKit and triggers the selection view.
     public func selectDestinationAndCalculateRoutes(to destination: MKMapItem, isRerouting: Bool = false) async {
-        self.destination = destination
         saveRecentSearch(destination.name ?? "Unknown Location")
-        
-        let request = MKDirections.Request()
-        request.source = MKMapItem.forCurrentLocation()
-        request.destination = destination
-        request.transportType = .automobile
-        request.requestsAlternateRoutes = !isRerouting // Fast 1-route calculation if rerouting
-        request.departureDate = .now 
-        
-        if UserDefaults.standard.bool(forKey: "avoidHighways") {
-            request.highwayPreference = .avoid
-        }
-        
-        do {
-            let directions = MKDirections(request: request)
-            DebugLogger.shared.log("Calculating routes to: \(destination.name ?? "Unknown")")
-            let response = try await directions.calculate()
-            self.availableRoutes = response.routes
-            DebugLogger.shared.log("Found \(response.routes.count) available routes\(isRerouting ? " (Fast Reroute)" : "")")
-            if !isRerouting {
-                self.isSelectingRoute = true
-            }
-        } catch {
-            DebugLogger.shared.log("Route calculation FAILED: \(error.localizedDescription)")
-            print("Route error: \(error)")
-        }
-        
-        if isRerouting {
-            self.isRerouting = false
+        await navigationCoordinator.selectDestinationAndCalculateRoutes(to: destination, isRerouting: isRerouting)
+        if !isRerouting {
+            self.isSelectingRoute = true
         }
     }
     
@@ -674,89 +723,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     /// Commences turn-by-turn guidance on a specific path.
     public func startNavigation(with route: MKRoute, isReroute: Bool = false) async {
-        DebugLogger.shared.log("Navigation \(isReroute ? "REROUTED" : "STARTED") using Route (\(Int(route.distance))m)")
         self.isSelectingRoute = false
         self.isNavigating = true
-        self.currentRoute = route
-        self.currentStepIndex = 0
-        
-        // Reset flags so we can re-announce the approach to the first turn
-        self.stepStageFlags.removeAll()
-        self.lastDistanceToTurn = nil
-        self.spokenCameraKeys.removeAll()
-        
-        startRerouteTimer() // Every 5 minutes check for a faster path
-        self.eta = Date().addingTimeInterval(route.expectedTravelTime)
-        // Initialize remaining-route distance right at start so Siri's
-        // `GetDistanceToDestinationIntent` answers correctly even before
-        // the first `updateNavigationProgress` location tick fires
-        // (~1–10 s gap after `startNavigation` runs). Without this, the
-        // first Siri response was "You're almost there — 0 meters".
-        self.distanceToDestination = route.distance
-        
-        // Automatically start recording the drive session if it hasn't been started manually
-        if !isRecording {
-            startSession()
-            DebugLogger.shared.log("Session AUTO-STARTED with navigation")
-        }
-
-        // Cache speed limits for the route points to ensure we stay offline-capable during the drive
-        await cacheRouteSegments(route)
-
-        // Inform the CarPlay/UI layer that navigation is moving
-        if let dest = self.destination {
-            await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
-        }
-        
-        // Setup initial UI text based on the first meaningful step
-        if !route.steps.isEmpty {
-            var targetIndex = 0
-            while targetIndex < route.steps.count && route.steps[targetIndex].instructions.isEmpty {
-                targetIndex += 1
-            }
-            if targetIndex >= route.steps.count { targetIndex = 0 }
-            
-            self.currentStepIndex = targetIndex
-            
-            let activeStep = route.steps[targetIndex]
-            
-            // Look ahead for the actual instruction if the current one is 'Proceed to route'
-            var displayInstruction = activeStep.instructions
-            if instructionIsGenericLabel(displayInstruction) && targetIndex + 1 < route.steps.count {
-                displayInstruction = route.steps[targetIndex + 1].instructions
-            }
-            
-            self.nextManeuverInstruction = displayInstruction
-            self.nextManeuverImageName = getImageForManeuver(displayInstruction)
-        }
-
-        // One-shot spoken ETA + distance announcement on initial navigation
-        // start. Skips on reroute so we don't speak "Starting route to X"
-        // every time the algorithm picks a faster path mid-drive. Uses
-        // formatDistance() so the units match the user's chosen measurement
-        // system, and DateFormatter(.short) so the time renders in 12-h or
-        // 24-h per the device locale. announce() already honors the
-        // voiceNavEnabled user toggle so a quieted user hears nothing.
-        if !isReroute, let etaValue = self.eta {
-            let destinationName = (destination?.name?.isEmpty == false)
-                ? destination!.name!
-                : "your destination"
-            let distanceText = formatDistance(route.distance)
-            let etaFormatter = DateFormatter()
-            etaFormatter.timeStyle = .short
-            etaFormatter.dateStyle = .none
-            let timeText = etaFormatter.string(from: etaValue)
-            announce("Starting route to \(destinationName), \(distanceText), arriving at \(timeText).")
-        }
-
-        // Display the route in a Live Activity on the lock screen.
-        // Live Activities don't render in the iOS Simulator; gate the call
-        // so the simulator path is silent (matches the startSession gate).
-        #if !targetEnvironment(simulator)
-        if #available(iOS 16.1, *) {
-            LiveActivityManager.shared.startActivity(sessionStartDate: sessionStartTime ?? Date())
-        }
-        #endif
+        await navigationCoordinator.startNavigation(with: route, isReroute: isReroute)
     }
 
     /// Grabs coordinates along the route and pre-fetches speed limit data for those points.
@@ -812,10 +781,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     /// Alternative start navigation that triggers the calculation internally (legacy/direct support).
     public func startNavigation(to destination: MKMapItem) async {
-        self.destination = destination
         self.isNavigating = true
-        if !isRecording { startSession() }
-        await navigationDelegate?.startNavigationTrigger(to: destination, route: nil)
+        await navigationCoordinator.startNavigation(to: destination)
     }
     
     /// Persianality: Track recently searched locations to show in search history.
@@ -849,32 +816,17 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
     }
 
-    /// Terminates the current navigation session.
+    /// Terminates the current navigation session. The orchestration
+    /// pipeline lives here: set `isNavigating = false`, ask the coordinator
+    /// to clean its own state and notify the navigation delegate, then end
+    /// the recording session if one was running. Live-activity teardown
+    /// is delegated to the coordinator via the `liveActivityEnd` closure
+    /// in `init()`.
     public func endNavigation() async {
         self.isNavigating = false
-        self.currentRoute = nil
-        rerouteTimer?.invalidate()
-        rerouteTimer = nil
-        self.stepStageFlags.removeAll()
-        self.spokenCameraKeys.removeAll()
-        // Reset the heading-delta baseline so the next drive starts clean.
-        self.lastSpeedLimitFetchHeading = nil
-        // Drop maneuver scratch state so the next navigation starts clean.
-        // (Look Around scratch state removed in TestFlight 2.2.0 / FB10.)
-        self.nextManeuverCoordinate = nil
-        await navigationDelegate?.endNavigationTrigger()
-        
-        // Requirement 4: If we end directions, we end the session (recording).
+        await navigationCoordinator.endNavigation()
         if isRecording {
             endSession()
-        }
-        
-        if !isRecording {
-            // Live Activities don't render in the iOS Simulator; the matching
-            // start call is gated, so gate the stop call to keep the path silent.
-            #if !targetEnvironment(simulator)
-            LiveActivityManager.shared.endActivity()
-            #endif
         }
     }
     
@@ -1743,41 +1695,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
 
     // MARK: - Rerouting Logic
-    private func checkOffRouteStatus(_ location: CLLocation) {
-        guard let route = currentRoute, !isCalculatingReroute else { return }
-        
-        let distance = distanceToPolyline(location, polyline: route.polyline)
-        
-        if distance > 35.0 { 
-            let timeSinceLastReroute = Date().timeIntervalSince(lastRerouteTime)
-            
-            if timeSinceLastReroute > 3.0 { 
-                DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting.")
-                lastRerouteTime = Date()
-                isCalculatingReroute = true
-                
-                Task { @MainActor in
-                    // FIXED: Using destinationItem which is defined at line 72
-                    if let dest = self.destinationItem {
-                        await self.startNavigation(to: dest) 
-                    }
-                    self.isCalculatingReroute = false
-                }
-            }
-        }
-    }
-
-    private func distanceToPolyline(_ location: CLLocation, polyline: MKPolyline) -> CLLocationDistance {
-        var minDistance: CLLocationDistance = .greatestFiniteMagnitude
-        let points = polyline.points()
-        for i in stride(from: 0, to: polyline.pointCount, by: 5) {
-            let routeLocation = CLLocation(latitude: points[i].coordinate.latitude, longitude: points[i].coordinate.longitude)
-            let distance = location.distance(from: routeLocation)
-            if distance < minDistance { minDistance = distance }
-            if minDistance < 10 { return minDistance }
-        }
-        return minDistance
-    }
+    // NOTE: checkOffRouteStatus and distanceToPolyline were moved to
+    // NavigationCoordinator. The private copies that lived here referenced
+    // isCalculatingReroute and lastRerouteTime which are now owned by the
+    // coordinator. The GPS sink calls navigationCoordinator.checkOffRouteStatus(at:)
+    // directly, so this dead code is safe to remove.
 } // <--- THIS BRACE CLOSES THE DRIVEVIEWMODEL CLASS
 
 // MARK: - MKLocalSearchCompleterDelegate
@@ -1795,12 +1717,6 @@ extension DriveViewModel: MKLocalSearchCompleterDelegate {
         // Log on background thread, no UI update needed
         print("Completer error: \(error)")
     }
-}
-
-public protocol NavigationActionDelegate: AnyObject {
-    func startNavigationTrigger(to destination: MKMapItem, route: MKRoute?) async
-    func endNavigationTrigger() async
-    func searchDestinationTrigger(_ query: String) async -> [MKMapItem]
 }
 
 extension CLLocation {
