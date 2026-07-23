@@ -186,8 +186,6 @@ targets:
         # validation surfaces when these are missing.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
         # UISupportedInterfaceOrientations~ipad intentionally omitted — the app is iPhone-only
         # (TARGETED_DEVICE_FAMILY=1 in settings.base). Including this key would be a no-op
         # but removing it prevents App Store Connect ingestion from flagging a
