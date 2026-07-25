@@ -15,6 +15,11 @@ public struct SettingsView: View {
     @AppStorage("measurementSystem") var measurementSystem: String = "Imperial"
     @AppStorage("gpsAccuracyMode") var gpsAccuracyMode: String = "navigation"
 
+    // ── Fuel Estimator Settings ─────────────────────────────────
+    @AppStorage("vehicleFuelEfficiency") var vehicleFuelEfficiency: Double = 25.0
+    @AppStorage("vehicleFuelUnit") var vehicleFuelUnit: String = "MPG"
+    @AppStorage("localFuelPrice") var localFuelPrice: Double = 3.50
+
     // Native MapKit surface toggles — no server-side dependencies.
     @AppStorage("mapStyle") private var mapStyle: String = "mutedDark"
     @AppStorage("showApplePOIs") private var showApplePOIs: Bool = false
@@ -232,6 +237,35 @@ public struct SettingsView: View {
                 }
                 .listRowBackground(DesignSystem.bgPanel)
 
+                // MARK: - VEHICLE section
+                // Fuel estimator settings — efficiency and local fuel price.
+                Section(header: Text("VEHICLE").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                    let isMetric = measurementSystem == "Metric"
+                    let effLabel = isMetric ? "L/100km" : "MPG"
+                    let priceLabel = isMetric ? "$/L" : "$/gal"
+                    
+                    VStack(alignment: .leading) {
+                        Text("Fuel Efficiency: \(Int(vehicleFuelEfficiency)) \(effLabel)")
+                            .foregroundColor(.white)
+                        Slider(value: $vehicleFuelEfficiency, in: isMetric ? 2...30 : 10...100, step: 1)
+                            .tint(DesignSystem.cyan)
+                    }
+                    
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("Fuel Price")
+                                .foregroundColor(.white)
+                            Spacer()
+                            Text(String(format: "$%.2f \(priceLabel)", localFuelPrice))
+                                .foregroundColor(DesignSystem.cyan)
+                                .font(.system(size: 15, weight: .bold))
+                        }
+                        Slider(value: $localFuelPrice, in: isMetric ? 0.5...2.5 : 2.0...6.0, step: 0.05)
+                            .tint(DesignSystem.cyan)
+                    }
+                }
+                .listRowBackground(DesignSystem.bgPanel)
+                
                 // MARK: - NETWORK & DATA section (always visible)
                 // Driving the speed-limit pipeline requires EITHER live
                 // network (ArcGIS HPMS + OSM Overpass) OR local coverage

@@ -184,6 +184,32 @@ private struct AnalyticsContentView: View {
                 SummaryStatsView(viewModel: viewModel)
                     .padding(.horizontal)
 
+                // Fuel Cost Card — shown for sessions with GPS readings
+                if !session.readings.isEmpty {
+                    let isMetric = SpeedFormatting.isMetric(SpeedFormatting.measurementSystem())
+                    let distanceMi = FuelEstimator.totalDistanceMiles(from: session.readings)
+                    let distanceKm = FuelEstimator.totalDistanceKm(from: session.readings)
+                    let eff = isMetric ? 9.4 : 25.0
+                    let priceGal = 3.50
+                    let priceL = 0.95
+                    
+                    // Read user's fuel settings from UserDefaults (same keys as SettingsView)
+                    let ud = UserDefaults.standard
+                    let userEff = ud.object(forKey: "vehicleFuelEfficiency") as? Double ?? eff
+                    let userPrice = ud.object(forKey: "localFuelPrice") as? Double ?? (isMetric ? priceL : priceGal)
+                    
+                    FuelCostCard(
+                        distanceMiles: distanceMi,
+                        distanceKm: distanceKm,
+                        efficiencyMpg: isMetric ? 25.0 : userEff,
+                        efficiencyLPer100km: isMetric ? userEff : 9.4,
+                        pricePerGallon: isMetric ? 3.50 : userPrice,
+                        pricePerLiter: isMetric ? userPrice : 0.95,
+                        measurementSystem: SpeedFormatting.measurementSystem()
+                    )
+                    .padding(.horizontal)
+                }
+                
                 OverspeedHeatMapView(session: session)
                     .frame(height: 320)
                     .cornerRadius(16)
