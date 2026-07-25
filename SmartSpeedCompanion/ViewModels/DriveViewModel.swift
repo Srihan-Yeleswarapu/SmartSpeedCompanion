@@ -176,19 +176,49 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         objectWillChange.send()
     }
     
-    /// Deletes a profile from SwiftData. Cannot delete the last remaining profile.
+    /// Deletes a profile from SwiftData.
+    ///
+    /// TestFlight 29-tester feedback: "I can't delete a speed profile".
+    /// The previous implementation guarded on `alertProfiles.count > 1`
+    /// which silently refused to delete the user's only — and therefore
+    /// most-common — profile. New users ship with exactly ONE profile
+    /// (`loadAlertProfiles(...)` only seeds one when the store is empty),
+    /// so the swipe-to-delete they could discover was disabled for the
+    /// exact case they tried it on.
+    ///
+    /// New behavior: always delete the requested row, then if the store
+    /// would be left empty, seed a fresh "Default" profile so the speed
+    /// alert system never has zero profiles (every code site assumes at
+    /// least one is `.isActive`). If the deleted profile was active,
+    /// promote either the newly seeded Default or the next remaining
+    /// profile to active.
     public func deleteProfile(_ id: UUID, context: ModelContext) {
-        guard alertProfiles.count > 1 else { return }
-        if let toDelete = alertProfiles.first(where: { $0.id == id }) {
-            let wasActive = toDelete.isActive
-            context.delete(toDelete)
-            try? context.save()
-            alertProfiles.removeAll { $0.id == id }
-            
-            // If the active profile was deleted, activate the first remaining
-            if wasActive, let first = alertProfiles.first {
-                activateProfile(first.id, context: context)
-            }
+        guard let toDelete = alertProfiles.first(where: { $0.id == id }) else { return }
+        let wasActive = toDelete.isActive
+        context.delete(toDelete)
+        try? context.save()
+        alertProfiles.removeAll { $0.id == id }
+
+        if alertProfiles.isEmpty {
+            // Auto-seed a fresh Default. Treated identical to a fresh
+            // install so the user keeps a working alert profile even
+            // after deleting their last one. Same defaults as the
+            // model initializer so thresholds match the rest of the app.
+            //
+            // NOTE: `createNewProfile(...)` flips `isActive: true` on
+            // insert but does NOT mirror that into `speedEngine.userBuffer`
+            // — only `activateProfile(_:context:)` does, and we don't
+            // take that branch when we just wiped the last row. Apply
+            // the new profile's default buffer directly so the alert
+            // engine doesn't keep using the buffer from the now-deleted
+            // profile (code review flagged this as a real, subtle bug).
+            let seeded = createNewProfile(name: "Default", context: context)
+            speedEngine.userBuffer = seeded.defaultBuffer
+        } else if wasActive, let first = alertProfiles.first {
+            // Active profile was deleted but others remain — promote
+            // the first remaining to active so the alert engine keeps
+            // using a non-zero buffer.
+            activateProfile(first.id, context: context)
         }
     }
     

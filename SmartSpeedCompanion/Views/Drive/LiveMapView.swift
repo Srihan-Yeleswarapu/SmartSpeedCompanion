@@ -132,6 +132,58 @@ public struct LiveMapView: UIViewRepresentable {
         }
     }
 
+    // Note: tint resolution now lives on `VehicleIconTint.uiColor` /
+    // `VehicleIconTint.color` so the SwiftUI picker and the UIKit
+    // annotation view share one source of truth. The previous
+    // `swiftUIColor(for:)` mirror function was deleted during the
+    // FB25 cleanup (code review flagged the duplication).
+
+    /// FB25 — propagate a `selectedVehicleIconId` change onto the
+    /// MKUserLocation annotation. We can't mutate `MKUserLocation`
+    /// (it's managed by MapKit) and Apple's MapKit guidance is explicit
+    /// not to add/remove the user-location annotation directly — doing
+    /// so can momentarily drop `showsUserLocation` updates or briefly
+    /// reset the tracking mode. The safe two-step recipe used here:
+    ///   1. Direct `view.image` assignment so the live, currently
+    ///      displayed annotation view swaps its symbol in-place without
+    ///      any flicker or location-tracking side-effects.
+    ///   2. If MapKit is still serving a pooled annotation view from
+    ///      before the icon change, flip `userTrackingMode` away and
+    ///      back. This nudges MapKit to dispose of the pooled view and
+    ///      re-ask `viewFor` on the next render, taking the new symbol
+    ///      from `viewFor` (instead of from the still-cached pooled
+    ///      view) without ever touching `MKUserLocation` itself.
+    fileprivate func applyVehicleIconChange(_ map: MKMapView, iconId: String) {
+        let icon = VehicleIcon.icon(for: iconId)
+        let tint = icon.tintColor.uiColor
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 28, weight: .bold)
+        let image = UIImage(systemName: icon.systemImageName, withConfiguration: symbolConfig)?
+            .withTintColor(tint, renderingMode: .alwaysOriginal)
+
+        guard let userLoc = map.userLocation else { return }
+
+        // 1. In-place image swap on the live annotation view. This is
+        //    the fast, no-side-effect path that handles ~all icon
+        //    changes when MapKit serves the same view back from its
+        //    pool.
+        if let view = map.view(for: userLoc) as? MKAnnotationView, let image {
+            view.image = image
+            view.centerOffset = CGPoint(x: 0, y: -image.size.height / 2)
+        }
+
+        // 2. If MapKit was pooling a stale annotation view that didn't
+        //    refresh in-place (rare, but reproducible on iOS 17+ when
+        //    several icon changes happen in quick succession before the
+        //    pool rotates), toggle the tracking mode to nudge MapKit
+        //    into re-asking `viewFor`. Only fire when MapKit wasn't
+        //    already following (to avoid interrupting a delicate
+        //    navigation tracking state).
+        if map.userTrackingMode == .followWithHeading {
+            map.setUserTrackingMode(.none, animated: false)
+            map.setUserTrackingMode(.followWithHeading, animated: false)
+        }
+    }
+
     private func setupNativeControls(for map: MKMapView) {
         // MARK: - Native MKScaleView
         // Apple's own scale legend that updates automatically with the camera.
@@ -160,6 +212,9 @@ public struct LiveMapView: UIViewRepresentable {
 
         // MKCompassButton — appears only when the user has rotated the map
         // away from true north so we don't clutter the chrome otherwise.
+        // We capture the reference on the coordinator so FB28 can hide
+        // it via `compassVisibility = .hidden` while the search bar is
+        // focused (then restore to `.adaptive` once the search closes).
         let compass = MKCompassButton(mapView: map)
         compass.compassVisibility = .adaptive
         compass.translatesAutoresizingMaskIntoConstraints = false
@@ -167,7 +222,8 @@ public struct LiveMapView: UIViewRepresentable {
 
         // MKUserTrackingButton — explicit recenter. The system one
         // (`map.showsUserTrackingButton = true`) is disabled below so the
-        // user only sees this single pinned instance.
+        // user only sees this single pinned instance. The captured
+        // reference supports FB28: hide via `isHidden` while searching.
         let trackingButton = MKUserTrackingButton(mapView: map)
         trackingButton.translatesAutoresizingMaskIntoConstraints = false
         map.addSubview(trackingButton)
@@ -184,6 +240,14 @@ public struct LiveMapView: UIViewRepresentable {
             trackingButton.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
             trackingButton.topAnchor.constraint(equalTo: compass.bottomAnchor, constant: 8)
         ])
+
+        // Stash the buttons on the coordinator so `updateUIView` can
+        // toggle their visibility against `isSearchingLocally` without
+        // walking the subview tree each render.
+        if let coordinator = map.delegate as? Coordinator {
+            coordinator.compassButton = compass
+            coordinator.trackingButton = trackingButton
+        }
     }
 
     public func updateUIView(_ uiView: MKMapView, context: Context) {
@@ -199,6 +263,35 @@ public struct LiveMapView: UIViewRepresentable {
         if context.coordinator.lastAppliedShowPOIs != viewModel.showApplePOIs {
             applyPOIFilter(viewModel.showApplePOIs, to: uiView)
             context.coordinator.lastAppliedShowPOIs = viewModel.showApplePOIs
+        }
+
+        // VEHICLE ICON REFRESH (TestFlight FB25): "I am able to select a
+        // vehicle icon, but in maps I don't see the vehicle icon
+        // changed." MKUserLocation is a singleton annotation whose
+        // view-for cache MapKit reuses across icon changes, so merely
+        // mutating the @Published `selectedVehicleIconId` is not enough.
+        // When the id flips we (1) re-render the active annotation view
+        // by direct property assignment so the on-map image swaps
+        // immediately and (2) force MapKit to dispose of and re-request
+        // the view via removeAnnotation + addAnnotation so any cached
+        // styling on a pooled view is fully replaced.
+        let currentIconId = viewModel.selectedVehicleIconId
+        if context.coordinator.lastAppliedVehicleIconId != currentIconId {
+            context.coordinator.lastAppliedVehicleIconId = currentIconId
+            applyVehicleIconChange(uiView, iconId: currentIconId)
+        }
+
+        // FB28 — COLLAPSE chrome while the search bar is focused.
+        // The native compass + tracking buttons live as subviews on the
+        // MKMapView; we hold references on the coordinator so we can
+        // flip `compassVisibility` / `isHidden` without walking the
+        // subview tree on every updateUIView pass. The SwiftUI 3D pill
+        // is hidden in MapWithHUDView against the same flag so the
+        // search row visually reads as a single expanded bar.
+        let isSearching = viewModel.isSearching || viewModel.isSearchingLocally
+        if #available(iOS 17.0, *) {
+            context.coordinator.compassButton?.compassVisibility = isSearching ? .hidden : .adaptive
+            context.coordinator.trackingButton?.isHidden = isSearching
         }
 
         // Limit camera updates during search to prevent unwanted "jumping"
@@ -295,6 +388,20 @@ public struct LiveMapView: UIViewRepresentable {
         /// The camera system — replaces all previous `updateSmartAltitude`
         /// logic, cooldown timers, and altitude thresholds.
         let cameraAnimator = CameraAnimator()
+
+        // FB28 — captured by `setupNativeControls(_:)` so `updateUIView`
+        // can flip `.compassVisibility` / `.isHidden` against the
+        // `isSearchingLocally` flag without walking the subview tree on
+        // every render.
+        weak var compassButton: MKCompassButton? = nil
+        weak var trackingButton: MKUserTrackingButton? = nil
+
+        // FB25 — last-applied vehicle icon id so `updateUIView` knows
+        // when the user picked a new icon and needs the user-location
+        // annotation re-rendered. `Optional<String>` (not empty-string
+        // sentinel) so a literal "" id cannot silently match a no-icon
+        // initial value and produce a "no change needed" verdict.
+        var lastAppliedVehicleIconId: String? = nil
 
         // Cache the last-applied map style / POI filter / pitch mode so
         // we don't rebuild the MKMapConfiguration (and trigger a fresh
@@ -802,12 +909,17 @@ public struct LiveMapView: UIViewRepresentable {
 
         public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation is MKUserLocation {
-                // Return a custom annotation view when the user has selected
-                // a non-default vehicle icon; nil keeps the native blue dot.
+                // FB25 — render a custom annotation view for ALL icon ids,
+                // including `default_blue`. The previous gate (`!= "default_blue"`)
+                // returned `nil` so MapKit drew the native blue dot on day-one
+                // installs but stayed stuck on that native dot even after the
+                // user picked a non-default icon because MapKit pools annotation
+                // views (see `applyVehicleIconChange(_:iconId:)` for the cache
+                // invalidation that complements this branch).
                 let iconId = parent.viewModel.selectedVehicleIconId
-                guard iconId != "default_blue" else { return nil }
-                
                 let icon = VehicleIcon.icon(for: iconId)
+                let tint = icon.tintColor.uiColor
+
                 let id = "VehicleIcon"
                 var view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKAnnotationView
                 if view == nil {
@@ -816,25 +928,15 @@ public struct LiveMapView: UIViewRepresentable {
                 } else {
                     view?.annotation = annotation
                 }
-                
-                // Pick the right tint color based on the icon type
-                let tint: UIColor
-                switch iconId {
-                case "sports_car_red":      tint = UIColor(red: 1, green: 0.2, blue: 0.2, alpha: 1)
-                case "sports_car_blue":      tint = UIColor(DesignSystem.cyan)
-                case "pickup_truck":         tint = UIColor(red: 0.8, green: 0.5, blue: 0.2, alpha: 1)
-                case "suv":                  tint = UIColor(DesignSystem.neonGreen)
-                case "motorcycle":           tint = UIColor(red: 1, green: 0.6, blue: 0, alpha: 1)
-                case "scooter":             tint = UIColor(red: 0.8, green: 0.3, blue: 0.8, alpha: 1)
-                case "convertible":          tint = UIColor(red: 1, green: 0.8, blue: 0, alpha: 1)
-                case "truck_monster":       tint = UIColor(red: 0.4, green: 0.8, blue: 0.2, alpha: 1)
-                case "ev_car":              tint = UIColor(DesignSystem.cyan)
-                case "bicycle":             tint = UIColor(red: 0.6, green: 0.8, blue: 1, alpha: 1)
-                case "airplane":            tint = UIColor(red: 0.7, green: 0.7, blue: 0.9, alpha: 1)
-                default:                     tint = UIColor(DesignSystem.cyan)
-                }
-                
-                if let image = UIImage(systemName: icon.systemImageName)?.withTintColor(tint, renderingMode: .alwaysOriginal) {
+
+                // SF Symbol at a large, consistent point-size so the icon
+                // reads as a "vehicle" rather than a dot on the map at any
+                // zoom level. `withTintColor(.alwaysOriginal)` is required
+                // because the symbol's default rendering mode strips tint
+                // when set via `withTintColor`.
+                let symbolConfig = UIImage.SymbolConfiguration(pointSize: 28, weight: .bold)
+                if let image = UIImage(systemName: icon.systemImageName, withConfiguration: symbolConfig)?
+                    .withTintColor(tint, renderingMode: .alwaysOriginal) {
                     view?.image = image
                     // Calculate offset from the image size, not the view frame,
                     // because frame.height is 0 before the first layout pass.

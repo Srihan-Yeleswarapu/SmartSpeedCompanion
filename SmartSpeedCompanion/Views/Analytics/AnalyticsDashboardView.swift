@@ -184,32 +184,20 @@ private struct AnalyticsContentView: View {
                 SummaryStatsView(viewModel: viewModel)
                     .padding(.horizontal)
 
-                // Fuel Cost Card — shown for sessions with GPS readings
-                if !session.readings.isEmpty {
-                    let isMetric = SpeedFormatting.isMetric(SpeedFormatting.measurementSystem())
-                    let distanceMi = FuelEstimator.totalDistanceMiles(from: session.readings)
-                    let distanceKm = FuelEstimator.totalDistanceKm(from: session.readings)
-                    let eff = isMetric ? 9.4 : 25.0
-                    let priceGal = 3.50
-                    let priceL = 0.95
-                    
-                    // Read user's fuel settings from UserDefaults (same keys as SettingsView)
-                    let ud = UserDefaults.standard
-                    let userEff = ud.object(forKey: "vehicleFuelEfficiency") as? Double ?? eff
-                    let userPrice = ud.object(forKey: "localFuelPrice") as? Double ?? (isMetric ? priceL : priceGal)
-                    
-                    FuelCostCard(
-                        distanceMiles: distanceMi,
-                        distanceKm: distanceKm,
-                        efficiencyMpg: isMetric ? 25.0 : userEff,
-                        efficiencyLPer100km: isMetric ? userEff : 9.4,
-                        pricePerGallon: isMetric ? 3.50 : userPrice,
-                        pricePerLiter: isMetric ? userPrice : 0.95,
-                        measurementSystem: SpeedFormatting.measurementSystem()
-                    )
-                    .padding(.horizontal)
-                }
-                
+                // Fuel Cost Card removed — TestFlight FB26: "You put fuel
+                // efficiency and fuel price options here. Can you remove
+                // this feature? I don't like this." Pairs with the
+                // matching removal of the VEHICLE section in
+                // `SettingsView`. The FuelEstimator math + UserDefaults
+                // keys are preserved for a future iteration so the
+                // mileage estimator work isn't lost — it just isn't
+                // surfaced in the user-facing analytics summary anymore.
+                //
+                // (See `Core/FuelEstimator.swift` banner for context on
+                //  the historical Feature Trip Fuel Cost Estimator
+                //  commit; that work can be re-introduced under the
+                //  ad-gated-or-IAP model without re-deriving the math.)
+
                 OverspeedHeatMapView(session: session)
                     .frame(height: 320)
                     .cornerRadius(16)

@@ -78,12 +78,19 @@ public struct AlertProfilesListView: View {
                     }
                     .buttonStyle(.plain)
                     .swipeActions(edge: .trailing) {
-                        if driveViewModel.alertProfiles.count > 1 {
-                            Button(role: .destructive) {
-                                driveViewModel.deleteProfile(profile.id, context: modelContext)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
+                        // TestFlight 29-tester feedback: "I can't delete a
+                        // speed profile." The previous swipe-to-delete was
+                        // hidden behind a non-discoverable gesture AND
+                        // refused to delete when the user only had one
+                        // profile (the ship-default state for new users).
+                        // Remove the count-gate so the swipe works on day
+                        // one. DriveViewModel.deleteProfile(...) now
+                        // auto-seeds a fresh Default if the wipe would
+                        // otherwise leave zero profiles.
+                        Button(role: .destructive) {
+                            driveViewModel.deleteProfile(profile.id, context: modelContext)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
                         }
                     }
                 }

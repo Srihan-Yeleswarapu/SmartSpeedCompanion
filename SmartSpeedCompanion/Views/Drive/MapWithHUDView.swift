@@ -75,17 +75,27 @@ public struct MapWithHUDView: View {
                         //   • SearchBarView — thinner (inner HStack frame is
                         //     40pt, down from 56pt; magnifier is 16pt;
                         //     TextField is 15pt; inner padding is 14pt).
-                        //   • MapPitchToggleButton — SwiftUI 2D/3D pill,
-                        //     sits immediately to the right of the search
-                        //     bar. The native MKMapView pitch toggle is
-                        //     HIDDEN in LiveMapView so this pill owns the
-                        //     toggle position. They share the HStack so they
-                        //     appear as one squeezed search row with the
-                        //     map fully visible underneath.
+                        //   • MapPitchToggleButton — SwiftUI 2D/3D pill.
+                        //     TestFlight FB28: user wants the 3D pill AND
+                        //     the native compass/tracking buttons to
+                        //     COLLAPSE while the search bar is focused so
+                        //     the search row has full width and the map
+                        //     has more room. Hiding the pill here makes
+                        //     the search row visually read as one
+                        //     [expanded search bar] until the user taps
+                        //     away, at which point we restore the 3D pill.
+                        //     The companion's MKCompassButton +
+                        //     MKUserTrackingButton are hidden in
+                        //     `LiveMapView.updateUIView` against the same
+                        //     flag.
                         HStack(spacing: 8) {
                             SearchBarView(isLandscape: isLandscape)
-                            MapPitchToggleButton(isLandscape: isLandscape)
+                            if !driveViewModel.isSearchingLocally {
+                                MapPitchToggleButton(isLandscape: isLandscape)
+                                    .transition(.scale.combined(with: .opacity))
+                            }
                         }
+                        .animation(.easeInOut(duration: 0.2), value: driveViewModel.isSearchingLocally)
                         .padding(.top, geo.safeAreaInsets.top + 8)
                         .padding(.horizontal, 12)
                     }
