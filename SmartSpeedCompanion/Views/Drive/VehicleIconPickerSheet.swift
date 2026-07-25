@@ -73,11 +73,10 @@ public struct VehicleIconPickerSheet: View {
 
     private var previewHeader: some View {
         VStack(spacing: 8) {
-            // 90pt hero circle mirrors the layer the user sees on the
-            // map. Tinted from the catalog's `tintColor` so the preview
-            // and the rendered MKAnnotationView agree (was inconsistent
-            // before — picker showed cyan for everything, the map
-            // rendered the per-icon tint).
+            // 96pt hero circle featuring the programmatically-rendered
+            // 3D car with the selected body color and ALWAYS-RED brake
+            // lights. The car is drawn via Core Graphics at a size that
+            // fits comfortably inside the circle.
             ZStack {
                 Circle()
                     .fill(DesignSystem.bgCard)
@@ -85,9 +84,16 @@ public struct VehicleIconPickerSheet: View {
                 Circle()
                     .stroke(DesignSystem.cyan.opacity(0.4), lineWidth: 2)
                     .frame(width: 96, height: 96)
-                Image(systemName: selectedIcon.systemImageName)
-                    .font(.system(size: 44, weight: .bold))
-                    .foregroundColor(selectedIcon.tintColor.color)
+
+                // Render the 3D car using Core Graphics — same image
+                // that appears on the map. The car body uses the selected
+                // icon's tint color and the brake lights are always red.
+                if let carImage = CarImageRenderer.renderCarPreview(bodyColor: selectedIcon.tintColor.uiColor) {
+                    Image(uiImage: carImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 48, height: 84)
+                }
             }
             Text(selectedIcon.displayName)
                 .font(.system(size: 16, weight: .bold))

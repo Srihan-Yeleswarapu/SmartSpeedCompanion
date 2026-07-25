@@ -156,28 +156,32 @@ public struct LiveMapView: UIViewRepresentable {
     fileprivate func applyVehicleIconChange(_ map: MKMapView, iconId: String) {
         let icon = VehicleIcon.icon(for: iconId)
         let tint = icon.tintColor.uiColor
-        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 28, weight: .bold)
-        let image = UIImage(systemName: icon.systemImageName, withConfiguration: symbolConfig)?
-            .withTintColor(tint, renderingMode: .alwaysOriginal)
 
+        // Render a 3D-looking car with the selected body color (brake
+        // lights are ALWAYS red regardless of the body tint).
+        let carImage = CarImageRenderer.renderCar(bodyColor: tint)
         let userLoc = map.userLocation
 
-        // 1. In-place image swap on the live annotation view. This is
-        //    the fast, no-side-effect path that handles ~all icon
-        //    changes when MapKit serves the same view back from its
-        //    pool.
-        if let view = map.view(for: userLoc) as? MKAnnotationView, let image {
-            view.image = image
-            view.centerOffset = CGPoint(x: 0, y: -image.size.height / 2)
+        // 1. In-place image swap on the live annotation view.
+        if let view = map.view(for: userLoc) as? MKAnnotationView {
+            view.image = carImage
+            view.centerOffset = CGPoint(x: 0, y: -carImage.size.height / 2)
+
+            // Re-apply heading rotation after the image swap
+            if let heading = viewModel.currentHeading {
+                view.transform = CGAffineTransform(rotationAngle: heading * .pi / 180)
+            } else {
+                view.transform = .identity
+            }
+
+            // Update the stored reference
+            if let coordinator = map.delegate as? Coordinator {
+                coordinator.userAnnotationView = view
+            }
         }
 
-        // 2. If MapKit was pooling a stale annotation view that didn't
-        //    refresh in-place (rare, but reproducible on iOS 17+ when
-        //    several icon changes happen in quick succession before the
-        //    pool rotates), toggle the tracking mode to nudge MapKit
-        //    into re-asking `viewFor`. Only fire when MapKit wasn't
-        //    already following (to avoid interrupting a delicate
-        //    navigation tracking state).
+        // 2. If MapKit was pooling a stale annotation view, toggle the
+        //    tracking mode to nudge a re-ask on `viewFor`.
         if map.userTrackingMode == .followWithHeading {
             map.setUserTrackingMode(.none, animated: false)
             map.setUserTrackingMode(.followWithHeading, animated: false)
@@ -279,6 +283,25 @@ public struct LiveMapView: UIViewRepresentable {
         if context.coordinator.lastAppliedVehicleIconId != currentIconId {
             context.coordinator.lastAppliedVehicleIconId = currentIconId
             applyVehicleIconChange(uiView, iconId: currentIconId)
+        }
+
+        // HEADING ROTATION — update the car annotation view's transform
+        // whenever the user's heading changes so the car always faces the
+        // direction of travel (or points north when stopped / no heading).
+        // The annotation view reference is captured in `viewFor` and stored
+        // on the coordinator; we only fire the transform when the heading
+        // actually changes to keep the per-frame overhead minimal.
+        if context.coordinator.lastAppliedHeading != viewModel.currentHeading {
+            context.coordinator.lastAppliedHeading = viewModel.currentHeading
+            if let annotationView = context.coordinator.userAnnotationView {
+                if let heading = viewModel.currentHeading {
+                    annotationView.transform = CGAffineTransform(
+                        rotationAngle: heading * .pi / 180
+                    )
+                } else {
+                    annotationView.transform = .identity
+                }
+            }
         }
 
         // FB28 — COLLAPSE chrome while the search bar is focused.
@@ -402,6 +425,14 @@ public struct LiveMapView: UIViewRepresentable {
         // sentinel) so a literal "" id cannot silently match a no-icon
         // initial value and produce a "no change needed" verdict.
         var lastAppliedVehicleIconId: String? = nil
+
+        /// Reference to the user-location annotation view so `updateUIView`
+        /// can update heading rotation without walking the subview tree.
+        weak var userAnnotationView: MKAnnotationView? = nil
+
+        /// Last-applied heading so we don't re-apply the transform every
+        /// frame unless the heading actually changed.
+        var lastAppliedHeading: Double? = nil
 
         // Cache the last-applied map style / POI filter / pitch mode so
         // we don't rebuild the MKMapConfiguration (and trigger a fresh
@@ -909,15 +940,12 @@ public struct LiveMapView: UIViewRepresentable {
 
         public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation is MKUserLocation {
-                // FB25 — render a custom annotation view for ALL icon ids,
-                // including `default_blue`. The previous gate (`!= "default_blue"`)
-                // returned `nil` so MapKit drew the native blue dot on day-one
-                // installs but stayed stuck on that native dot even after the
-                // user picked a non-default icon because MapKit pools annotation
-                // views (see `applyVehicleIconChange(_:iconId:)` for the cache
-                // invalidation that complements this branch).
-                let iconId = parent.viewModel.selectedVehicleIconId
-                let icon = VehicleIcon.icon(for: iconId)
+                // 3D CAR RENDERER — replaces the previous SF Symbol with a
+                // Core Graphics-drawn car that has a colored body, ALWAYS-RED
+                // brake lights, blue-tinted windows, and 3D perspective shading.
+                // The car image is rotated by the user's heading so it always
+                // faces the direction of travel on the map.
+                let icon = VehicleIcon.icon(for: parent.viewModel.selectedVehicleIconId)
                 let tint = icon.tintColor.uiColor
 
                 let id = "VehicleIcon"
@@ -929,19 +957,23 @@ public struct LiveMapView: UIViewRepresentable {
                     view?.annotation = annotation
                 }
 
-                // SF Symbol at a large, consistent point-size so the icon
-                // reads as a "vehicle" rather than a dot on the map at any
-                // zoom level. `withTintColor(.alwaysOriginal)` is required
-                // because the symbol's default rendering mode strips tint
-                // when set via `withTintColor`.
-                let symbolConfig = UIImage.SymbolConfiguration(pointSize: 28, weight: .bold)
-                if let image = UIImage(systemName: icon.systemImageName, withConfiguration: symbolConfig)?
-                    .withTintColor(tint, renderingMode: .alwaysOriginal) {
-                    view?.image = image
-                    // Calculate offset from the image size, not the view frame,
-                    // because frame.height is 0 before the first layout pass.
-                    view?.centerOffset = CGPoint(x: 0, y: -image.size.height / 2)
+                // Render the 3D car at the default size
+                let carImage = CarImageRenderer.renderCar(bodyColor: tint)
+                view?.image = carImage
+                view?.centerOffset = CGPoint(x: 0, y: -carImage.size.height / 2)
+
+                // Apply heading rotation so the car faces the direction of travel
+                if let heading = parent.viewModel.currentHeading {
+                    view?.transform = CGAffineTransform(rotationAngle: heading * .pi / 180)
+                } else {
+                    view?.transform = .identity
                 }
+
+                // Store reference for heading updates in updateUIView
+                if let coordinator = mapView.delegate as? Coordinator {
+                    coordinator.userAnnotationView = view
+                }
+
                 return view
             }
 
