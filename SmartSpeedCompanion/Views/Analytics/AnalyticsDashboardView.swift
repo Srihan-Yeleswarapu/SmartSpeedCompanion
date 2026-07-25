@@ -100,6 +100,8 @@ private struct AnalyticsContentView: View {
     @ObservedObject var viewModel: AnalyticsViewModel
     let driveViewModel: DriveViewModel
     @Environment(\.modelContext) private var modelContext
+    @State private var showRenameAlert = false
+    @State private var renameText = ""
 
     var body: some View {
         // TestFlight FB7 (v2.2.0 b361): the previous `if session.isDeleted`
@@ -114,9 +116,24 @@ private struct AnalyticsContentView: View {
                 // Session title banner — enriched with named locations
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(driveViewModel.namedLocations.isEmpty ? session.title : viewModel.sessionTitleWithNamedLocations(session, namedLocations: driveViewModel.namedLocations))
-                            .font(.headline.weight(.semibold))
-                            .foregroundColor(.white)
+                        HStack(spacing: 8) {
+                            Text(session.customTitle != nil ? session.title : (driveViewModel.namedLocations.isEmpty ? session.title : viewModel.sessionTitleWithNamedLocations(session, namedLocations: driveViewModel.namedLocations)))
+                                .font(.headline.weight(.semibold))
+                                .foregroundColor(.white)
+                            
+                            // Rename pencil icon
+                            Button {
+                                renameText = session.title
+                                showRenameAlert = true
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundColor(DesignSystem.cyan.opacity(0.7))
+                                    .frame(width: 28, height: 28)
+                                    .background(Circle().fill(DesignSystem.cyan.opacity(0.1)))
+                            }
+                            .buttonStyle(.plain)
+                        }
                         Text(session.startTime.formatted(date: .abbreviated, time: .shortened))
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundColor(.gray)
@@ -140,6 +157,13 @@ private struct AnalyticsContentView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
+                .alert("Rename Session", isPresented: $showRenameAlert) {
+                    TextField("Session name", text: $renameText)
+                    Button("Cancel", role: .cancel) {}
+                    Button("Rename") {
+                        viewModel.renameSession(session, title: renameText, context: modelContext)
+                    }
+                }
 
                 // Score + Time Distribution
                 HStack(spacing: 16) {
@@ -363,6 +387,8 @@ private struct SessionRow: View {
     @ObservedObject var viewModel: AnalyticsViewModel
     @Environment(\.modelContext) private var modelContext
     @State private var showContextMenu = false
+    @State private var showRenameAlert = false
+    @State private var renameText = ""
 
     private var daysLeft: Int? {
         guard !(session.isStarred ?? false) else { return nil }
@@ -450,9 +476,10 @@ private struct SessionRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button {
-                viewModel.selectSession(session)
+                renameText = session.title
+                showRenameAlert = true
             } label: {
-                Label("Open Analysis", systemImage: "chart.bar.fill")
+                Label("Rename", systemImage: "pencil")
             }
 
             Button {
@@ -469,6 +496,13 @@ private struct SessionRow: View {
                 viewModel.deleteSession(session, context: modelContext)
             } label: {
                 Label("Delete", systemImage: "trash")
+            }
+        }
+        .alert("Rename Session", isPresented: $showRenameAlert) {
+            TextField("Session name", text: $renameText)
+            Button("Cancel", role: .cancel) {}
+            Button("Rename") {
+                viewModel.renameSession(session, title: renameText, context: modelContext)
             }
         }
     }

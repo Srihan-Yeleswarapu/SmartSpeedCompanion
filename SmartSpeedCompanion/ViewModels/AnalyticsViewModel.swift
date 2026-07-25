@@ -155,6 +155,13 @@ public final class AnalyticsViewModel: ObservableObject {
         }
     }
     
+    /// Renames a session by setting its custom title.
+    public func renameSession(_ session: DriveSession, title: String, context: ModelContext) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.customTitle = trimmed.isEmpty ? nil : trimmed
+        try? context.save()
+    }
+    
     public func toggleStar(_ session: DriveSession, context: ModelContext) {
         let current = session.isStarred ?? false
         session.isStarred = !current

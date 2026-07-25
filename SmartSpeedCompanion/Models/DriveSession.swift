@@ -13,6 +13,8 @@ public final class DriveSession {
     public var isStarred: Bool?
     public var vehicleProfileId: String?
     public var vehicleName: String?
+    /// Custom user-set title that overrides the computed title.
+    public var customTitle: String?
     
     @Relationship(deleteRule: .cascade)
     public var readings: [SpeedReading]
@@ -25,6 +27,11 @@ public final class DriveSession {
     }
     
     public var title: String {
+        // If the user has set a custom title, use it
+        if let custom = customTitle, !custom.isEmpty {
+            return custom
+        }
+        
         let dayFormatter = DateFormatter()
         dayFormatter.dateFormat = "MMM d"
         let timeFormatter = DateFormatter()
