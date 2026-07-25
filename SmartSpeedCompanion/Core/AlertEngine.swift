@@ -79,6 +79,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         setupAudioSession()
         setupToneEngine()
         setupHaptics()
+        observeAudioInterruptions()
         
         statusCancellable = speedEngine.$status
             .receive(on: RunLoop.main)
@@ -166,6 +167,13 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     // MARK: - Monitoring
     private func startMonitoring() {
         consecutiveSeconds = 0
+        
+        // ── Duck other audio for the ENTIRE speeding duration ──────
+        // Activate our session with `.duckOthers`. This lowers the
+        // volume of YouTube/Music/Spotify and keeps it lowered until
+        // we deactivate (when the user slows down). Every beep that
+        // fires while in this state will be clearly audible.
+        activateAudioDucking()
 
         timerCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
@@ -213,6 +221,12 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         audioAlertActive = false
         timerCancellable = nil
         cancelSnooze()
+        
+        // ── Restore music volume ───────────────────────────────────
+        // User has slowed down and status is no longer `.over`.
+        // Deactivate our audio session so the other app's (YouTube,
+        // Music, Spotify) volume comes back to normal.
+        deactivateAudioDucking()
     }
     
     private func cancelTimer() {
@@ -234,28 +248,162 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         HapticAlertManager.shared.fireIfEnabled()
     }
     
+    // MARK: - Audio Session Interruption Handling
+    /// Set when an audio interruption (e.g. YouTube starting playback)
+    /// begins, so we know to re-activate the session before the next beep.
+    private var wasInterrupted: Bool = false
+    
+    /// Registers for audio interruption notifications so we can re-activate
+    /// our session when the interrupting app (YouTube, Music, etc.) finishes
+    /// or when we need to play a beep while interrupted.
+    private func observeAudioInterruptions() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleAudioInterruption(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+        
+        switch type {
+        case .began:
+            // Another app (YouTube, Music) started playing — our session
+            // was deactivated. Set the flag so we re-activate before next beep.
+            wasInterrupted = true
+            DebugLogger.shared.log("AlertEngine: audio interrupted by another app")
+        case .ended:
+            // The interruption ended. Re-activate the session and restart
+            // the audio engine so the next beep plays correctly.
+            wasInterrupted = false
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+                restartAudioEngine()
+                DebugLogger.shared.log("AlertEngine: audio session resumed after interruption")
+            } catch {
+                DebugLogger.shared.log("AlertEngine: failed to resume audio session: \(error.localizedDescription)")
+            }
+        @unknown default:
+            break
+        }
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    /// Activates the audio session with `.duckOthers` to lower other
+    /// audio (YouTube, Music, Spotify) for the entire duration the user
+    /// is speeding. Called once when status changes to `.over`.
+    /// The ducking persists until `deactivateAudioDucking()`, which is
+    /// called when the user slows down below the limit.
+    private func activateAudioDucking() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(
+                .playback,
+                mode: .default,
+                options: [
+                    .mixWithOthers,
+                    .interruptSpokenAudioAndMixWithOthers,
+                    .duckOthers
+                ]
+            )
+            try session.setActive(true)
+            DebugLogger.shared.log("AlertEngine: audio ducking activated (speeding)")
+        } catch {
+            DebugLogger.shared.log("AlertEngine: activateAudioDucking failed: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Deactivates the audio session, allowing other apps' audio
+    /// (YouTube, Music, Spotify) to return to full volume.
+    /// Called when the user slows down below the speed limit.
+    private func deactivateAudioDucking() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            // `.notifyOthersOnDeactivation` tells the system to notify
+            // the previously-interrupted app (YouTube, Music) that it can
+            // restore its volume to normal.
+            try session.setActive(false, options: .notifyOthersOnDeactivation)
+            DebugLogger.shared.log("AlertEngine: audio ducking deactivated (speed normal)")
+        } catch {
+            DebugLogger.shared.log("AlertEngine: deactivateAudioDucking failed: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Re-activates the audio session and restarts the engine.
+    /// Called before every beep if we were interrupted, and after
+    /// interruptions end.
+    private func ensureAudioSessionActive() {
+        let session = AVAudioSession.sharedInstance()
+        // If we're already monitoring (user is over limit), the session
+        // was already activated by activateAudioDucking(). Only re-activate
+        // if an interruption occurred (e.g. YouTube took over).
+        guard timerCancellable == nil || wasInterrupted else { return }
+        guard !session.isOtherAudioPlaying || wasInterrupted else { return }
+        
+        // Re-apply category and activate. This is a defensive call — it's
+        // cheap when the state already matches, and critical when another
+        // app (YouTube) has taken over the session.
+        do {
+            try session.setCategory(
+                .playback,
+                mode: .default,
+                options: [
+                    .mixWithOthers,
+                    .interruptSpokenAudioAndMixWithOthers,
+                    .duckOthers
+                ]
+            )
+            try session.setActive(true)
+            wasInterrupted = false
+        } catch {
+            DebugLogger.shared.log("AlertEngine: audio session reactivate failed: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Restarts the AVAudioEngine after it was stopped by an interruption.
+    private func restartAudioEngine() {
+        guard !audioEngine.isRunning else { return }
+        do {
+            try audioEngine.start()
+            if !playerNode.isPlaying {
+                playerNode.play()
+            }
+            DebugLogger.shared.log("AlertEngine: audio engine restarted")
+        } catch {
+            DebugLogger.shared.log("AlertEngine: audio engine restart failed: \(error.localizedDescription)")
+        }
+    }
+    
     // MARK: - Audio Session
     private func setupAudioSession() {
-    do {
-        let session = AVAudioSession.sharedInstance()
-        
-        try session.setCategory(
-            .playback,
-            mode: .default,
-            options: [
-                .mixWithOthers,
-                .interruptSpokenAudioAndMixWithOthers
-            ]
-        )
-        
-        try session.setActive(true)
-        
-        DebugLogger.shared.log("Audio session configured OK")
-        
-    } catch {
-        DebugLogger.shared.log("Audio session error: \(error.localizedDescription)")
+        do {
+            let session = AVAudioSession.sharedInstance()
+            
+            try session.setCategory(
+                .playback,
+                mode: .default,
+                options: [
+                    .mixWithOthers,
+                    .interruptSpokenAudioAndMixWithOthers,
+                    .duckOthers
+                ]
+            )
+            
+            try session.setActive(true)
+            
+            DebugLogger.shared.log("Audio session configured OK")
+            
+        } catch {
+            DebugLogger.shared.log("Audio session error: \(error.localizedDescription)")
+        }
     }
-}
     
     // MARK: - Tone Engine
     private func setupToneEngine() {
@@ -283,34 +431,50 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         
         do {
             try audioEngine.start()
+            DebugLogger.shared.log("Tone engine started OK")
         } catch {
             DebugLogger.shared.log("Tone engine error: \(error.localizedDescription)")
         }
         playerNode.play()
     }
     
+    /// Plays the alert tone with proper audio session management.
+    /// Fixes the bug where beeps are inaudible when YouTube/Music is playing:
+    ///   1. Re-activates the audio session (YouTube may have deactivated it)
+    ///   2. Restarts the audio engine if needed
+    ///   3. Schedules the buffer WITHOUT stopping the player node first
+    ///   4. Falls back to system sound if AVAudioEngine fails entirely
     private func playTone() {
-    guard let buffer = toneBuffer else { return }
-    
-    // Ensure engine is running
-    if !audioEngine.isRunning {
-        do {
-            try audioEngine.start()
-            DebugLogger.shared.log("Audio engine restarted")
-        } catch {
-            DebugLogger.shared.log("Audio engine restart failed: \(error.localizedDescription)")
-            return
+        guard let buffer = toneBuffer else { return }
+        
+        // Step 1: Ensure the audio session is active (re-activate if
+        // another app like YouTube deactivated it).
+        ensureAudioSessionActive()
+        
+        // Step 2: If the engine stopped (e.g. due to interruption),
+        // restart it.
+        if !audioEngine.isRunning {
+            do {
+                try audioEngine.start()
+                DebugLogger.shared.log("AlertEngine: audio engine restarted for beep")
+            } catch {
+                DebugLogger.shared.log("AlertEngine: audio engine restart failed: \(error.localizedDescription)")
+                // Step 4: Fallback — use system sound
+                AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+                return
+            }
         }
+        
+        // Step 3: Schedule the buffer WITHOUT stopping the player node.
+        // The `.interrupts` option will interrupt any currently-playing
+        // buffer on this node. The old pattern (stop + schedule + play)
+        // caused a race where the stop() committed before scheduleBuffer
+        // could start, resulting in silence.
+        if !playerNode.isPlaying {
+            playerNode.play()
+        }
+        playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts)
     }
-    
-    if !playerNode.isPlaying {
-        playerNode.play()
-    }
-    
-    playerNode.stop()
-    playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts)
-    playerNode.play()
-}
     
     // MARK: - HAPTICS SETUP
     private func setupHaptics() {

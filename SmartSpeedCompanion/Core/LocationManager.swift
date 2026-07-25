@@ -109,6 +109,17 @@ public final class LocationManager: NSObject, ObservableObject {
         manager.stopUpdatingLocation()
         DebugLogger.shared.log("LocationManager: Stopped updating location.")
     }
+    
+    /// Dynamically enables or disables background location updates.
+    /// Call with `true` when starting a session (so the Dynamic Island
+    /// shows location during the drive), and `false` when ending a session
+    /// (so the background indicator hides when not actively recording).
+    /// Has no effect if location updates are not active.
+    public func setBackgroundUpdates(_ enabled: Bool) {
+        manager.allowsBackgroundLocationUpdates = enabled
+        manager.showsBackgroundLocationIndicator = enabled
+        DebugLogger.shared.log("LocationManager: Background updates \(enabled ? "ENABLED" : "DISABLED")")
+    }
 }
 
 extension LocationManager: CLLocationManagerDelegate {

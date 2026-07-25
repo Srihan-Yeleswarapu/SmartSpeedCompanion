@@ -59,6 +59,8 @@ public struct DriveRootView: View {
             driveViewModel.loadVehicleProfiles(context: modelContext)
             driveViewModel.loadOfflineRegions()
             driveViewModel.loadNamedLocations(context: modelContext)
+            // Check for an interrupted session from a previous launch
+            driveViewModel.checkForInterruptedSession()
         }
         .alert("Short Drive Detected", isPresented: $driveViewModel.showShortSessionPrompt) {
             Button("Keep", role: .cancel) {
@@ -69,6 +71,17 @@ public struct DriveRootView: View {
             }
         } message: {
             Text("This drive was less than 1.5 minutes. Would you like to save it or delete it?")
+        }
+        // Recovery alert for interrupted sessions (app was terminated mid-drive)
+        .alert("Interrupted Drive Found", isPresented: $driveViewModel.showInterruptedSessionPrompt) {
+            Button("Restore \(driveViewModel.interruptedSessionDestinationName)") {
+                driveViewModel.restoreInterruptedSession()
+            }
+            Button("Discard", role: .destructive) {
+                driveViewModel.discardInterruptedSession()
+            }
+        } message: {
+            Text("It looks like you were in the middle of \(driveViewModel.interruptedSessionDestinationName) when the app was last closed. Would you like to resume or discard it?")
         }
         // Full-screen cover for Drive Focus Mode — distraction-free speed display
         .fullScreenCover(isPresented: $driveViewModel.isDriveFocusMode) {

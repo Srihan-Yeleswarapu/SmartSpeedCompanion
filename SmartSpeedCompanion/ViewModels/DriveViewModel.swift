@@ -384,6 +384,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     @Published public var showShortSessionPrompt: Bool = false
     /// Temporary storage for a short session pending user deletion choice.
     public var lastSessionToPotentialDelete: DriveSession? = nil
+    
+    // MARK: - Interrupted Session Recovery
+    /// Set to true when the app detects an interrupted session on launch
+    /// (session was recording when app was terminated). Drives the recovery
+    /// alert in DriveRootView.
+    @Published public var showInterruptedSessionPrompt: Bool = false
+    /// Display name for the interrupted session's destination (if any).
+    @Published public var interruptedSessionDestinationName: String = ""
  
     // MARK: - Guidance Details
     // The following properties are owned by NavigationCoordinator. They are
@@ -830,6 +838,53 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 #endif
             }
             .store(in: &cancellables)
+        
+        // ════════════════════════════════════════════════════════════════
+        // 5. SCENE PHASE MANAGEMENT: Background/foreground location
+        // ════════════════════════════════════════════════════════════════
+        //
+        // When the app backgrounds without an active session, stop GPS
+        // so the iOS location indicator (orange pill / Dynamic Island)
+        // does NOT appear. When foregrounded, restart GPS so the HUD
+        // shows live speed even without a session.
+        
+        NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                self.locationManager.startUpdatingLocation()
+                if self.isRecording || self.isNavigating {
+                    self.locationManager.setBackgroundUpdates(true)
+                }
+                DebugLogger.shared.log("DriveViewModel: app foregrounded - location restarted")
+            }
+            .store(in: &cancellables)
+        
+        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                if self.isRecording || self.isNavigating {
+                    self.sessionRecorder.saveSessionState()
+                    self.saveNavigationState()
+                    DebugLogger.shared.log("DriveViewModel: app backgrounded - session active, keeping location")
+                } else {
+                    self.locationManager.setBackgroundUpdates(false)
+                    self.locationManager.stopUpdatingLocation()
+                    DebugLogger.shared.log("DriveViewModel: app backgrounded - no session, location stopped")
+                }
+            }
+            .store(in: &cancellables)
+        
+        // 6. START FOREGROUND LOCATION TRACKING
+        // Begin location updates immediately so the HUD shows speed on
+        // launch (if permission was already granted in a previous session).
+        // We deliberately do NOT call requestWhenInUseAuthorization() here
+        // because the DriveViewModel is created at app launch (static in
+        // AppDelegate), before the onboarding flow. The existing
+        // LocationPermissionView and startSession() handle authorization.
+        // Without permission, startUpdatingLocation() is a silent no-op.
+        locationManager.startUpdatingLocation()
     }
     
     // MARK: - Drive Session Management
@@ -919,7 +974,146 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         WidgetCenter.shared.reloadAllTimelines()
     }
     
+    // MARK: - Navigation State Persistence
+    
+    /// Saves the current navigation destination to UserDefaults so it can
+    /// be restored if the app terminates mid-drive. Keys:
+    ///   - `navDestinationLat` / `navDestinationLon` (Double)
+    ///   - `navDestinationName` (String)
+    ///   - `navDestinationPlaceId` (String, optional)
+    private func saveNavigationState() {
+        guard let dest = navigationCoordinator.destination,
+              let coord = dest.placemark.location?.coordinate else {
+            // No active destination — clear saved state
+            let ud = UserDefaults.standard
+            ud.removeObject(forKey: "navDestinationLat")
+            ud.removeObject(forKey: "navDestinationLon")
+            ud.removeObject(forKey: "navDestinationName")
+            ud.removeObject(forKey: "navDestinationPlaceId")
+            return
+        }
+        let ud = UserDefaults.standard
+        ud.set(coord.latitude, forKey: "navDestinationLat")
+        ud.set(coord.longitude, forKey: "navDestinationLon")
+        ud.set(dest.name ?? "Destination", forKey: "navDestinationName")
+        if #available(iOS 18.0, *), let placeId = dest.identifier?.rawValue {
+            ud.set(placeId, forKey: "navDestinationPlaceId")
+        }
+        DebugLogger.shared.log("DriveViewModel: saved navigation state")
+    }
+    
+    /// Checks UserDefaults for a saved navigation destination from a
+    /// terminated session. Returns an MKMapItem if one was found.
+    private static func restoreNavigationDestination() -> MKMapItem? {
+        let ud = UserDefaults.standard
+        guard let lat = ud.object(forKey: "navDestinationLat") as? Double,
+              let lon = ud.object(forKey: "navDestinationLon") as? Double else {
+            return nil
+        }
+        let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        let placemark = MKPlacemark(coordinate: coord)
+        let name = ud.string(forKey: "navDestinationName") ?? "Saved Destination"
+        let item = MKMapItem(placemark: placemark)
+        item.name = name
+        return item
+    }
+    
+    /// Checks for an interrupted session on launch. Looks for:
+    ///   1. A saved session state in UserDefaults (set by didEnterBackground)
+    ///   2. An active Live Activity (Dynamic Island still showing)
+    /// Returns true if an interrupted session was detected and the UI should prompt.
+    @MainActor
+    public func checkForInterruptedSession() -> Bool {
+        // Check 1: Did the session save state before termination?
+        if SessionRecorder.hasInterruptedSession() {
+            let destName = UserDefaults.standard.string(forKey: "navDestinationName") ?? ""
+            let startTime = SessionRecorder.interruptedSessionStartTime()
+            let timeStr = startTime.map { fmtDate($0) } ?? "earlier"
+            
+            interruptedSessionDestinationName = destName.isEmpty ? "a drive" : "route to \(destName)"
+            showInterruptedSessionPrompt = true
+            DebugLogger.shared.log("DriveViewModel: interrupted session detected (started \(timeStr))")
+            return true
+        }
+        
+        // Check 2: Is there an active Live Activity with no in-memory session?
+        // This catches the case where iOS killed the app but the Dynamic Island
+        // is still displaying speed data, meaning the system knows a session is active.
+        // Filter to only .active activities to avoid false positives from recently-ended
+        // but not-yet-dismissed activities (which LiveActivityManager.init() also does).
+        #if !targetEnvironment(simulator)
+        if #available(iOS 16.1, *) {
+            let hasActiveActivity = Activity<SpeedActivityAttributes>.activities
+                .contains(where: { $0.activityState == .active })
+            if hasActiveActivity {
+                interruptedSessionDestinationName = "a drive"
+                showInterruptedSessionPrompt = true
+                DebugLogger.shared.log("DriveViewModel: active Live Activity detected on launch")
+                return true
+            }
+        }
+        #endif
+        
+        return false
+    }
+    
+    /// User chose to restore the interrupted session. Starts a new session
+    /// and (if a destination was saved) initiates navigation to it.
+    public func restoreInterruptedSession() {
+        // Start a fresh recording session
+        startSession()
+        
+        // Restore navigation destination if one was saved
+        if let dest = Self.restoreNavigationDestination() {
+            navigationCoordinator.destination = dest
+            navigationCoordinator.destinationItem = dest
+            interruptedSessionDestinationName = dest.name ?? ""
+            Task { @MainActor in
+                await selectDestinationAndCalculateRoutes(to: dest)
+                if let route = availableRoutes.first {
+                    await startNavigation(with: route)
+                    DebugLogger.shared.log("DriveViewModel: navigation restored to \(dest.name ?? "destination")")
+                } else {
+                    // Route calculation failed (no network, etc.) — session is still
+                    // active but without turn-by-turn. The HUD will still show speed.
+                    DebugLogger.shared.log("DriveViewModel: session restored but route calculation failed")
+                }
+            }
+        }
+        
+        showInterruptedSessionPrompt = false
+        DebugLogger.shared.log("DriveViewModel: interrupted session restored")
+    }
+    
+    /// User chose to discard the interrupted session. Clears all saved state.
+    public func discardInterruptedSession() {
+        sessionRecorder.clearSavedSessionState()
+        clearNavigationState()
+        showInterruptedSessionPrompt = false
+        interruptedSessionDestinationName = ""
+        DebugLogger.shared.log("DriveViewModel: interrupted session discarded")
+    }
+    
+    /// Formats a Date for display in the recovery prompt.
+    private func fmtDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f.string(from: date)
+    }
+    
+    /// Clears saved navigation state from UserDefaults.
+    public func clearNavigationState() {
+        let ud = UserDefaults.standard
+        ud.removeObject(forKey: "navDestinationLat")
+        ud.removeObject(forKey: "navDestinationLon")
+        ud.removeObject(forKey: "navDestinationName")
+        ud.removeObject(forKey: "navDestinationPlaceId")
+    }
+    
     /// Stops recording the session and checks if it's worth saving (long enough).
+    /// Also stops location hardware to prevent the background location indicator
+    /// from showing when the user is not actively recording.
     public func endSession() {
         DebugLogger.shared.log("Drive session ENDING (Duration: \(Int(sessionDuration))s)")
         if let session = sessionRecorder.endSession() {
@@ -937,6 +1131,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         sessionTimer = nil
         sessionStartTime = nil
         self.sessionDuration = 0
+        
+        // ── Critical: stop location hardware when session ends ──────
+        // Prevents the background location indicator (orange pill) from
+        // appearing when the user goes to another app after ending a drive.
+        locationManager.setBackgroundUpdates(false)
+        locationManager.stopUpdatingLocation()
         
         // Requirement 4: If we stop session, we also end the directions.
         if isNavigating {
