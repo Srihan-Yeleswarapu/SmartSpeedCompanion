@@ -107,6 +107,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// The list of alternate routes returned by MKDirections.
     @Published public var availableRoutes: [MKRoute] = [] 
     
+    // MARK: - Drive Focus Mode
+    /// When true, a distraction-free full-screen view replaces the normal HUD.
+    @Published public var isDriveFocusMode: Bool = false
+    
     // MARK: - Map Interaction State
     /// True if the user has manually panned the map away from current tracking.
     @Published public var isMapDetached: Bool = false

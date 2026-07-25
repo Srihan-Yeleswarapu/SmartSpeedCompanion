@@ -64,5 +64,10 @@ public struct DriveRootView: View {
         } message: {
             Text("This drive was less than 1.5 minutes. Would you like to save it or delete it?")
         }
+        // Full-screen cover for Drive Focus Mode — distraction-free speed display
+        .fullScreenCover(isPresented: $driveViewModel.isDriveFocusMode) {
+            DriveFocusView()
+                .environmentObject(driveViewModel)
+        }
     }
 }

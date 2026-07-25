@@ -573,10 +573,13 @@ fileprivate struct BottomTransparentHUD: View {
             }
 
             // Bottom row — three independent floating widgets over the map.
-            // SpeedReadout (leading), START/STOP (center), LimitSignView (trailing).
+            // SpeedReadout (leading), START/STOP with Focus badge (center), LimitSignView (trailing).
+            // The Focus button is overlaid on the top-trailing edge of the START/STOP capsule
+            // so the original 3-column balance is preserved, even on narrow screens.
             HStack(alignment: .bottom, spacing: 0) {
                 SpeedReadout(isLandscape: isLandscape)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                
                 Button(action: {
                     if driveViewModel.isRecording {
                         driveViewModel.endSession()
@@ -584,13 +587,29 @@ fileprivate struct BottomTransparentHUD: View {
                         driveViewModel.startSession()
                     }
                 }) {
-                    Text(driveViewModel.isRecording ? "STOP" : "START")
-                        .font(.system(size: isLandscape ? 12 : 14, weight: .black))
-                        .foregroundColor(driveViewModel.isRecording ? .white : .black)
-                        .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
-                        .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
-                        .clipShape(Capsule())
-                        .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
+                    ZStack(alignment: .topTrailing) {
+                        Text(driveViewModel.isRecording ? "STOP" : "START")
+                            .font(.system(size: isLandscape ? 12 : 14, weight: .black))
+                            .foregroundColor(driveViewModel.isRecording ? .white : .black)
+                            .frame(width: isLandscape ? 72 : 86, height: isLandscape ? 38 : 44)
+                            .background(driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan)
+                            .clipShape(Capsule())
+                            .shadow(color: (driveViewModel.isRecording ? DesignSystem.alertRed : DesignSystem.cyan).opacity(0.4), radius: 10)
+                        
+                        // Focus Mode badge inset on the top-trailing edge of the capsule
+                        Button(action: {
+                            driveViewModel.isDriveFocusMode = true
+                        }) {
+                            Image(systemName: "eye.fill")
+                                .font(.system(size: isLandscape ? 7 : 8, weight: .black))
+                                .foregroundColor(.white)
+                                .padding(4)
+                                .background(Circle().fill(DesignSystem.cyan))
+                                .overlay(Circle().stroke(Color.black, lineWidth: 1.5))
+                        }
+                        .buttonStyle(.plain) // no double-highlight from nested buttons
+                        .offset(x: 6, y: -6)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 LimitSignView(
