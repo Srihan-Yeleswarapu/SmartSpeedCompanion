@@ -210,6 +210,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
 
 
+    /// Selected vehicle icon id. Persisted in UserDefaults. Defaults to "default_blue".
+    @Published public var selectedVehicleIconId: String = UserDefaults.standard.string(forKey: "selectedVehicleIconId") ?? "default_blue" {
+        didSet { UserDefaults.standard.set(selectedVehicleIconId, forKey: "selectedVehicleIconId") }
+    }
+    
     /// Whether to render Apple's POI glyphs (gas / food / parking / hospital / police)
     /// on top of the map. Persisted from Settings.
     public var showApplePOIs: Bool {

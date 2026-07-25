@@ -801,7 +801,47 @@ public struct LiveMapView: UIViewRepresentable {
         }
 
         public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            if annotation is MKUserLocation { return nil }
+            if annotation is MKUserLocation {
+                // Return a custom annotation view when the user has selected
+                // a non-default vehicle icon; nil keeps the native blue dot.
+                let iconId = parent.viewModel.selectedVehicleIconId
+                guard iconId != "default_blue" else { return nil }
+                
+                let icon = VehicleIcon.icon(for: iconId)
+                let id = "VehicleIcon"
+                var view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKAnnotationView
+                if view == nil {
+                    view = MKAnnotationView(annotation: annotation, reuseIdentifier: id)
+                    view?.canShowCallout = false
+                } else {
+                    view?.annotation = annotation
+                }
+                
+                // Pick the right tint color based on the icon type
+                let tint: UIColor
+                switch iconId {
+                case "sports_car_red":      tint = UIColor(red: 1, green: 0.2, blue: 0.2, alpha: 1)
+                case "sports_car_blue":      tint = UIColor(DesignSystem.cyan)
+                case "pickup_truck":         tint = UIColor(red: 0.8, green: 0.5, blue: 0.2, alpha: 1)
+                case "suv":                  tint = UIColor(DesignSystem.neonGreen)
+                case "motorcycle":           tint = UIColor(red: 1, green: 0.6, blue: 0, alpha: 1)
+                case "scooter":             tint = UIColor(red: 0.8, green: 0.3, blue: 0.8, alpha: 1)
+                case "convertible":          tint = UIColor(red: 1, green: 0.8, blue: 0, alpha: 1)
+                case "truck_monster":       tint = UIColor(red: 0.4, green: 0.8, blue: 0.2, alpha: 1)
+                case "ev_car":              tint = UIColor(DesignSystem.cyan)
+                case "bicycle":             tint = UIColor(red: 0.6, green: 0.8, blue: 1, alpha: 1)
+                case "airplane":            tint = UIColor(red: 0.7, green: 0.7, blue: 0.9, alpha: 1)
+                default:                     tint = UIColor(DesignSystem.cyan)
+                }
+                
+                if let image = UIImage(systemName: icon.systemImageName)?.withTintColor(tint, renderingMode: .alwaysOriginal) {
+                    view?.image = image
+                    // Calculate offset from the image size, not the view frame,
+                    // because frame.height is 0 before the first layout pass.
+                    view?.centerOffset = CGPoint(x: 0, y: -image.size.height / 2)
+                }
+                return view
+            }
 
             #if DEBUG || DEVELOPER_BUILD
             if annotation.title == "SIMULATED_CAR" {

@@ -27,6 +27,7 @@ public struct SettingsView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @EnvironmentObject var appState: AppState
     @State private var showingTutorial = false
+    @State private var showingVehicleIconPicker = false
     // TestFlight 2.1.4 feedback from
     // srihan.yeleswarapu@gmail.com: "And put a how to button. Then put
     // detailed instructions on how to toggle an app to use cellular,
@@ -201,6 +202,30 @@ public struct SettingsView: View {
                     Toggle("Gradient route line", isOn: $gradientRouteEnabled)
                         .tint(DesignSystem.neonGreen)
 
+                    // Vehicle Icon picker
+                    Button(action: { showingVehicleIconPicker = true }) {
+                        HStack(spacing: 12) {
+                            let currentIcon = VehicleIcon.icon(for: driveViewModel.selectedVehicleIconId)
+                            Image(systemName: currentIcon.systemImageName)
+                                .font(.system(size: 20))
+                                .foregroundColor(DesignSystem.cyan)
+                                .frame(width: 32)
+                            
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Vehicle Icon")
+                                    .foregroundColor(.white)
+                                Text(currentIcon.displayName)
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.white.opacity(0.4))
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                    
                     // "3D flyover (long highways)" toggle removed in 2.2.x —
                     // flyover camera is now baked-in default behavior
                     // (see LiveMapView.updateSmartAltitude).
@@ -287,6 +312,13 @@ public struct SettingsView: View {
                 // from a button so they don't have to navigate manually.
                 .sheet(isPresented: $showingNetworkHelp) {
                     NetworkHelpSheet()
+                }
+                .sheet(isPresented: $showingVehicleIconPicker) {
+                    VehicleIconPickerSheet()
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(24)
+                        .preferredColorScheme(.dark)
                 }
                 // Full-screen tap-to-record modal for the “Custom” haptic.
                 // Implemented in HapticRecordingView.swift.
