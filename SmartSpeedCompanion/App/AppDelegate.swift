@@ -5,6 +5,11 @@ import SwiftData
 
 class AppDelegate: UIResponder, UIApplicationDelegate {
     
+    /// Controls the allowed interface orientations for the app.
+    /// Set to `.all` when entering Drive Focus Mode (to allow landscape),
+    /// and back to `.portrait` when exiting.
+    static var orientationLock: UIInterfaceOrientationMask = .portrait
+    
     // Shared ModelContainer for SwiftData - initialized early so CarPlay can access it
     // This must be created before any scene (including CarPlay) connects
     static let sharedModelContainer: ModelContainer = {
@@ -47,5 +52,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             return UISceneConfiguration(name: "CarPlay Configuration", sessionRole: connectingSceneSession.role)
         }
         return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    }
+    
+    /// Dynamically returns the allowed interface orientations based on the current mode.
+    /// Returns `.all` during Drive Focus Mode (allowing landscape rotation),
+    /// and `.portrait` for all other screens.
+    func application(
+        _ application: UIApplication,
+        supportedInterfaceOrientationsFor window: UIWindow?
+    ) -> UIInterfaceOrientationMask {
+        return Self.orientationLock
     }
 }

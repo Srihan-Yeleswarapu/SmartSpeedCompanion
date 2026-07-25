@@ -109,7 +109,32 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     
     // MARK: - Drive Focus Mode
     /// When true, a distraction-free full-screen view replaces the normal HUD.
-    @Published public var isDriveFocusMode: Bool = false
+    /// Also configures device orientation — allows landscape rotation while in focus mode,
+    /// and forces back to portrait when exited.
+    @Published public var isDriveFocusMode: Bool = false {
+        didSet {
+            // Update the app's orientation lock to allow landscape in Focus Mode
+            AppDelegate.orientationLock = isDriveFocusMode ? .all : .portrait
+            
+            // Force the device back to portrait when exiting Focus Mode
+            if !isDriveFocusMode {
+                DispatchQueue.main.async {
+                    // iOS 16+ API for requesting orientation update via window scene
+                    if let windowScene = UIApplication.shared.connectedScenes
+                        .compactMap({ $0 as? UIWindowScene }).first {
+                        windowScene.requestGeometryUpdate(
+                            .iOS(interfaceOrientations: .portrait)
+                        )
+                    }
+                    // KVC fallback (reliable across all iOS versions)
+                    UIDevice.current.setValue(
+                        UIInterfaceOrientation.portrait.rawValue,
+                        forKey: "orientation"
+                    )
+                }
+            }
+        }
+    }
     
     // MARK: - Map Interaction State
     /// True if the user has manually panned the map away from current tracking.
