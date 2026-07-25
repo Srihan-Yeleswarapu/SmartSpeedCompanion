@@ -63,7 +63,7 @@ public struct VehicleProfilePickerView: View {
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundColor(.white)
                                 let milesStr = String(format: "%.0f", profile.totalDistanceMiles)
-                                Text("\\(profile.totalTrips) trips · \\(milesStr) mi")
+                                Text("\(profile.totalTrips) trips · \(milesStr) mi")
                                     .font(.caption2)
                                     .foregroundColor(.gray)
                             }

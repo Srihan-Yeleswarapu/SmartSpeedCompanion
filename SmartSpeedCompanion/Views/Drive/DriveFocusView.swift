@@ -18,7 +18,7 @@ public struct DriveFocusView: View {
                 Spacer()
 
                 // Big speed number in the status color
-                Text("\\(Int(driveViewModel.speed))")
+                Text("\(Int(driveViewModel.speed))")
                     .font(.system(size: 160, weight: .black, design: .rounded))
                     .foregroundColor(DesignSystem.colorForStatus(driveViewModel.status))
                     .contentTransition(.numericText())
@@ -30,7 +30,7 @@ public struct DriveFocusView: View {
                         forMph: driveViewModel.limit,
                         measurementSystem: measurementSystem
                     )
-                    Text(limitValue == 0 ? "--" : "\\(limitValue)")
+                    Text(limitValue == 0 ? "--" : "\(limitValue)")
                         .font(.system(size: 48, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                     Text(SpeedFormatting.unitLabelShort(measurementSystem: measurementSystem))

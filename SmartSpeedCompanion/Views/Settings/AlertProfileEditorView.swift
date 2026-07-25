@@ -87,7 +87,7 @@ public struct AlertProfileEditorView: View {
                     .font(.subheadline)
                 Spacer()
                 let sign = value.wrappedValue > 0 ? "+" : ""
-                Text("\\(sign)\\(Int(value.wrappedValue))")
+                Text("\(sign)\(Int(value.wrappedValue))")
                     .foregroundColor(DesignSystem.amber)
                     .font(.system(size: 15, weight: .bold, design: .monospaced))
             }
