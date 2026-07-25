@@ -31,6 +31,7 @@ public struct SettingsView: View {
 
     @EnvironmentObject var driveViewModel: DriveViewModel
     @EnvironmentObject var appState: AppState
+    @Environment(\.modelContext) private var modelContext
     @State private var showingTutorial = false
     @State private var showingVehicleIconPicker = false
     // TestFlight 2.1.4 feedback from
@@ -40,6 +41,7 @@ public struct SettingsView: View {
     // data." Toggled by the new NETWORK & DATA row below.
     @State private var showingNetworkHelp = false
     @State private var showingHapticRecorder = false
+    @State private var showingAlertProfiles = false
 
     // NOTE: Previously this view hosted a deletion-flow (notice alert,
     // typed-DELETE confirm, optional reauth sheet, destructive spinner
@@ -133,6 +135,28 @@ public struct SettingsView: View {
                                 }
                                 .foregroundColor(DesignSystem.cyan)
                             }
+                        }
+                    }
+                    // Speed Alert Profiles row
+                    Button(action: { showingAlertProfiles = true }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundColor(DesignSystem.cyan)
+                                .frame(width: 20)
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Speed Alert Profiles")
+                                    .foregroundColor(.white)
+                                let activeName = driveViewModel.alertProfiles.first(where: { $0.isActive })?.name ?? "Default"
+                                Text("Active: \(activeName)")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.white.opacity(0.4))
+                                .font(.caption.weight(.semibold))
                         }
                     }
                 }
@@ -354,6 +378,14 @@ public struct SettingsView: View {
                         .presentationCornerRadius(24)
                         .preferredColorScheme(.dark)
                 }
+                .sheet(isPresented: $showingAlertProfiles) {
+                    AlertProfilesListView()
+                        .environmentObject(driveViewModel)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(24)
+                        .preferredColorScheme(.dark)
+                }
                 // Full-screen tap-to-record modal for the “Custom” haptic.
                 // Implemented in HapticRecordingView.swift.
                 .fullScreenCover(isPresented: $showingHapticRecorder) {
@@ -368,6 +400,9 @@ public struct SettingsView: View {
                 // UserDefaults write.
                 .task {
                     SpeedFormatting.writeMeasurementSystemToAppGroup(measurementSystem)
+                }
+                .onAppear {
+                    driveViewModel.loadAlertProfiles(context: modelContext)
                 }
         }
     }

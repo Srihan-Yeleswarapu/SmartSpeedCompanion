@@ -115,6 +115,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// True if the user has manually panned the map away from current tracking.
     @Published public var isMapDetached: Bool = false
     
+    // MARK: - Speed Alert Profiles
+    /// All saved speed alert profiles. Loaded from SwiftData on init.
+    @Published public var alertProfiles: [SpeedAlertProfile] = []
+    /// True when the alert profiles list sheet should be presented.
+    @Published public var showAlertProfilesSheet: Bool = false
+    /// The profile currently being edited (nil = creating new).
+    public var editingProfile: SpeedAlertProfile? = nil
+    
     // MARK: - Named Locations
     /// All saved named locations. Loaded from SwiftData on init.
     @Published public var namedLocations: [NamedLocation] = []
@@ -126,6 +134,63 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     @Published public var namingAddress: String? = nil
     /// If non-nil, we are editing an existing named location.
     public var editingNamedLocation: NamedLocation? = nil
+    
+    // MARK: - Alert Profile Management
+    
+    /// Loads all alert profiles from SwiftData, activating the first one if none are active.
+    public func loadAlertProfiles(context: ModelContext) {
+        let descriptor = FetchDescriptor<SpeedAlertProfile>(sortBy: [SortDescriptor(\.createdAt, order: .forward)])
+        if let profiles = try? context.fetch(descriptor) {
+            alertProfiles = profiles
+            // Ensure at least one profile is active
+            if !profiles.contains(where: { $0.isActive }), let first = profiles.first {
+                activateProfile(first.id, context: context)
+            }
+        }
+    }
+    
+    /// Creates a new speed alert profile with default buffer values, inserts into SwiftData, and activates it.
+    @discardableResult
+    public func createNewProfile(name: String, context: ModelContext) -> SpeedAlertProfile {
+        let profile = SpeedAlertProfile(name: name, isActive: true)
+        context.insert(profile)
+        try? context.save()
+        
+        // Deactivate other profiles
+        for p in alertProfiles { p.isActive = false }
+        alertProfiles.append(profile)
+        return profile
+    }
+    
+    /// Activates a profile by ID, deactivating all others.
+    public func activateProfile(_ id: UUID, context: ModelContext) {
+        for p in alertProfiles {
+            let wasActive = p.isActive
+            p.isActive = (p.id == id)
+            if p.id == id && !wasActive {
+                // Apply the profile's default buffer to the speed engine
+                speedEngine.userBuffer = p.defaultBuffer
+            }
+        }
+        try? context.save()
+        objectWillChange.send()
+    }
+    
+    /// Deletes a profile from SwiftData. Cannot delete the last remaining profile.
+    public func deleteProfile(_ id: UUID, context: ModelContext) {
+        guard alertProfiles.count > 1 else { return }
+        if let toDelete = alertProfiles.first(where: { $0.id == id }) {
+            let wasActive = toDelete.isActive
+            context.delete(toDelete)
+            try? context.save()
+            alertProfiles.removeAll { $0.id == id }
+            
+            // If the active profile was deleted, activate the first remaining
+            if wasActive, let first = alertProfiles.first {
+                activateProfile(first.id, context: context)
+            }
+        }
+    }
     
     // MARK: - Deletion States
     /// Controls the UI prompt that asks to delete drives shorter than 90 seconds.

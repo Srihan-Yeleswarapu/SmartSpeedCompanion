@@ -54,6 +54,9 @@ public struct DriveRootView: View {
         }
         .toolbarColorScheme(.dark, for: .tabBar)
         .accentColor(Color(hex: "#00D4FF"))
+        .onAppear {
+            driveViewModel.loadAlertProfiles(context: modelContext)
+        }
         .alert("Short Drive Detected", isPresented: $driveViewModel.showShortSessionPrompt) {
             Button("Keep", role: .cancel) {
                 driveViewModel.saveLastSession()
