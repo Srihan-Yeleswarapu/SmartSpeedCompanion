@@ -111,6 +111,18 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// True if the user has manually panned the map away from current tracking.
     @Published public var isMapDetached: Bool = false
     
+    // MARK: - Named Locations
+    /// All saved named locations. Loaded from SwiftData on init.
+    @Published public var namedLocations: [NamedLocation] = []
+    /// True when the name-location sheet should be presented.
+    @Published public var showNameLocationSheet: Bool = false
+    /// The coordinate the user tapped to name.
+    public var namingCoordinate: CLLocationCoordinate2D? = nil
+    /// The reverse-geocoded address at the naming coordinate.
+    @Published public var namingAddress: String? = nil
+    /// If non-nil, we are editing an existing named location.
+    public var editingNamedLocation: NamedLocation? = nil
+    
     // MARK: - Deletion States
     /// Controls the UI prompt that asks to delete drives shorter than 90 seconds.
     @Published public var showShortSessionPrompt: Bool = false
@@ -1502,6 +1514,83 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
     /// Resets maneuver coordinate + amenity transient state for a fresh drive.
     /// (Look Around scratch state was removed in TestFlight 2.2.0 / FB10.)
+    // MARK: - Named Locations
+    
+    /// Loads all saved named locations from SwiftData.
+    public func loadNamedLocations(context: ModelContext) {
+        let fetchDescriptor = FetchDescriptor<NamedLocation>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        if let results = try? context.fetch(fetchDescriptor) {
+            self.namedLocations = results
+        }
+    }
+    
+    /// Saves a new named location at the given coordinate. If `address` is provided,
+    /// skips the reverse-geocode to avoid a redundant network call.
+    public func saveNamedLocation(name: String, coordinate: CLLocationCoordinate2D, context: ModelContext, address: String? = nil) {
+        if let addr = address {
+            // Address already resolved — synchronous path
+            let namedLocation = NamedLocation(name: name, latitude: coordinate.latitude, longitude: coordinate.longitude, address: addr)
+            context.insert(namedLocation)
+            try? context.save()
+            self.namedLocations.insert(namedLocation, at: 0)
+        } else {
+            // No address provided — reverse-geocode asynchronously
+            let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            let geocoder = CLGeocoder()
+            Task { @MainActor in
+                let resolvedAddress: String?
+                if let placemarks = try? await geocoder.reverseGeocodeLocation(location), let placemark = placemarks.first {
+                    let parts = [placemark.subThoroughfare, placemark.thoroughfare, placemark.locality, placemark.administrativeArea].compactMap { $0 }
+                    resolvedAddress = parts.isEmpty ? nil : parts.joined(separator: " ")
+                } else {
+                    resolvedAddress = nil
+                }
+                let namedLocation = NamedLocation(name: name, latitude: coordinate.latitude, longitude: coordinate.longitude, address: resolvedAddress)
+                context.insert(namedLocation)
+                try? context.save()
+                self.namedLocations.insert(namedLocation, at: 0)
+            }
+        }
+    }
+    
+    /// Deletes a named location by id.
+    public func deleteNamedLocation(_ id: UUID, context: ModelContext) {
+        guard let location = namedLocations.first(where: { $0.id == id }) else { return }
+        context.delete(location)
+        try? context.save()
+        namedLocations.removeAll { $0.id == id }
+    }
+    
+    /// Checks if a coordinate has a saved name using a ~20m tolerance.
+    public func namedLocation(for coordinate: CLLocationCoordinate2D) -> String? {
+        let coord = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        for loc in namedLocations {
+            let saved = CLLocation(latitude: loc.latitude, longitude: loc.longitude)
+            if coord.distance(from: saved) < 20 {
+                return loc.name
+            }
+        }
+        return nil
+    }
+    
+    /// Presents the naming sheet for a given coordinate. Reverse-geocodes to pre-fill the address.
+    public func presentNameLocationSheet(for coordinate: CLLocationCoordinate2D) {
+        self.namingCoordinate = coordinate
+        self.editingNamedLocation = nil
+        self.namingAddress = nil
+        
+        // Reverse geocode to show the address
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let geocoder = CLGeocoder()
+        Task {
+            if let placemarks = try? await geocoder.reverseGeocodeLocation(location), let placemark = placemarks.first {
+                let parts = [placemark.subThoroughfare, placemark.thoroughfare, placemark.locality, placemark.administrativeArea].compactMap { $0 }
+                self.namingAddress = parts.isEmpty ? placemark.name : parts.joined(separator: " ")
+            }
+            self.showNameLocationSheet = true
+        }
+    }
+    
     public func clearNativeMapCache() {
         self.nearbyAmenities = []
         self.nearbyAmenitiesQuery = ""

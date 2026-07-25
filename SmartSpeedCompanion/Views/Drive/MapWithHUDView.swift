@@ -3,6 +3,7 @@ import MapKit
 
 public struct MapWithHUDView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) var hSizeClass
     @Environment(\.verticalSizeClass) var vSizeClass
     // Observed so the offline banner re-renders in real time when
@@ -158,6 +159,17 @@ public struct MapWithHUDView: View {
             .animation(.easeInOut(duration: 0.25), value: driveViewModel.isMapDetached)
             .animation(.easeInOut(duration: 0.3), value: driveViewModel.nearbyAmenities.count)
         }
+        .onAppear {
+            driveViewModel.loadNamedLocations(context: modelContext)
+        }
+        .sheet(isPresented: $driveViewModel.showNameLocationSheet) {
+            NameLocationSheet()
+                .environmentObject(driveViewModel)
+                .presentationDetents([.height(400)])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(24)
+                .preferredColorScheme(.dark)
+        }
     }
 }
 
@@ -296,6 +308,83 @@ fileprivate struct SearchBarView: View {
             .frame(height: isLandscape ? 36 : 48)
             .frame(maxWidth: isLandscape ? 360 : .infinity, alignment: .center)
             .liquidGlassChip(cornerRadius: isLandscape ? 10 : 14, tint: DesignSystem.cyan.opacity(0.04), interactive: true)
+            
+            if isFocused {
+                // Named locations section — shown above recent searches
+                let filteredNamed = searchText.isEmpty ? driveViewModel.namedLocations : driveViewModel.namedLocations.filter { $0.name.lowercased().contains(searchText.lowercased()) }
+                
+                if !filteredNamed.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("SAVED LOCATIONS")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundColor(DesignSystem.cyan.opacity(0.7))
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                            .padding(.bottom, 8)
+                        
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(filteredNamed.prefix(5)) { namedLoc in
+                                    Button(action: {
+                                        Task {
+                                            let coord = CLLocationCoordinate2D(latitude: namedLoc.latitude, longitude: namedLoc.longitude)
+                                            let placemark = MKPlacemark(coordinate: coord)
+                                            let item = MKMapItem(placemark: placemark)
+                                            item.name = namedLoc.name
+                                            await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
+                                            searchText = ""
+                                            isFocused = false
+                                        }
+                                    }) {
+                                        HStack(spacing: 12) {
+                                            ZStack {
+                                                Image(systemName: "house.fill")
+                                                    .font(.system(size: 12))
+                                                    .foregroundColor(DesignSystem.cyan)
+                                                Image(systemName: "tag.fill")
+                                                    .font(.system(size: 6))
+                                                    .foregroundColor(DesignSystem.amber)
+                                                    .offset(x: 6, y: -6)
+                                            }
+                                            .frame(width: 24)
+                                            
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text(namedLoc.name)
+                                                    .font(.system(size: 15, weight: .semibold))
+                                                    .foregroundColor(.white)
+                                                    .lineLimit(1)
+                                                if let addr = namedLoc.address, !addr.isEmpty {
+                                                    Text(addr)
+                                                        .font(.system(size: 11))
+                                                        .foregroundColor(.white.opacity(0.45))
+                                                        .lineLimit(1)
+                                                }
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            Image(systemName: "arrow.turn.up.right")
+                                                .font(.system(size: 11, weight: .bold))
+                                                .foregroundColor(.white.opacity(0.3))
+                                        }
+                                        .padding(.vertical, 12)
+                                        .padding(.horizontal, 16)
+                                    }
+                                    
+                                    if namedLoc != filteredNamed.prefix(5).last {
+                                        Divider()
+                                            .background(Color.white.opacity(0.1))
+                                            .padding(.horizontal, 16)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxHeight: 200)
+                    }
+                    .liquidGlass(cornerRadius: 16, interactive: true)
+                    .padding(.top, 2)
+                }
+            }
             
             if isFocused && !driveViewModel.recentSearches.isEmpty {
                 let filteredSearches = searchText.isEmpty ? driveViewModel.recentSearches : driveViewModel.recentSearches.filter { $0.lowercased().contains(searchText.lowercased()) }

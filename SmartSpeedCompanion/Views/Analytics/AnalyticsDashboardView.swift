@@ -5,6 +5,7 @@ import SwiftData
 // MARK: - Main Dashboard
 
 public struct AnalyticsDashboardView: View {
+    @EnvironmentObject var driveViewModel: DriveViewModel
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \DriveSession.startTime, order: .reverse) private var sessions: [DriveSession]
     @StateObject private var viewModel = AnalyticsViewModel()
@@ -59,7 +60,7 @@ public struct AnalyticsDashboardView: View {
 
                 // ── Content ─────────────────────────────────────────────
                 if let session = viewModel.selectedSession {
-                    AnalyticsContentView(session: session, viewModel: viewModel)
+                    AnalyticsContentView(session: session, viewModel: viewModel, driveViewModel: driveViewModel)
                 } else {
                     AnalyticsEmptyState(hasSessions: !sessions.isEmpty) {
                         viewModel.showSessionPicker = true
@@ -97,6 +98,7 @@ public struct AnalyticsDashboardView: View {
 private struct AnalyticsContentView: View {
     let session: DriveSession
     @ObservedObject var viewModel: AnalyticsViewModel
+    let driveViewModel: DriveViewModel
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
@@ -109,10 +111,10 @@ private struct AnalyticsContentView: View {
         // tombstoned. No `isDeleted` read needed here.
         ScrollView {
             VStack(spacing: 24) {
-                // Session title banner
+                // Session title banner — enriched with named locations
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(session.title)
+                        Text(driveViewModel.namedLocations.isEmpty ? session.title : viewModel.sessionTitleWithNamedLocations(session, namedLocations: driveViewModel.namedLocations))
                             .font(.headline.weight(.semibold))
                             .foregroundColor(.white)
                         Text(session.startTime.formatted(date: .abbreviated, time: .shortened))

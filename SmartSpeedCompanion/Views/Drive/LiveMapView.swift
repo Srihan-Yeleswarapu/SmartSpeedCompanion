@@ -70,6 +70,12 @@ public struct LiveMapView: UIViewRepresentable {
         let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleManualInteraction(_:)))
         pinch.delegate = context.coordinator
         map.addGestureRecognizer(pinch)
+        
+        // Long-press gesture for naming locations.
+        let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
+        longPress.minimumPressDuration = 0.6
+        longPress.delegate = context.coordinator
+        map.addGestureRecognizer(longPress)
 
         // Honor the persisted POI toggle from Settings — on by default for
         // .gasStation / .parking / .hospital / .police / .restaurant / .cafe.
@@ -363,6 +369,13 @@ public struct LiveMapView: UIViewRepresentable {
             if gesture.state == .began || gesture.state == .changed {
                 startManualMode(gesture.view as? MKMapView)
             }
+        }
+        
+        @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .began, let mapView = gesture.view as? MKMapView else { return }
+            let point = gesture.location(in: mapView)
+            let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
+            parent.viewModel.presentNameLocationSheet(for: coordinate)
         }
 
         public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {

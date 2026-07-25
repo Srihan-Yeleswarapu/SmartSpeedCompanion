@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 import SwiftData
 import SwiftUI
 
@@ -14,6 +15,74 @@ public final class AnalyticsViewModel: ObservableObject {
     public func selectSession(_ session: DriveSession?) {
         self.selectedSession = session
         self.showSessionPicker = false
+    }
+    
+    /// Returns an enriched session title that uses named location names instead of
+    /// addresses when the session's start or end coordinate matches a saved named location.
+    /// Falls back to `session.title` when no named locations match.
+    public func sessionTitleWithNamedLocations(_ session: DriveSession, namedLocations: [NamedLocation]) -> String {
+        guard !namedLocations.isEmpty else { return session.title }
+        
+        // Check the first and last reading's coordinates against named locations
+        let startCoord: CLLocationCoordinate2D?
+        let endCoord: CLLocationCoordinate2D?
+        
+        if let first = session.readings.first {
+            startCoord = CLLocationCoordinate2D(latitude: first.latitude, longitude: first.longitude)
+        } else {
+            startCoord = nil
+        }
+        
+        if let last = session.readings.last {
+            endCoord = CLLocationCoordinate2D(latitude: last.latitude, longitude: last.longitude)
+        } else {
+            endCoord = nil
+        }
+        
+        let startName = startCoord.flatMap { coord -> String? in
+            let cl = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+            for loc in namedLocations {
+                let saved = CLLocation(latitude: loc.latitude, longitude: loc.longitude)
+                if cl.distance(from: saved) < 20 { return loc.name }
+            }
+            return nil
+        }
+        
+        let endName = endCoord.flatMap { coord -> String? in
+            let cl = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+            for loc in namedLocations {
+                let saved = CLLocation(latitude: loc.latitude, longitude: loc.longitude)
+                if cl.distance(from: saved) < 20 { return loc.name }
+            }
+            return nil
+        }
+        
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "MMM d"
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "h:mm a"
+        
+        let dayStr = dayFormatter.string(from: session.startTime)
+        let timeStr = timeFormatter.string(from: session.startTime)
+        let suffix = "at \(timeStr) on \(dayStr)"
+        
+        if let start = startName, let end = endName {
+            return "\(start) to \(end) \(suffix)"
+        } else if let start = startName {
+            let end = session.endLocationName ?? "Unknown Location"
+            if end != "Unknown Location" {
+                return "\(start) to \(end) \(suffix)"
+            }
+            return "\(start) \(suffix)"
+        } else if let end = endName {
+            let start = session.startLocationName ?? "Unknown Location"
+            if start != "Unknown Location" {
+                return "\(start) to \(end) \(suffix)"
+            }
+            return "\(end) \(suffix)"
+        }
+        
+        return session.title
     }
     
     // MARK: - Formatted Stats

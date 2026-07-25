@@ -9,7 +9,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // This must be created before any scene (including CarPlay) connects
     static let sharedModelContainer: ModelContainer = {
         do {
-            return try ModelContainer(for: DriveSession.self, SpeedReading.self)
+            return try ModelContainer(for: DriveSession.self, SpeedReading.self, NamedLocation.self)
         } catch {
             fatalError("Failed to create shared ModelContainer: \(error)")
         }
