@@ -55,14 +55,14 @@ struct DriveSessionEntity: IndexedEntity {
     var routeDescription: String?
 
     var displayRepresentation: DisplayRepresentation {
-        let subtitle: String
+        let subtitle: LocalizedStringResource
         if let route = routeDescription {
-            subtitle = "Score: \(drivingScore) — \(route)"
+            subtitle = LocalizedStringResource(stringLiteral: "Score: \(drivingScore) — \(route)")
         } else {
-            subtitle = "Score: \(drivingScore)"
+            subtitle = LocalizedStringResource(stringLiteral: "Score: \(drivingScore)")
         }
         return DisplayRepresentation(
-            title: "\(title)",
+            title: LocalizedStringResource(stringLiteral: title),
             subtitle: subtitle
         )
     }
