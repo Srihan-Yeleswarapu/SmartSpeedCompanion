@@ -301,5 +301,45 @@ struct SpeedAppShortcutsProvider: AppShortcutsProvider {
         // Note: NavigateToDestinationIntent is not included in AppShortcuts
         // because String parameters cannot be used in parameterized shortcut phrases.
         // The intent can still be triggered via Siri by name.
+
+        // ═══════════════════════════════════════════════════════════════════
+        // MARK: - Apple Intelligence / Siri AI — Drive Session Queries
+        // ═══════════════════════════════════════════════════════════════════
+        //
+        // These intents expose historical drive-session data to Siri and
+        // Apple Intelligence. Users can ask about past drives in natural
+        // language (e.g. "how was my drive to Work") and get a spoken
+        // summary of all the metrics: driving score, duration, % within
+        // limit, max / avg overspeed, etc.
+        //
+        // The entity resolution is powered by `DriveSessionEntity` +
+        // `DriveSessionEntityQuery` (see DriveSessionEntity.swift and
+        // DriveSessionEntityQuery.swift) which index session titles and
+        // location names into the on-device semantic index.
+
+        AppShortcut(
+            intent: GetLatestDriveSummaryIntent(),
+            phrases: [
+                "How was my last drive in \(.applicationName)",
+                "How was my most recent drive in \(.applicationName)",
+                "How did I drive last time in \(.applicationName)",
+                "Get my latest drive summary in \(.applicationName)",
+                "What was my driving score in \(.applicationName)",
+                "How well did I drive in \(.applicationName)",
+                "Check my last drive in \(.applicationName)"
+            ],
+            shortTitle: "Latest Drive Summary",
+            systemImageName: "chart.bar.fill"
+        )
+        AppShortcut(
+            intent: GetTodayDriveSummaryIntent(),
+            phrases: [
+                "How were my drives today in \(.applicationName)",
+                "How did I drive today in \(.applicationName)",
+                "Check my drives today in \(.applicationName)"
+            ],
+            shortTitle: "Today's Drives",
+            systemImageName: "calendar.day.timeline.left"
+        )
     }
 }

@@ -79,6 +79,21 @@ public final class DriveSession {
         return longest
     }
     
+    /// Computes the maximum speed recorded during the session.
+    public var maxSpeed: Double {
+        guard !readings.isEmpty else { return 0.0 }
+        return readings.map(\.speed).max() ?? 0.0
+    }
+
+    /// Computes the maximum amount (in mph) the user exceeded the speed limit.
+    /// Returns 0 if never over the limit or if there are no readings.
+    public var maxOverLimit: Double {
+        guard !readings.isEmpty else { return 0.0 }
+        let overReadings = readings.filter { $0.overLimit && $0.speedLimit > 0 }
+        guard !overReadings.isEmpty else { return 0.0 }
+        return overReadings.map { $0.speed - Double($0.speedLimit) }.max() ?? 0.0
+    }
+
     /// Computes the average speed over the limit for only the intervals where the user was speeding.
     public var avgMphOverLimit: Double {
         let overReadings = readings.filter { $0.overLimit }
