@@ -326,10 +326,18 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         savedOfflineRegions = regions
     }
     
-    /// Saves the current map region as an offline area.
+    /// Saves the current map region as an offline area (centre‑point only, legacy).
     public func saveOfflineRegion(named label: String, centerLat: Double, centerLon: Double) {
         let region = OfflineRegion(label: label, lat: centerLat, lon: centerLon)
         savedOfflineRegions.append(region)
+        persistOfflineRegions()
+    }
+
+    /// Saves a fully‑specified offline region with bounding box + size estimate
+    /// from the interactive map picker (`OfflineMapRegionPickerView`).
+    public func saveOfflineRegion(named label: String, region: MKCoordinateRegion, estimatedSizeMB: Double) {
+        let offlineRegion = OfflineRegion(label: label, region: region, estimatedSizeMB: estimatedSizeMB)
+        savedOfflineRegions.append(offlineRegion)
         persistOfflineRegions()
     }
     

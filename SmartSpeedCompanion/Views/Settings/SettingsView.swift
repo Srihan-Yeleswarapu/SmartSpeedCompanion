@@ -49,7 +49,6 @@ public struct SettingsView: View {
     @State private var showingNetworkHelp = false
     @State private var showingHapticRecorder = false
     @State private var showingAlertProfiles = false
-    @State private var showingOfflineRegions = false
 
     // NOTE: Previously this view hosted a deletion-flow (notice alert,
     // typed-DELETE confirm, optional reauth sheet, destructive spinner
@@ -245,30 +244,6 @@ public struct SettingsView: View {
                 }
                 .listRowBackground(DesignSystem.bgPanel)
 
-                // MARK: - OFFLINE MAPS section
-                Section(header: Text("OFFLINE MAPS").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
-                    Button(action: { showingOfflineRegions = true }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: "square.and.arrow.down")
-                                .foregroundColor(DesignSystem.cyan)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Saved Map Regions")
-                                    .foregroundColor(.white)
-                                let count = driveViewModel.savedOfflineRegions.count
-                                Text(count == 0 ? "No saved offline areas" : "\(count) region\(count == 1 ? "" : "s") saved")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.white.opacity(0.4))
-                                .font(.caption.weight(.semibold))
-                        }
-                    }
-                }
-                .listRowBackground(DesignSystem.bgPanel)
-
                 // MARK: - VEHICLE / fuel-efficiency section removed
                 // TestFlight FB26: "You put fuel efficiency and fuel price
                 // options here. Can you remove this feature? I don't like
@@ -373,14 +348,6 @@ public struct SettingsView: View {
                 }
                 .sheet(isPresented: $showingAlertProfiles) {
                     AlertProfilesListView()
-                        .environmentObject(driveViewModel)
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(24)
-                        .preferredColorScheme(.dark)
-                }
-                .sheet(isPresented: $showingOfflineRegions) {
-                    OfflineRegionsListView()
                         .environmentObject(driveViewModel)
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)

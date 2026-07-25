@@ -1,104 +1,24 @@
 import SwiftUI
 
 /// List of saved offline map regions. Tap to navigate to, swipe to delete.
+///
+/// ─── Gating ─────────────────────────────────────────────────────────
+/// The interactive map picker (`OfflineMapRegionPickerView`) is fully
+/// implemented but NOT wired into the UI yet.  To activate it, add:
+///
+/// ```swift
+/// .fullScreenCover(isPresented: $showingMapPicker) {
+///     OfflineMapRegionPickerView()
+///         .environmentObject(driveViewModel)
+/// }
+/// ```
+///
+/// …and wire the `showingMapPicker` trigger to a button (e.g. a "+"
+/// toolbar item).  For now the list shows saved regions and allows
+/// deletion only.
 public struct OfflineRegionsListView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @Environment(\.dismiss) private var dismiss
-
-    @State private var showSaveSheet = false
-    @State private var regionName = ""
-
-    private var saveSheetContent: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Capsule()
-                    .fill(Color.white.opacity(0.3))
-                    .frame(width: 36, height: 5)
-                    .padding(.top, 12)
-
-                VStack(spacing: 4) {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 32))
-                        .foregroundColor(DesignSystem.cyan)
-                    Text("Save Offline Region")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundColor(.white)
-                }
-
-                Text("Saves the area around your current location for offline speed limit browsing.")
-                    .font(.system(size: 14))
-                    .foregroundColor(.white.opacity(0.6))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("REGION NAME")
-                        .font(.system(size: 11, weight: .black))
-                        .foregroundColor(DesignSystem.cyan)
-                        .padding(.horizontal, 4)
-
-                    TextField("e.g. \"Downtown\"", text: $regionName)
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        .background(DesignSystem.bgCard)
-                        .cornerRadius(12)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(DesignSystem.cyan.opacity(0.3), lineWidth: 1)
-                        )
-                        .submitLabel(.done)
-                        .onSubmit(saveRegion)
-                }
-
-                Button(action: saveRegion) {
-                    Text("Save")
-                        .font(.system(size: 17, weight: .black))
-                        .foregroundColor(.black)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(regionName.trimmingCharacters(in: .whitespaces).isEmpty
-                            ? DesignSystem.cyan.opacity(0.4)
-                            : DesignSystem.cyan)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                }
-                .disabled(regionName.trimmingCharacters(in: .whitespaces).isEmpty)
-
-                Spacer()
-            }
-            .padding(.horizontal, 24)
-            .background(DesignSystem.bgDeep.ignoresSafeArea())
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        regionName = ""
-                        showSaveSheet = false
-                    }
-                    .foregroundColor(DesignSystem.cyan)
-                }
-            }
-        }
-        .preferredColorScheme(.dark)
-        .presentationDetents([.height(380)])
-    }
-
-    private func saveRegion() {
-        let trimmed = regionName.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-
-        let coord: (lat: Double, lon: Double)
-        if let loc = driveViewModel.locationManager.latestLocation {
-            coord = (loc.coordinate.latitude, loc.coordinate.longitude)
-        } else {
-            // Fallback: use a default coordinate (e.g. Phoenix, AZ)
-            coord = (33.4484, -112.0740)
-        }
-
-        driveViewModel.saveOfflineRegion(named: trimmed, centerLat: coord.lat, centerLon: coord.lon)
-        regionName = ""
-        showSaveSheet = false
-    }
 
     public var body: some View {
         NavigationStack {
@@ -111,7 +31,7 @@ public struct OfflineRegionsListView: View {
                         Text("No saved offline regions")
                             .font(.headline)
                             .foregroundColor(.gray)
-                        Text("Tap the + button to save your current location as an offline region.")
+                        Text("Saved offline regions will appear here.")
                             .font(.caption)
                             .foregroundColor(.gray)
                             .multilineTextAlignment(.center)
@@ -132,9 +52,22 @@ public struct OfflineRegionsListView: View {
                             Text(region.label)
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundColor(.white)
-                            Text("Saved \(region.timestamp.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.caption2)
-                                .foregroundColor(.gray)
+
+                            // Show bounding‑box info when available (map‑picker regions),
+                            // fall back to the legacy centre‑point label.
+                            if let size = region.estimatedSizeMB, let spanH = region.latSpan, let spanW = region.lonSpan {
+                                let kmW = spanW * 111_000.0 * cos(region.lat * .pi / 180.0) / 1000.0
+                                let kmH = spanH * 111_000.0 / 1000.0
+                                Text(String(format: "%.1f × %.1f km  •  %.2f MB  •  %@",
+                                           kmH, kmW, size,
+                                           region.timestamp.formatted(date: .abbreviated, time: .shortened)))
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                            } else {
+                                Text("Saved \(region.timestamp.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                            }
                         }
 
                         Spacer()
@@ -159,14 +92,6 @@ public struct OfflineRegionsListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        showSaveSheet = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .foregroundColor(DesignSystem.cyan)
-                    }
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
                         .foregroundColor(DesignSystem.cyan)
@@ -175,9 +100,6 @@ public struct OfflineRegionsListView: View {
             .onAppear {
                 driveViewModel.loadOfflineRegions()
             }
-        }
-        .sheet(isPresented: $showSaveSheet) {
-            saveSheetContent
         }
         .preferredColorScheme(.dark)
     }
