@@ -11,11 +11,11 @@ public struct AppRootView: View {
             if !appState.authManager.initialAuthChecked {
                 initializingView
             } else {
-                // First-run funnel: state → survey → "how Speedio works" → tutorial → location → Drive.
+                // First-run funnel: survey → "how Speedio works" → tutorial → location → Drive.
                 // IMPORTANT: this branch is checked BEFORE `isAuthenticated` so that a
                 // freshly signed-up account (for which `signUp` posts `.userDidSignUp`
                 // and `resetOnboardingFunnel` rewinds `onboardingStep` back to
-                // `.stateSelection`) is routed into the funnel, not directly into Drive.
+                // `.questions`) is routed into the funnel, not directly into Drive.
                 //
                 // Authentication is intentionally NOT a gate on the Drive UI (Apple
                 // App Store Guideline 5.1.1(v): apps may not require users to register
@@ -30,9 +30,9 @@ public struct AppRootView: View {
                 // user with a cached Firebase session can still sign out / delete
                 // their account from Settings (gated on `isAuthenticated`).
                 switch appState.onboardingStep {
-                case .stateSelection:
-                    StateSelectionView()
-                case .questions:
+                case .stateSelection, .questions:
+                    // `.stateSelection` is a legacy value from before the state
+                    // picker was removed — persisted users skip to questions.
                     OnboardingView()
                 case .transition:
                     TutorialTransitionView()
