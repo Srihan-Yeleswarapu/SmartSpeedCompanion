@@ -39,7 +39,19 @@ public struct AlertProfileEditorView: View {
                     bufferRow(label: "Work Zone", value: $workZoneBuffer, range: -5...10)
                     bufferRow(label: "Default (Unknown Road)", value: $defaultBuffer, range: -5...10)
                 }
-                .listRowBackground(DesignSystem.bgPanel)
+
+                Section {
+                    Button(action: resetToDefaults) {
+                        HStack {
+                            Spacer()
+                            Label("Reset to Defaults", systemImage: "arrow.counterclockwise")
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .foregroundColor(DesignSystem.amber)
+                }
 
                 Section {
                     Text("The buffer is the amount above the speed limit before an alert triggers. A positive value gives you headroom; negative tightens enforcement.")
@@ -94,6 +106,15 @@ public struct AlertProfileEditorView: View {
             Slider(value: value, in: range, step: 1)
                 .tint(DesignSystem.cyan)
         }
+    }
+
+    private func resetToDefaults() {
+        highwayBuffer = 5
+        residentialBuffer = 3
+        schoolZoneBuffer = 0
+        workZoneBuffer = 0
+        arterialBuffer = 5
+        defaultBuffer = 5
     }
 
     private func saveProfile() {
