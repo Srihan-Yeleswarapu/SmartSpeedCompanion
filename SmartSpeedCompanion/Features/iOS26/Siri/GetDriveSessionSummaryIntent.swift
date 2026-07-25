@@ -1,5 +1,6 @@
 import AppIntents
 import Foundation
+import SwiftData
 
 // MARK: - Formatting helpers (shared across intents)
 
@@ -99,6 +100,11 @@ enum DriveSummaryFormatter {
         f.locale = .current
         return f.string(from: date)
     }
+
+    /// Converts a dialog string into the `IntentDialog` type required by `.result(dialog:)`.
+    static func dialog(_ text: String) -> IntentDialog {
+        IntentDialog.full(LocalizedStringResource(stringLiteral: text))
+    }
 }
 
 // MARK: - GetDriveSessionSummaryIntent
@@ -112,9 +118,8 @@ enum DriveSummaryFormatter {
 struct GetDriveSessionSummaryIntent: AppIntent {
     static var title: LocalizedStringResource = "Get Drive Session Summary"
     static var description = IntentDescription(
-        "Get a detailed summary of a specific drive session, including driving score, duration, " +
-        "time within speed limit, max overspeed, and average over limit.",
-        categoryName: "Driving",
+        "Get a detailed summary of a specific drive session." as LocalizedStringResource,
+        categoryName: "Driving" as LocalizedStringResource,
         searchKeywords: ["drive", "session", "summary", "score", "speed"]
     )
 
@@ -129,8 +134,9 @@ struct GetDriveSessionSummaryIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let dialog = DriveSummaryFormatter.formatSummary(session)
-        return .result(dialog: LocalizedStringResource(stringLiteral: dialog))
+        return .result(dialog: DriveSummaryFormatter.dialog(
+            DriveSummaryFormatter.formatSummary(session)
+        ))
     }
 }
 
@@ -140,8 +146,8 @@ struct GetDriveSessionSummaryIntent: AppIntent {
 struct GetLatestDriveSummaryIntent: AppIntent {
     static var title: LocalizedStringResource = "Get Latest Drive Summary"
     static var description = IntentDescription(
-        "Get a summary of your most recent drive session.",
-        categoryName: "Driving",
+        "Get a summary of your most recent drive session." as LocalizedStringResource,
+        categoryName: "Driving" as LocalizedStringResource,
         searchKeywords: ["last", "latest", "recent", "drive", "summary"]
     )
     static var openAppWhenRun: Bool = false
@@ -150,17 +156,20 @@ struct GetLatestDriveSummaryIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let context = AppDelegate.sharedModelContainer.mainContext
         var fetch = FetchDescriptor<DriveSession>(
-            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+            sortBy: [SortDescriptor<DriveSession>(\.startTime, order: .reverse)]
         )
         fetch.fetchLimit = 1
 
         guard let session = (try? context.fetch(fetch))?.first else {
-            return .result(dialog: "You don't have any recorded drives yet. Start a drive session first and I'll be able to tell you how it went.")
+            return .result(dialog: DriveSummaryFormatter.dialog(
+                "You don't have any recorded drives yet. Start a drive session first and I'll be able to tell you how it went."
+            ))
         }
 
         let entity = DriveSessionEntity.from(session)
-        let dialog = DriveSummaryFormatter.formatSummary(entity)
-        return .result(dialog: LocalizedStringResource(stringLiteral: dialog))
+        return .result(dialog: DriveSummaryFormatter.dialog(
+            DriveSummaryFormatter.formatSummary(entity)
+        ))
     }
 }
 
@@ -170,8 +179,8 @@ struct GetLatestDriveSummaryIntent: AppIntent {
 struct GetTodayDriveSummaryIntent: AppIntent {
     static var title: LocalizedStringResource = "Get Today's Drive Summary"
     static var description = IntentDescription(
-        "Get a summary of all your drives from today.",
-        categoryName: "Driving",
+        "Get a summary of all your drives from today." as LocalizedStringResource,
+        categoryName: "Driving" as LocalizedStringResource,
         searchKeywords: ["today", "drive", "summary"]
     )
     static var openAppWhenRun: Bool = false
@@ -182,23 +191,26 @@ struct GetTodayDriveSummaryIntent: AppIntent {
         let startOfDay = Calendar.current.startOfDay(for: Date())
 
         var fetch = FetchDescriptor<DriveSession>(
-            predicate: #Predicate { $0.startTime >= startOfDay },
-            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+            predicate: #Predicate<DriveSession> { $0.startTime >= startOfDay },
+            sortBy: [SortDescriptor<DriveSession>(\.startTime, order: .reverse)]
         )
 
         let sessions = (try? context.fetch(fetch)) ?? []
         guard !sessions.isEmpty else {
-            return .result(dialog: "You haven't gone for any drives today.")
+            return .result(dialog: DriveSummaryFormatter.dialog(
+                "You haven't gone for any drives today."
+            ))
         }
 
         let totalSeconds = sessions.reduce(0) { $0 + $1.durationSeconds }
-        let avgScore = sessions.map(\.drivingScore).reduce(0, +) / max(sessions.count, 1)
-        let bestScore = sessions.map(\.drivingScore).max() ?? 0
+        let scores = sessions.map { $0.drivingScore }
+        let avgScore = scores.reduce(0, +) / max(scores.count, 1)
+        let bestScore = scores.max() ?? 0
         let totalStr = DriveSummaryFormatter.formattedDuration(totalSeconds)
 
-        var dialog = "You've had \(sessions.count) drive\(sessions.count == 1 ? "" : "s") today totalling \(totalStr). "
-        dialog += "Your average score was \(avgScore) with a best of \(bestScore)."
+        let dialog = "You've had \(sessions.count) drive\(sessions.count == 1 ? "" : "s") today totalling \(totalStr). " +
+            "Your average score was \(avgScore) with a best of \(bestScore)."
 
-        return .result(dialog: LocalizedStringResource(stringLiteral: dialog))
+        return .result(dialog: DriveSummaryFormatter.dialog(dialog))
     }
 }
