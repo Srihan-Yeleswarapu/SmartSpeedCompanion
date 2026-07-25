@@ -18,8 +18,27 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     @Published public var consecutiveSeconds: Int = 0
     @Published public var audioAlertActive: Bool = false
     
+    // MARK: - Snooze
+    /// When set, the engine skips `triggerAlert()` until this date passes.
+    @Published public var snoozedUntil: Date? = nil
+    /// True while the alert is snoozed (current time < snoozedUntil).
+    public var isSnoozed: Bool {
+        guard let until = snoozedUntil else { return false }
+        return until > Date()
+    }
+    /// How many seconds remaining in the current snooze (0 if not snoozed).
+    public var snoozeRemainingSeconds: Int {
+        guard let until = snoozedUntil, until > Date() else { return 0 }
+        return Int(until.timeIntervalSince(Date()))
+    }
+    /// Reference to SpeedEngine for auto-expire when stopped.
+    private weak var speedEngine: SpeedEngine?
+    /// Tracks how long the car has been stopped during snooze.
+    private var stoppedWhileSnoozed: TimeInterval = 0
+    
     private var timerCancellable: AnyCancellable?
     private var statusCancellable: AnyCancellable?
+    private var snoozeAutoExpireCancellable: AnyCancellable?
     private let audioAlertsKey = "audioAlertsEnabled"
     private var isAudioAlertsEnabled: Bool {
         let defaults = UserDefaults.standard
@@ -56,6 +75,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - Init
     public init(speedEngine: SpeedEngine) {
+        self.speedEngine = speedEngine
         setupAudioSession()
         setupToneEngine()
         setupHaptics()
@@ -64,6 +84,63 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             .receive(on: RunLoop.main)
             .sink { [weak self] newStatus in
                 self?.handleStatusChange(newStatus)
+            }
+    }
+    
+    // MARK: - Snooze
+    
+    /// Silences alerts for the given duration. Only one snooze at a time;
+    /// calling while already snoozed extends the snooze from the current time.
+    public func snoozeFor(_ seconds: TimeInterval) {
+        snoozedUntil = Date().addingTimeInterval(seconds)
+        DebugLogger.shared.log("AlertEngine: snoozed for \(Int(seconds))s")
+        
+        // Start monitoring for auto-expire when the car stops.
+        startSnoozeAutoExpireMonitor()
+    }
+    
+    /// Cancels the current snooze, allowing alerts to resume immediately.
+    public func cancelSnooze() {
+        snoozedUntil = nil
+        stoppedWhileSnoozed = 0
+        snoozeAutoExpireCancellable?.cancel()
+        snoozeAutoExpireCancellable = nil
+        DebugLogger.shared.log("AlertEngine: snooze cancelled")
+    }
+    
+    /// Monitors speed while snoozed. If the car stops (< 2 m/s) for >30
+    /// continuous seconds, auto-expires the snooze.
+    private func startSnoozeAutoExpireMonitor() {
+        snoozeAutoExpireCancellable?.cancel()
+        stoppedWhileSnoozed = 0
+        
+        snoozeAutoExpireCancellable = Timer.publish(every: 2.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                // Only monitor while still snoozed
+                guard self.isSnoozed else {
+                    self.stoppedWhileSnoozed = 0
+                    self.snoozeAutoExpireCancellable?.cancel()
+                    self.snoozeAutoExpireCancellable = nil
+                    return
+                }
+                
+                let speed = self.speedEngine?.speed ?? 0
+                // SpeedEngine.speed is in the active display unit: mph when
+                // Imperial, km/h when Metric. Convert to m/s for the 2 m/s
+                // threshold check.
+                let isMetric = self.speedEngine?.measurementSystem == "Metric"
+                let speedMps = isMetric ? speed / 3.6 : speed / 2.23694
+                if speedMps < 2.0 {
+                    self.stoppedWhileSnoozed += 2.0
+                    if self.stoppedWhileSnoozed >= 30.0 {
+                        DebugLogger.shared.log("AlertEngine: snooze auto-expired (car stopped >30s)")
+                        self.cancelSnooze()
+                    }
+                } else {
+                    self.stoppedWhileSnoozed = 0
+                }
             }
     }
     
@@ -103,6 +180,14 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 }
 
                 self.consecutiveSeconds += 1
+                
+                // Publish snooze state changes so the UI countdown updates.
+                // SwiftUI doesn't re-evaluate the computed `isSnoozed` on
+                // its own because no @Published property changed — we force
+                // an objectWillChange so Timer-driven countdowns re-render.
+                if self.isSnoozed {
+                    self.objectWillChange.send()
+                }
 
                 if self.consecutiveSeconds >= 1 {
                     self.audioAlertActive = true
@@ -110,7 +195,13 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                     let now = Date()
                     if now.timeIntervalSince(self.lastBeepTime) >= 2.0 {
                         self.lastBeepTime = now
-                        self.triggerAlert()
+                        // Skip the actual alert tone/haptic while snoozed,
+                        // but keep the consecutive counter ticking so the
+                        // user sees the correct "seconds over limit" count
+                        // when the beep resumes.
+                        if !self.isSnoozed {
+                            self.triggerAlert()
+                        }
                     }
                 }
             }
@@ -121,6 +212,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         consecutiveSeconds = 0
         audioAlertActive = false
         timerCancellable = nil
+        cancelSnooze()
     }
     
     private func cancelTimer() {

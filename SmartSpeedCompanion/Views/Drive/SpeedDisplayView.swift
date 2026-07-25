@@ -4,6 +4,7 @@ import SwiftUI
 public struct SpeedDisplayView: View {
     @EnvironmentObject var viewModel: DriveViewModel
     @State private var flashOpacity: Double = 1.0
+    @State private var countdownSeconds: Int = 0
     
     public var body: some View {
         VStack(spacing: 12) {
@@ -57,7 +58,7 @@ public struct SpeedDisplayView: View {
                 .background(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 1))
             }
             
-            // Consecutive Overspeed Alert Box
+            // Consecutive Overspeed Alert Box + I Know / Snooze UI
             if viewModel.status == .over {
                 HStack(spacing: 12) {
                     Text("\(viewModel.alertEngine.consecutiveSeconds)")
@@ -67,25 +68,59 @@ public struct SpeedDisplayView: View {
                         .foregroundColor(DesignSystem.alertRed)
                         .shadow(color: DesignSystem.alertRed, radius: 5)
                     
-                    VStack(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("SECONDS OVER LIMIT")
                             .font(.caption.bold())
                             .foregroundColor(.white)
-                        if viewModel.alertEngine.audioAlertActive {
+                        if viewModel.alertEngine.audioAlertActive && !viewModel.alertEngine.isSnoozed {
                             Text("⚠ AUDIO ALERT ACTIVE")
                                 .font(.caption2.bold())
                                 .foregroundColor(DesignSystem.amber)
+                        }
+                        if viewModel.alertEngine.isSnoozed {
+                            Text("Snoozed (\(countdownSeconds)s remaining)")
+                                .font(.caption2.bold())
+                                .foregroundColor(DesignSystem.cyan)
                         }
                     }
                     Spacer()
                 }
                 .padding()
-                .background(DesignSystem.alertRed.opacity(0.15))
+                .background(viewModel.alertEngine.isSnoozed
+                    ? DesignSystem.cyan.opacity(0.10)
+                    : DesignSystem.alertRed.opacity(0.15))
                 .cornerRadius(12)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(DesignSystem.alertRed, lineWidth: 1.5))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(
+                    viewModel.alertEngine.isSnoozed ? DesignSystem.cyan : DesignSystem.alertRed,
+                    lineWidth: 1.5))
+                
+                // "I Know" button — only shown when NOT snoozed
+                if !viewModel.alertEngine.isSnoozed {
+                    Button(action: {
+                        viewModel.alertEngine.snoozeFor(15)
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "hand.raised.slash")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("I Know")
+                                .font(.system(size: 15, weight: .black))
+                        }
+                        .foregroundColor(DesignSystem.cyan)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(DesignSystem.cyan.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(DesignSystem.cyan.opacity(0.5), lineWidth: 1.5)
+                        )
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
         }
         .animation(.easeInOut(duration: 0.4), value: viewModel.status)
+        .animation(.easeInOut(duration: 0.3), value: viewModel.alertEngine.isSnoozed)
         .onChange(of: viewModel.status) { _, newStatus in
             if newStatus == .over {
                 withAnimation(.easeInOut(duration: 0.75).repeatForever()) {
@@ -94,6 +129,9 @@ public struct SpeedDisplayView: View {
             } else {
                 withAnimation { flashOpacity = 1.0 }
             }
+        }
+        .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
+            countdownSeconds = viewModel.alertEngine.snoozeRemainingSeconds
         }
     }
 }
