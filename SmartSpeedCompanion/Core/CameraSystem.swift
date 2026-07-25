@@ -832,7 +832,13 @@ public final class CameraAnimator {
     private var lastUpdateTime: Date = .now
 
     // ── Deadband ───────────────────────────────────────────────────────
-    private let altitudeDeadband: Double = 25.0
+    // 50 m (was 25 m) wide enough to absorb the per-tick altitude deltas
+    // produced by 1-2 mph GPS noise on a mid-range road — at 45-55 mph
+    // the LUT slope is ~35 m/mph, so a noisy single GPS sample previously
+    // punched past the 25 m deadband and produced a visible zoom glitch.
+    // Real altitude transitions (entering/exiting a highway etc.) easily
+    // exceed 50 m, so responsiveness on actual speed changes is unchanged.
+    private let altitudeDeadband: Double = 50.0
     private let pitchDeadband: Double = 3.0
 
     // ── Cooldown ───────────────────────────────────────────────────────
@@ -840,8 +846,15 @@ public final class CameraAnimator {
     private var lastApplyTime: Date = .distantPast
 
     // ── Speed smoothing ────────────────────────────────────────────────
+    // 1.5 s (was 0.5 s). SpeedEngine already EMA-smooths with factor 0.15,
+    // but its deadband only triggers under 3 mph — above that, mid-range
+    // GPS noise (±2 mph) feeds straight into viewModel.speed. The two
+    // cascaded EMAs now drop noise amplitude by ~80 % before it reaches
+    // the LUT smoother, so altitude moves smoothly in 0.5-2 s windows
+    // instead of jittering 1-3 times per second. Real speed transitions
+    // still converge inside ~3 s, well below human-perceived sluggishness.
     private var smoothedSpeed: Double = 0
-    private let speedTau: TimeInterval = 0.5
+    private let speedTau: TimeInterval = 1.5
 
     // ── Debug ──────────────────────────────────────────────────────────
     private var lastLoggedTarget: TargetCameraState?
@@ -1098,15 +1111,28 @@ public final class CameraAnimator {
         }
 
         // 5. Move display state toward target (EMA smoothing)
+        //
+        // IMPORTANT: dt (computed at the top of this method) is the time
+        // since the last `update()` call — correct for the speed EMA which
+        // runs every call.  For the camera EMA we MUST use the time since
+        // the LAST APPLY (`cameraDt`), because the camera only converges
+        // when the cooldown gate opens (~every 0.4 s).  Reusing `dt` here
+        // made the camera converge 18× slower than intended during rapid
+        // SwiftUI renders (60 fps renders → dt ≈ 0.016 s → α ≈ 0.026), and
+        // then JUMP when the system finally settled and dt went to 1+ s.
+        // CameraDt is clamped at 2 s to prevent a multi-second gap from
+        // causing an absurdly large single-frame altitude jump when the
+        // app resumes from background.
+        let cameraDt = min(-lastApplyTime.timeIntervalSinceNow, 2.0)
         let animTau: TimeInterval = target.requestedAnimationTau
             ?? animationTimeConstant(altDelta: finalAltDelta, pitchDelta: finalPitchDelta)
         displayAltitude = smoothExponential(current: displayAltitude,
                                             target: target.altitude,
-                                            dt: dt,
+                                            dt: cameraDt,
                                             tau: animTau)
         displayPitch = smoothExponential(current: displayPitch,
                                          target: target.pitch,
-                                         dt: dt,
+                                         dt: cameraDt,
                                          tau: animTau)
 
         // 6. Apply to MapKit

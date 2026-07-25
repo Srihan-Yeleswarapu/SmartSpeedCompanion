@@ -5,7 +5,7 @@ import WidgetKit
 import FirebaseCore
 
 @main
-struct SpeedSenseApp: App {
+struct SpeedioApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     // Use the shared ModelContainer from AppDelegate - it's already initialized

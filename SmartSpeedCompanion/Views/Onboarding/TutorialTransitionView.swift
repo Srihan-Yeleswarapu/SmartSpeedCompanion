@@ -12,7 +12,7 @@ public struct TutorialTransitionView: View {
             
             VStack(spacing: 30) {
                 if !showPrivacy {
-                    Text("Let's show you how\nSpeedSense works.")
+                    Text("Let's show you how\nSpeedio works.")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)

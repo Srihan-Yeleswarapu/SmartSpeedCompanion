@@ -282,13 +282,24 @@ public struct LiveMapView: UIViewRepresentable {
         // `userPitchOverride` field in `CameraContext`. Only fires when
         // the mode actually changed; equality check is what made the
         // pill's repeat-tap no-op the previous implementation.
+        //
+        // CRITICAL: animated:false (NOT animated:true) on the setCamera.
+        // The camera system below fires setCamera(animated:false) on the
+        // same updateUIView pass — animated:true would queue a MapKit
+        // spring animation mid-frame, then the animator's animated:false
+        // call would abort it, leaving the camera altitude/pitch in a
+        // half-way state that manifested as random zooming-in/zooming-out
+        // pulses during TestFlight b462. With animated:false the snap
+        // completes synchronously, the animator's reset() reads the
+        // snapped value into displayPitch/displayAltitude, and the
+        // animator's subsequent EMA update sees no disparity to fix.
         let userPitchMode = viewModel.mapPitchMode
         if userPitchMode != .auto, userPitchMode != context.coordinator.lastAppliedPitchMode {
             let target = userPitchMode.targetPitch
             if Double(uiView.camera.pitch) != target {
                 let cam = uiView.camera.copy() as! MKMapCamera
                 cam.pitch = CGFloat(target)
-                uiView.setCamera(cam, animated: true)
+                uiView.setCamera(cam, animated: false)
             }
             context.coordinator.lastAppliedPitchMode = userPitchMode
             // Reset the camera animator's internal state so the next tick
