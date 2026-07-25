@@ -41,7 +41,6 @@ public struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @State private var showingTutorial = false
-    @State private var showingVehicleIconPicker = false
     // TestFlight 2.1.4 feedback from
     // srihan.yeleswarapu@gmail.com: "And put a how to button. Then put
     // detailed instructions on how to toggle an app to use cellular,
@@ -50,7 +49,6 @@ public struct SettingsView: View {
     @State private var showingNetworkHelp = false
     @State private var showingHapticRecorder = false
     @State private var showingAlertProfiles = false
-    @State private var showingVehicleProfiles = false
     @State private var showingOfflineRegions = false
 
     // NOTE: Previously this view hosted a deletion-flow (notice alert,
@@ -241,60 +239,9 @@ public struct SettingsView: View {
                     Toggle("Gradient route line", isOn: $gradientRouteEnabled)
                         .tint(DesignSystem.neonGreen)
 
-                    // Vehicle Icon picker
-                    Button(action: { showingVehicleIconPicker = true }) {
-                        HStack(spacing: 12) {
-                            let currentIcon = VehicleIcon.icon(for: driveViewModel.selectedVehicleIconId)
-                            Image(systemName: currentIcon.systemImageName)
-                                .font(.system(size: 20))
-                                .foregroundColor(DesignSystem.cyan)
-                                .frame(width: 32)
-                            
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("Vehicle Icon")
-                                    .foregroundColor(.white)
-                                Text(currentIcon.displayName)
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.white.opacity(0.4))
-                                .font(.caption.weight(.semibold))
-                        }
-                    }
-                    
                     // "3D flyover (long highways)" toggle removed in 2.2.x —
                     // flyover camera is now baked-in default behavior
                     // (see LiveMapView.updateSmartAltitude).
-                }
-                .listRowBackground(DesignSystem.bgPanel)
-
-                // MARK: - VEHICLE PROFILES section
-                Section(header: Text("VEHICLE PROFILES").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
-                    Button(action: { showingVehicleProfiles = true }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: "car.2.fill")
-                                .foregroundColor(DesignSystem.cyan)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 2) {
-                                let activeName = driveViewModel.vehicleProfiles.first(where: { $0.isActive })?.name ?? "Primary Vehicle"
-                                Text("Active Vehicle")
-                                    .foregroundColor(.white)
-                                Text(activeName)
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            Spacer()
-                            Text("\(driveViewModel.vehicleProfiles.count)/5")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.white.opacity(0.4))
-                                .font(.caption.weight(.semibold))
-                        }
-                    }
                 }
                 .listRowBackground(DesignSystem.bgPanel)
 
@@ -424,23 +371,8 @@ public struct SettingsView: View {
                 .sheet(isPresented: $showingNetworkHelp) {
                     NetworkHelpSheet()
                 }
-                .sheet(isPresented: $showingVehicleIconPicker) {
-                    VehicleIconPickerSheet()
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(24)
-                        .preferredColorScheme(.dark)
-                }
                 .sheet(isPresented: $showingAlertProfiles) {
                     AlertProfilesListView()
-                        .environmentObject(driveViewModel)
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(24)
-                        .preferredColorScheme(.dark)
-                }
-                .sheet(isPresented: $showingVehicleProfiles) {
-                    VehicleProfilePickerView()
                         .environmentObject(driveViewModel)
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)

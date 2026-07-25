@@ -138,56 +138,6 @@ public struct LiveMapView: UIViewRepresentable {
     // `swiftUIColor(for:)` mirror function was deleted during the
     // FB25 cleanup (code review flagged the duplication).
 
-    /// FB25 — propagate a `selectedVehicleIconId` change onto the
-    /// MKUserLocation annotation. We can't mutate `MKUserLocation`
-    /// (it's managed by MapKit) and Apple's MapKit guidance is explicit
-    /// not to add/remove the user-location annotation directly — doing
-    /// so can momentarily drop `showsUserLocation` updates or briefly
-    /// reset the tracking mode. The safe two-step recipe used here:
-    ///   1. Direct `view.image` assignment so the live, currently
-    ///      displayed annotation view swaps its symbol in-place without
-    ///      any flicker or location-tracking side-effects.
-    ///   2. If MapKit is still serving a pooled annotation view from
-    ///      before the icon change, flip `userTrackingMode` away and
-    ///      back. This nudges MapKit to dispose of the pooled view and
-    ///      re-ask `viewFor` on the next render, taking the new symbol
-    ///      from `viewFor` (instead of from the still-cached pooled
-    ///      view) without ever touching `MKUserLocation` itself.
-    fileprivate func applyVehicleIconChange(_ map: MKMapView, iconId: String) {
-        let icon = VehicleIcon.icon(for: iconId)
-        let tint = icon.tintColor.uiColor
-
-        // Render a 3D-looking car with the selected body color (brake
-        // lights are ALWAYS red regardless of the body tint).
-        let carImage = CarImageRenderer.renderCar(bodyColor: tint)
-        let userLoc = map.userLocation
-
-        // 1. In-place image swap on the live annotation view.
-        if let view = map.view(for: userLoc) as? MKAnnotationView {
-            view.image = carImage
-            view.centerOffset = CGPoint(x: 0, y: -carImage.size.height / 2)
-
-            // Re-apply heading rotation after the image swap
-            if let heading = viewModel.currentHeading {
-                view.transform = CGAffineTransform(rotationAngle: heading * .pi / 180)
-            } else {
-                view.transform = .identity
-            }
-
-            // Update the stored reference
-            if let coordinator = map.delegate as? Coordinator {
-                coordinator.userAnnotationView = view
-            }
-        }
-
-        // 2. If MapKit was pooling a stale annotation view, toggle the
-        //    tracking mode to nudge a re-ask on `viewFor`.
-        if map.userTrackingMode == .followWithHeading {
-            map.setUserTrackingMode(.none, animated: false)
-            map.setUserTrackingMode(.followWithHeading, animated: false)
-        }
-    }
-
     private func setupNativeControls(for map: MKMapView) {
         // MARK: - Native MKScaleView
         // Apple's own scale legend that updates automatically with the camera.
@@ -267,41 +217,6 @@ public struct LiveMapView: UIViewRepresentable {
         if context.coordinator.lastAppliedShowPOIs != viewModel.showApplePOIs {
             applyPOIFilter(viewModel.showApplePOIs, to: uiView)
             context.coordinator.lastAppliedShowPOIs = viewModel.showApplePOIs
-        }
-
-        // VEHICLE ICON REFRESH (TestFlight FB25): "I am able to select a
-        // vehicle icon, but in maps I don't see the vehicle icon
-        // changed." MKUserLocation is a singleton annotation whose
-        // view-for cache MapKit reuses across icon changes, so merely
-        // mutating the @Published `selectedVehicleIconId` is not enough.
-        // When the id flips we (1) re-render the active annotation view
-        // by direct property assignment so the on-map image swaps
-        // immediately and (2) force MapKit to dispose of and re-request
-        // the view via removeAnnotation + addAnnotation so any cached
-        // styling on a pooled view is fully replaced.
-        let currentIconId = viewModel.selectedVehicleIconId
-        if context.coordinator.lastAppliedVehicleIconId != currentIconId {
-            context.coordinator.lastAppliedVehicleIconId = currentIconId
-            applyVehicleIconChange(uiView, iconId: currentIconId)
-        }
-
-        // HEADING ROTATION — update the car annotation view's transform
-        // whenever the user's heading changes so the car always faces the
-        // direction of travel (or points north when stopped / no heading).
-        // The annotation view reference is captured in `viewFor` and stored
-        // on the coordinator; we only fire the transform when the heading
-        // actually changes to keep the per-frame overhead minimal.
-        if context.coordinator.lastAppliedHeading != viewModel.currentHeading {
-            context.coordinator.lastAppliedHeading = viewModel.currentHeading
-            if let annotationView = context.coordinator.userAnnotationView {
-                if let heading = viewModel.currentHeading {
-                    annotationView.transform = CGAffineTransform(
-                        rotationAngle: heading * .pi / 180
-                    )
-                } else {
-                    annotationView.transform = .identity
-                }
-            }
         }
 
         // FB28 — COLLAPSE chrome while the search bar is focused.
@@ -424,16 +339,6 @@ public struct LiveMapView: UIViewRepresentable {
         // annotation re-rendered. `Optional<String>` (not empty-string
         // sentinel) so a literal "" id cannot silently match a no-icon
         // initial value and produce a "no change needed" verdict.
-        var lastAppliedVehicleIconId: String? = nil
-
-        /// Reference to the user-location annotation view so `updateUIView`
-        /// can update heading rotation without walking the subview tree.
-        weak var userAnnotationView: MKAnnotationView? = nil
-
-        /// Last-applied heading so we don't re-apply the transform every
-        /// frame unless the heading actually changed.
-        var lastAppliedHeading: Double? = nil
-
         // Cache the last-applied map style / POI filter / pitch mode so
         // we don't rebuild the MKMapConfiguration (and trigger a fresh
         // camera animation) on every UIViewRepresentable invalidate.
@@ -940,41 +845,8 @@ public struct LiveMapView: UIViewRepresentable {
 
         public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation is MKUserLocation {
-                // 3D CAR RENDERER — replaces the previous SF Symbol with a
-                // Core Graphics-drawn car that has a colored body, ALWAYS-RED
-                // brake lights, blue-tinted windows, and 3D perspective shading.
-                // The car image is rotated by the user's heading so it always
-                // faces the direction of travel on the map.
-                let icon = VehicleIcon.icon(for: parent.viewModel.selectedVehicleIconId)
-                let tint = icon.tintColor.uiColor
-
-                let id = "VehicleIcon"
-                var view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKAnnotationView
-                if view == nil {
-                    view = MKAnnotationView(annotation: annotation, reuseIdentifier: id)
-                    view?.canShowCallout = false
-                } else {
-                    view?.annotation = annotation
-                }
-
-                // Render the 3D car at the default size
-                let carImage = CarImageRenderer.renderCar(bodyColor: tint)
-                view?.image = carImage
-                view?.centerOffset = CGPoint(x: 0, y: -carImage.size.height / 2)
-
-                // Apply heading rotation so the car faces the direction of travel
-                if let heading = parent.viewModel.currentHeading {
-                    view?.transform = CGAffineTransform(rotationAngle: heading * .pi / 180)
-                } else {
-                    view?.transform = .identity
-                }
-
-                // Store reference for heading updates in updateUIView
-                if let coordinator = mapView.delegate as? Coordinator {
-                    coordinator.userAnnotationView = view
-                }
-
-                return view
+                // Return nil to use the default iOS blue dot.
+                return nil
             }
 
             #if DEBUG || DEVELOPER_BUILD
