@@ -56,6 +56,9 @@ public struct DriveRootView: View {
         .accentColor(Color(hex: "#00D4FF"))
         .onAppear {
             driveViewModel.loadAlertProfiles(context: modelContext)
+            driveViewModel.loadVehicleProfiles(context: modelContext)
+            driveViewModel.loadOfflineRegions()
+            driveViewModel.loadNamedLocations(context: modelContext)
         }
         .alert("Short Drive Detected", isPresented: $driveViewModel.showShortSessionPrompt) {
             Button("Keep", role: .cancel) {
