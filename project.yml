@@ -2,7 +2,7 @@ name: SmartSpeedCompanion
 options:
   bundleIdPrefix: com.speedsense
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "18.4"
   # Pinned to Xcode 26.6 (latest stable on the macos-26 GitHub Actions runner
   # as of 2026-07-16; released 2026-06-25 by Apple, build 17F113). Xcode 27.0
   # is beta-only — not safe for production builds yet. The workflows also pin
@@ -72,7 +72,7 @@ targets:
   SmartSpeedCompanion:
     type: application
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "18.4"
 
     sources:
       - path: SmartSpeedCompanion/App
@@ -257,7 +257,7 @@ targets:
   SmartSpeedCompanionWidget:
     type: app-extension
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "18.4"
 
     # Source list is intentionally surgical — we list ONLY the files the
     # widget compiles. Including `Core/` wholesale would pull in Firebase-
