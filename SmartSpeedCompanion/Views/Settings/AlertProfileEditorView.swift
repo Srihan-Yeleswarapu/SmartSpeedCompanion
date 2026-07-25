@@ -32,12 +32,12 @@ public struct AlertProfileEditorView: View {
                 .listRowBackground(DesignSystem.bgPanel)
 
                 Section(header: Text("SPEED BUFFERS (mph +)").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
-                    bufferRow(label: "Highway", value: $highwayBuffer, range: -5...20)
-                    bufferRow(label: "Arterial / Main Road", value: $arterialBuffer, range: -5...20)
-                    bufferRow(label: "Residential", value: $residentialBuffer, range: -5...15)
+                    bufferRow(label: "Highway", value: $highwayBuffer, range: -5...10)
+                    bufferRow(label: "Arterial / Main Road", value: $arterialBuffer, range: -5...10)
+                    bufferRow(label: "Residential", value: $residentialBuffer, range: -5...10)
                     bufferRow(label: "School Zone", value: $schoolZoneBuffer, range: -5...10)
                     bufferRow(label: "Work Zone", value: $workZoneBuffer, range: -5...10)
-                    bufferRow(label: "Default (Unknown Road)", value: $defaultBuffer, range: -5...15)
+                    bufferRow(label: "Default (Unknown Road)", value: $defaultBuffer, range: -5...10)
                 }
                 .listRowBackground(DesignSystem.bgPanel)
 

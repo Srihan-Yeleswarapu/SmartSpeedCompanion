@@ -47,12 +47,12 @@ struct BufferSliderView: View {
                 GeometryReader { geo in
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color(hex: "#FFB800"))
-                        .frame(width: geo.size.width * CGFloat(buffer / 15.0), height: 4)
+                        .frame(width: geo.size.width * CGFloat(buffer / 10.0), height: 4)
                 }
                 .frame(height: 4)
 
                 // Invisible system slider for input
-                Slider(value: $buffer, in: -5...15, step: 1)
+                Slider(value: $buffer, in: -5...10, step: 1)
                     .opacity(0.015)
             }
             .frame(height: 20)
@@ -62,7 +62,7 @@ struct BufferSliderView: View {
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.gray)
                 Spacer()
-                Text("15")
+                Text("10")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.gray)
             }
