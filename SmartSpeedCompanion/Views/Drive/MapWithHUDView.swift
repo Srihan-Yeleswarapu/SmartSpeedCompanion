@@ -127,6 +127,7 @@ public struct MapWithHUDView: View {
                         if driveViewModel.isMapDetached {
                             HStack {
                                 Button(action: {
+                                    UISelectionFeedbackGenerator().selectionChanged()
                                     driveViewModel.isMapDetached = false
                                 }) {
                                     HStack(spacing: 6) {
@@ -224,6 +225,7 @@ fileprivate struct NavigationInstructionCard: View {
             
             // Dismiss button
             Button(action: {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 Task { await driveViewModel.endNavigation() }
             }) {
                 Image(systemName: "xmark")
@@ -592,8 +594,10 @@ fileprivate struct BottomTransparentHUD: View {
                 
                 Button(action: {
                     if driveViewModel.isRecording {
+                        HapticAlertManager.playRecordingStopped()
                         driveViewModel.endSession()
                     } else {
+                        HapticAlertManager.playRecordingStarted()
                         driveViewModel.startSession()
                     }
                 }) {
@@ -608,6 +612,7 @@ fileprivate struct BottomTransparentHUD: View {
                         
                         // Focus Mode badge inset on the top-trailing edge of the capsule
                         Button(action: {
+                            HapticAlertManager.playFocusModeEnter()
                             driveViewModel.isDriveFocusMode = true
                         }) {
                             Image(systemName: "eye.fill")
@@ -621,12 +626,14 @@ fileprivate struct BottomTransparentHUD: View {
                         .offset(x: 6, y: -6)
                     }
                 }
+                .offset(x: -25)
                 .frame(maxWidth: .infinity, alignment: .center)
                 LimitSignView(
                     limit: driveViewModel.limit,
                     source: driveViewModel.speedLimitSource,
                     isLandscape: isLandscape,
                     onTap: {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         Task { await driveViewModel.manualRefetchSpeedLimit() }
                     },
                     isRefreshing: driveViewModel.isRefreshingSpeedLimit
@@ -729,6 +736,7 @@ fileprivate struct MapPitchToggleButton: View {
     }
 
     private func cycle() {
+        UISelectionFeedbackGenerator().selectionChanged()
         let all = DriveViewModel.MapPitchMode.allCases
         let idx = all.firstIndex(of: driveViewModel.mapPitchMode) ?? 0
         let next = all[(idx + 1) % all.count]
@@ -861,6 +869,7 @@ fileprivate struct RouteSelectionCard: View {
                 Spacer()
 
                 Button(action: {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     driveViewModel.isSelectingRoute = false
                     driveViewModel.availableRoutes = []
                     driveViewModel.destination = nil
@@ -891,6 +900,7 @@ fileprivate struct RouteSelectionCard: View {
                 HStack(spacing: 16) {
                     ForEach(Array(driveViewModel.availableRoutes.enumerated()), id: \.offset) { index, route in
                         Button(action: {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             Task {
                                 await driveViewModel.startNavigation(with: route)
                             }
@@ -980,6 +990,7 @@ fileprivate struct NavigationShortcutsRow: View {
                 // `Open in Apple Maps` below covers the destination-preview
                 // use case instead.
                 Button(action: {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     driveViewModel.openInAppleMaps(destination)
                 }) {
                     Label("Open in Apple Maps", systemImage: "arrow.up.right.square")
@@ -1035,6 +1046,7 @@ fileprivate struct NearbyAmenitiesCard: View {
 
             ForEach(Array(driveViewModel.nearbyAmenities.prefix(4).enumerated()), id: \.offset) { _, item in
                 Button(action: {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     driveViewModel.openInAppleMaps(item)
                     // Drop the rest of the list after handing one off to
                     // Apple Maps so it doesn't float over the map forever.

@@ -57,7 +57,10 @@ public struct DriveFocusView: View {
             .opacity(isExiting ? 0 : 1)
             .scaleEffect(isExiting ? 0.85 : 1.0, anchor: .center)
         }
-        .onAppear(perform: animateEntry)
+        .onAppear {
+            animateEntry()
+            HapticAlertManager.playFocusModeEnter()
+        }
         .task {
             // Let entry animation finish before starting continuous breath loops
             try? await Task.sleep(nanoseconds: 600_000_000) // 0.6s
@@ -343,6 +346,9 @@ public struct DriveFocusView: View {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             isExiting = true
         }
+
+        // Haptic: exit focus mode
+        HapticAlertManager.playFocusModeExit()
 
         // Wait for the spring animation to settle before triggering dismissal
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

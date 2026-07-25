@@ -22,27 +22,38 @@ import Foundation
 import CoreHaptics
 import SwiftUI
 import AudioToolbox
+import UIKit
 
 // MARK: - Public catalog
 
 /// Every haptic style the user can pick from in the Settings UI.
 /// Persisted as a raw string in `@AppStorage("hapticAlertStyle")`.
 public enum HapticStyle: String, CaseIterable, Codable, Sendable {
-    case off     = "off"
-    case soft    = "soft"
-    case strong  = "strong"
-    case triple  = "triple"
-    case warning = "warning"
-    case custom  = "custom"
+    case off      = "off"
+    case soft     = "soft"
+    case strong   = "strong"
+    case triple   = "triple"
+    case warning  = "warning"
+    case custom   = "custom"
+    case heartbeat = "heartbeat"
+    case ramp     = "ramp"
+    case staccato = "staccato"
+    case bass     = "bass"
+    case echo     = "echo"
 
     public var displayName: String {
         switch self {
-        case .off:     return "Off"
-        case .soft:    return "Soft Tap"
-        case .strong:  return "Strong Pulse"
-        case .triple:  return "Triple Tap"
-        case .warning: return "Warning Buzz"
-        case .custom:  return "Custom (Recorded)"
+        case .off:       return "Off"
+        case .soft:      return "Soft Tap"
+        case .strong:    return "Strong Pulse"
+        case .triple:    return "Triple Tap"
+        case .warning:   return "Warning Buzz"
+        case .custom:    return "Custom (Recorded)"
+        case .heartbeat: return "Heartbeat"
+        case .ramp:      return "Ramp Up"
+        case .staccato:  return "Staccato"
+        case .bass:      return "Deep Bass"
+        case .echo:      return "Echo Knock"
         }
     }
 }
@@ -215,7 +226,12 @@ public final class HapticAlertManager: ObservableObject {
 
     /// Play the configured haptic *style* (if master toggle on AND style != .off).
     /// Callers (AlertEngine) drive this on their own 2 s cooldown.
-    public func fireIfEnabled() {
+    ///
+    /// - Parameter severity: How far over the limit the user is, normalized 0.0–1.0.
+    ///   Controls intensity modulation for responsive feedback. Default 0.5.
+    /// - Parameter consecutiveSeconds: How long the user has been over the limit.
+    ///   Used for escalation. Default 0.
+    public func fireIfEnabled(severity: Double = 0.5, consecutiveSeconds: Int = 0) {
         guard isEnabled else { return }
         guard style != .off else { return }
         // iPad / Simulator (or any device whose hardware reports
@@ -225,7 +241,9 @@ public final class HapticAlertManager: ObservableObject {
         // expect a vibration that matches the selected style, but a generic
         // kSystemSoundID_Vibrate buzz deceives them.
         guard deviceSupportsHaptics else { return }
-        guard let pattern = currentPattern() else {
+        let clampedSeverity = min(1.0, max(0.1, severity))
+        let escalationFactor = min(1.0, Double(consecutiveSeconds) / 60.0) // ramps over 60s
+        guard let pattern = buildPattern(severity: clampedSeverity, escalationFactor: escalationFactor) else {
             // Engine exists but pattern build failed (e.g. malformed custom
             // event list). Single universal vibrate is the right fallback
             // here — beats going silent on a hardware-capable device.
@@ -235,12 +253,13 @@ public final class HapticAlertManager: ObservableObject {
         playPattern(pattern)
     }
 
-    /// Returns the CHHapticPattern for the current style setting — exposed so
-    /// the recording-preview UI can use the same builder path without a
-    /// dedicated preview-only function.
-    public func currentPattern() -> CHHapticPattern? {
+    /// Build a CHHapticPattern for the current style, optionally modulated by
+    /// severity (0.0–1.0) and an escalation factor (0.0–1.0).
+    private func buildPattern(severity: Double = 0.5, escalationFactor: Double = 0.0) -> CHHapticPattern? {
         guard deviceSupportsHaptics else { return nil }
         let events: [CHHapticEvent]
+        let parameterCurves: [CHHapticParameterCurve]
+
         switch style {
         case .off:
             return nil
@@ -248,39 +267,143 @@ public final class HapticAlertManager: ObservableObject {
             events = [
                 CHHapticEvent(eventType: .hapticTransient,
                               parameters: [
-                                .init(parameterID: .hapticIntensity, value: Float(0.5)),
+                                .init(parameterID: .hapticIntensity, value: Float(0.5 * severity)),
                                 .init(parameterID: .hapticSharpness, value: Float(0.4))
                               ],
                               relativeTime: 0)
             ]
+            parameterCurves = []
         case .strong:
+            let rawIntensity = Float(0.6 + (0.4 * severity))
             events = [
                 CHHapticEvent(eventType: .hapticTransient,
                               parameters: [
-                                .init(parameterID: .hapticIntensity, value: Float(1.0)),
+                                .init(parameterID: .hapticIntensity, value: rawIntensity),
                                 .init(parameterID: .hapticSharpness, value: Float(1.0))
                               ],
                               relativeTime: 0)
             ]
+            parameterCurves = []
         case .triple:
+            let baseIntensity = Float(0.6 + (0.4 * severity))
             events = stride(from: 0.0, through: 0.26, by: 0.13).map { t in
                 CHHapticEvent(eventType: .hapticTransient,
                               parameters: [
-                                .init(parameterID: .hapticIntensity, value: Float(0.9)),
+                                .init(parameterID: .hapticIntensity, value: baseIntensity),
                                 .init(parameterID: .hapticSharpness, value: Float(0.7))
                               ],
                               relativeTime: t)
             }
+            parameterCurves = []
         case .warning:
+            let rawIntensity = Float(0.6 + (0.4 * severity))
             events = [
                 CHHapticEvent(eventType: .hapticContinuous,
                               parameters: [
-                                .init(parameterID: .hapticIntensity, value: Float(0.9)),
+                                .init(parameterID: .hapticIntensity, value: rawIntensity),
                                 .init(parameterID: .hapticSharpness, value: Float(0.3))
                               ],
                               relativeTime: 0,
                               duration: 0.5)
             ]
+            parameterCurves = []
+        case .heartbeat:
+            // lub-dub pair: strong then soft, with a brief pause between beats
+            let intensityScale = Float(0.6 + (0.4 * severity))
+            events = [
+                CHHapticEvent(eventType: .hapticTransient,
+                              parameters: [
+                                .init(parameterID: .hapticIntensity, value: 1.0 * intensityScale),
+                                .init(parameterID: .hapticSharpness, value: Float(0.8))
+                              ],
+                              relativeTime: 0),
+                CHHapticEvent(eventType: .hapticTransient,
+                              parameters: [
+                                .init(parameterID: .hapticIntensity, value: 0.6 * intensityScale),
+                                .init(parameterID: .hapticSharpness, value: Float(0.3))
+                              ],
+                              relativeTime: 0.18),
+                // Second beat for a fuller pattern
+                CHHapticEvent(eventType: .hapticTransient,
+                              parameters: [
+                                .init(parameterID: .hapticIntensity, value: 0.9 * intensityScale),
+                                .init(parameterID: .hapticSharpness, value: Float(0.8))
+                              ],
+                              relativeTime: 0.48),
+                CHHapticEvent(eventType: .hapticTransient,
+                              parameters: [
+                                .init(parameterID: .hapticIntensity, value: 0.5 * intensityScale),
+                                .init(parameterID: .hapticSharpness, value: Float(0.3))
+                              ],
+                              relativeTime: 0.66),
+            ]
+            parameterCurves = []
+        case .ramp:
+            // Continuous event with a parameter curve that ramps intensity from low to high
+            let continuousEvent = CHHapticEvent(
+                eventType: .hapticContinuous,
+                parameters: [
+                    .init(parameterID: .hapticIntensity, value: Float(0.2)),
+                    .init(parameterID: .hapticSharpness, value: Float(0.5))
+                ],
+                relativeTime: 0,
+                duration: 0.8
+            )
+            events = [continuousEvent]
+            // Parameter curve ramps the intensity from 0.2 → 1.0 over the event duration
+            let intensityCurve = CHHapticParameterCurve(
+                parameterID: .hapticIntensityControl,
+                controlPoints: [
+                    CHHapticParameterCurve.ControlPoint(relativeTime: 0, value: Float(0.2 * severity)),
+                    CHHapticParameterCurve.ControlPoint(relativeTime: 0.4, value: Float(0.6 * severity)),
+                    CHHapticParameterCurve.ControlPoint(relativeTime: 0.8, value: Float(1.0))
+                ],
+                relativeTime: 0
+            )
+            parameterCurves = [intensityCurve]
+        case .staccato:
+            // Rapid-fire transients — 10 taps at 60ms intervals = machine-gun feel
+            let intensityScale = Float(0.6 + (0.4 * severity))
+            events = (0..<10).map { i in
+                CHHapticEvent(eventType: .hapticTransient,
+                              parameters: [
+                                .init(parameterID: .hapticIntensity, value: intensityScale),
+                                .init(parameterID: .hapticSharpness, value: Float(0.9))
+                              ],
+                              relativeTime: Double(i) * 0.06)
+            }
+            parameterCurves = []
+        case .bass:
+            // Deep low-frequency rumble — low sharpness = feels deep, high intensity
+            let intensityScale = Float(0.6 + (0.4 * severity))
+            events = [
+                CHHapticEvent(eventType: .hapticContinuous,
+                              parameters: [
+                                .init(parameterID: .hapticIntensity, value: intensityScale),
+                                .init(parameterID: .hapticSharpness, value: Float(0.05))
+                              ],
+                              relativeTime: 0,
+                              duration: 0.9)
+            ]
+            parameterCurves = []
+        case .echo:
+            // Knock with a soft reverberation tail
+            let intensityScale = Float(0.6 + (0.4 * severity))
+            events = [
+                CHHapticEvent(eventType: .hapticTransient,
+                              parameters: [
+                                .init(parameterID: .hapticIntensity, value: 1.0 * intensityScale),
+                                .init(parameterID: .hapticSharpness, value: Float(0.7))
+                              ],
+                              relativeTime: 0),
+                CHHapticEvent(eventType: .hapticTransient,
+                              parameters: [
+                                .init(parameterID: .hapticIntensity, value: 0.45 * intensityScale),
+                                .init(parameterID: .hapticSharpness, value: Float(0.25))
+                              ],
+                              relativeTime: 0.25),
+            ]
+            parameterCurves = []
         case .custom:
             events = customEvents().map { tap in
                 CHHapticEvent(eventType: .hapticTransient,
@@ -290,15 +413,271 @@ public final class HapticAlertManager: ObservableObject {
                               ],
                               relativeTime: tap.timeOffset)
             }
+            parameterCurves = []
         }
         guard !events.isEmpty else { return nil }
         do {
-            return try CHHapticPattern(events: events, parameters: [])
+            return try CHHapticPattern(events: events, parameterCurves: parameterCurves)
         } catch {
             DebugLogger.shared.log("HapticAlertManager pattern build error: \(error.localizedDescription)")
             return nil
         }
     }
+
+    /// Returns the CHHapticPattern for the current style setting — exposed so
+    /// the recording-preview UI can use the same builder path without a
+    /// dedicated preview-only function. Uses default severity (0.5).
+    public func currentPattern() -> CHHapticPattern? {
+        buildPattern(severity: 0.5, escalationFactor: 0.0)
+    }
+
+    // MARK: - Static Convenience Haptics (contextual, bypass style picker)
+
+    /// Play a short warning buzz — used for off-route detection, camera alerts.
+    /// Does NOT check `isEnabled`; these are immediate contextual alerts.
+    public static func playWarningBuzz() {
+        guard shared.deviceSupportsHaptics else { return }
+        let events = [
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.8),
+                            .init(parameterID: .hapticSharpness, value: 0.6)
+                          ],
+                          relativeTime: 0),
+            CHHapticEvent(eventType: .hapticContinuous,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.5),
+                            .init(parameterID: .hapticSharpness, value: 0.2)
+                          ],
+                          relativeTime: 0.05,
+                          duration: 0.3),
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.9),
+                            .init(parameterID: .hapticSharpness, value: 0.7)
+                          ],
+                          relativeTime: 0.35)
+        ]
+        do {
+            let pattern = try CHHapticPattern(events: events, parameters: [])
+            shared.playPattern(pattern)
+        } catch {
+            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+        }
+    }
+
+    /// Play a success/relief pattern — used when slowing down from `.over` to `.safe`.
+    /// Two ascending taps followed by a warm continuous tail.
+    public static func playSuccessHaptic() {
+        guard shared.deviceSupportsHaptics else {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            return
+        }
+        let events = [
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.5),
+                            .init(parameterID: .hapticSharpness, value: 0.3)
+                          ],
+                          relativeTime: 0),
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.8),
+                            .init(parameterID: .hapticSharpness, value: 0.5)
+                          ],
+                          relativeTime: 0.12),
+            CHHapticEvent(eventType: .hapticContinuous,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.3),
+                            .init(parameterID: .hapticSharpness, value: 0.15)
+                          ],
+                          relativeTime: 0.24,
+                          duration: 0.3)
+        ]
+        do {
+            let pattern = try CHHapticPattern(events: events, parameters: [])
+            shared.playPattern(pattern)
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+    }
+
+    /// Play a gentle anticipatory tap — used when approaching the limit (`.warning` status).
+    /// A single soft, warm transient that says "you're getting close."
+    public static func playNearHaptic() {
+        guard shared.deviceSupportsHaptics else {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            return
+        }
+        let events = [
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.45),
+                            .init(parameterID: .hapticSharpness, value: 0.25)
+                          ],
+                          relativeTime: 0)
+        ]
+        do {
+            let pattern = try CHHapticPattern(events: events, parameters: [])
+            shared.playPattern(pattern)
+        } catch {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        }
+    }
+
+    /// Play a crisp confirmation haptic — used for navigation events (arrival, confirmation).
+    /// Uses the public `UIImpactFeedbackGenerator` API with `.rigid` style for a
+    /// snappy tactile feel that stays within App Store safe guidelines.
+    public static func playNavigationPop() {
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+    }
+
+    /// Play a stronger "nope" / rejection vibration — used for off-route detection.
+    /// Uses two rapid `UIImpactFeedbackGenerator` taps for a distinct buzz.
+    public static func playNavigationNope() {
+        let generator = UIImpactFeedbackGenerator(style: .heavy)
+        generator.impactOccurred()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            generator.impactOccurred()
+        }
+    }
+
+    // MARK: - Recording State Haptics
+
+    /// Played when starting a recording session.
+    public static func playRecordingStarted() {
+        guard shared.deviceSupportsHaptics else {
+            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+            return
+        }
+        let events = [
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.8),
+                            .init(parameterID: .hapticSharpness, value: 0.7)
+                          ],
+                          relativeTime: 0),
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 1.0),
+                            .init(parameterID: .hapticSharpness, value: 0.9)
+                          ],
+                          relativeTime: 0.1),
+            CHHapticEvent(eventType: .hapticContinuous,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.2),
+                            .init(parameterID: .hapticSharpness, value: 0.1)
+                          ],
+                          relativeTime: 0.2,
+                          duration: 0.25)
+        ]
+        do {
+            let pattern = try CHHapticPattern(events: events, parameters: [])
+            shared.playPattern(pattern)
+        } catch {
+            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+        }
+    }
+
+    /// Played when stopping a recording session.
+    public static func playRecordingStopped() {
+        guard shared.deviceSupportsHaptics else {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            return
+        }
+        let events = [
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.7),
+                            .init(parameterID: .hapticSharpness, value: 0.5)
+                          ],
+                          relativeTime: 0),
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.3),
+                            .init(parameterID: .hapticSharpness, value: 0.3)
+                          ],
+                          relativeTime: 0.15)
+        ]
+        do {
+            let pattern = try CHHapticPattern(events: events, parameters: [])
+            shared.playPattern(pattern)
+        } catch {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        }
+    }
+
+    // MARK: - Focus Mode Haptics
+
+    /// Played when entering Focus Mode.
+    public static func playFocusModeEnter() {
+        guard shared.deviceSupportsHaptics else {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            return
+        }
+        let events = [
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.3),
+                            .init(parameterID: .hapticSharpness, value: 0.2)
+                          ],
+                          relativeTime: 0),
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.6),
+                            .init(parameterID: .hapticSharpness, value: 0.4)
+                          ],
+                          relativeTime: 0.15),
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.9),
+                            .init(parameterID: .hapticSharpness, value: 0.6)
+                          ],
+                          relativeTime: 0.3)
+        ]
+        do {
+            let pattern = try CHHapticPattern(events: events, parameters: [])
+            shared.playPattern(pattern)
+        } catch {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        }
+    }
+
+    /// Played when exiting Focus Mode.
+    public static func playFocusModeExit() {
+        guard shared.deviceSupportsHaptics else {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            return
+        }
+        let events = [
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.7),
+                            .init(parameterID: .hapticSharpness, value: 0.5)
+                          ],
+                          relativeTime: 0),
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.4),
+                            .init(parameterID: .hapticSharpness, value: 0.3)
+                          ],
+                          relativeTime: 0.12),
+            CHHapticEvent(eventType: .hapticTransient,
+                          parameters: [
+                            .init(parameterID: .hapticIntensity, value: 0.15),
+                            .init(parameterID: .hapticSharpness, value: 0.15)
+                          ],
+                          relativeTime: 0.24)
+        ]
+        do {
+            let pattern = try CHHapticPattern(events: events, parameters: [])
+            shared.playPattern(pattern)
+        } catch {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        }
+    }
+
+    // MARK: - Persistence
 
     /// Persist a captured tap sequence (.custom). Also auto-selects .custom
     /// style so the user doesn't have to flip the picker after recording.
@@ -359,7 +738,7 @@ public final class HapticAlertManager: ObservableObject {
         return decoded
     }
 
-    private func playPattern(_ pattern: CHHapticPattern) {
+    fileprivate func playPattern(_ pattern: CHHapticPattern) {
         guard let engine = engine else {
             AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
             return

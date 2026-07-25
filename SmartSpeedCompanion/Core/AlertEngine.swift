@@ -65,6 +65,10 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     // Cooldown
     private var lastBeepTime: Date = .distantPast
     
+    // MARK: - Transition Haptics
+    /// Tracks previous status so we can detect .safe → .warning and .over → .safe transitions.
+    private var previousStatus: SpeedStatus = .safe
+    
     // MARK: - Audio (Tone)
     private let audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
@@ -147,6 +151,33 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - Status Handling
     private func handleStatusChange(_ status: SpeedStatus) {
+        // ── Transition Haptics ────────────────────────────────────
+        // Detect state transitions and fire contextual haptic patterns
+        // that are independent of the user's speed-alert style picker.
+        // These provide tactile feedback for boundary events.
+        
+        // Relief haptic: user slowed down from `.over` to `.safe` or `.warning`
+        if previousStatus == .over && (status == .safe || status == .warning) {
+            DebugLogger.shared.log("AlertEngine: OVER → SAFE/WARNING — relief haptic")
+            DispatchQueue.main.async {
+                HapticAlertManager.playSuccessHaptic()
+            }
+        }
+        
+        // Anticipatory haptic: user is approaching the limit (`.warning` zone)
+        // Fires ONLY once on the .safe → .warning transition, NOT on every
+        // GPS tick while staying in .warning. The .over → .warning path is
+        // already handled by the relief haptic above.
+        if previousStatus == .safe && status == .warning {
+            DebugLogger.shared.log("AlertEngine: approaching limit — near haptic")
+            DispatchQueue.main.async {
+                HapticAlertManager.playNearHaptic()
+            }
+        }
+        
+        // Store current status for next comparison
+        self.previousStatus = status
+        
         // Start monitoring if EITHER alert channel is enabled. Audio / haptic
         // toggles are independent since v2.2.0 b366.
         let anyAlertEnabled = isAudioAlertsEnabled || isHapticAlertsEnabled
@@ -235,6 +266,18 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - ALERT
     private func triggerAlert() {
+        // Compute severity based on how far over the limit the user is
+        var severity: Double = 0.5
+        if let engine = speedEngine, engine.limit > 0 {
+            // speed and limit are in the active display unit (mph or km/h).
+            // Calculate the raw overspeed amount relative to limit + buffer.
+            let threshold = Double(engine.limit + engine.userBuffer)
+            let overspeedAmount = max(0, engine.speed - threshold)
+            // Map overspeed to severity 0.1–1.0: +1 mph over = 0.15, +20 mph over = 1.0
+            // In metric (+1.6 km/h = 0.15, +32 km/h = 1.0)
+            severity = min(1.0, max(0.1, overspeedAmount / 20.0))
+        }
+        
         // Audio half: only fires when the audio toggle is on. Independent
         // of the haptic toggle so users can silence the audio while keeping
         // vibration alerts.
@@ -242,10 +285,13 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             playTone()
         }
         // Haptic half: HapticAlertManager owns its own master toggle + style
-        // picker + deviceSupportsHaptics guard, so we just delegate. Falls
-        // back to a system vibrate only when the user picked a non-Off style
-        // on a haptic-capable device whose engine somehow failed.
-        HapticAlertManager.shared.fireIfEnabled()
+        // picker + deviceSupportsHaptics guard, so we just delegate. Pass
+        // severity + consecutiveSeconds so patterns modulate their intensity
+        // based on how badly / long the user is speeding.
+        HapticAlertManager.shared.fireIfEnabled(
+            severity: severity,
+            consecutiveSeconds: consecutiveSeconds
+        )
     }
     
     // MARK: - Audio Session Interruption Handling

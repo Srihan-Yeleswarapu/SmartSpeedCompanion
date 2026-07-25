@@ -47,11 +47,11 @@ public struct SessionControlsView: View {
             
             // Primary Action Button
             Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .heavy)
-                generator.impactOccurred()
                 if viewModel.isRecording {
+                    HapticAlertManager.playRecordingStopped()
                     viewModel.endSession()
                 } else {
+                    HapticAlertManager.playRecordingStarted()
                     viewModel.startSession()
                 }
             }) {

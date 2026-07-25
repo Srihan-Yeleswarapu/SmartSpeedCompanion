@@ -97,6 +97,7 @@ public struct SpeedDisplayView: View {
                 // "I Know" button — only shown when NOT snoozed
                 if !viewModel.alertEngine.isSnoozed {
                     Button(action: {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         viewModel.alertEngine.snoozeFor(15)
                     }) {
                         HStack(spacing: 8) {

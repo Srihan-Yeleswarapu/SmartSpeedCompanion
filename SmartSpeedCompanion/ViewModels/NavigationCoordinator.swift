@@ -496,6 +496,8 @@ public final class NavigationCoordinator: ObservableObject {
             if !self.isRerouting {
                 self.isRerouting = true
                 DebugLogger.shared.log("OFF ROUTE: \(Int(distanceToRoute))m. Rerouting...")
+                // Haptic: sharp warning buzz to alert the driver they've left the route
+                HapticAlertManager.playNavigationNope()
                 announce("Off route. recalculating.")
                 if let dest = self.destination {
                     Task { @MainActor in
@@ -623,6 +625,8 @@ public final class NavigationCoordinator: ObservableObject {
 
             if timeSinceLastReroute > 3.0 {
                 DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting.")
+                // Haptic: warning buzz for the fine-grained off-route detector
+                HapticAlertManager.playWarningBuzz()
                 lastRerouteTime = Date()
                 isCalculatingReroute = true
 
@@ -738,6 +742,8 @@ public final class NavigationCoordinator: ObservableObject {
                 destination?.placemark.location.map { loc.distance(from: $0) }
             } ?? .greatestFiniteMagnitude
             if dist <= 50 {
+                // Haptic: arrival celebration
+                HapticAlertManager.playNavigationPop()
                 announce("You have arrived at your destination.")
                 Task { await self.endNavigation() }
             }
