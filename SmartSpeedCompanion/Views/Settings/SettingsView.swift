@@ -81,15 +81,29 @@ public struct SettingsView: View {
         NavigationStack {
             Form {
                 Section(header: Text("ALERTS").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
-                    VStack(alignment: .leading) {
-                        let unitLabel = measurementSystem == "Imperial" ? "mph" : "km/h"
-                        let bufferSign = buffer > 0 ? "+" : ""
-                        Text("Speed Buffer: \(bufferSign)\(Int(buffer)) \(unitLabel)")
-                            .foregroundColor(.white)
-                        Slider(value: $buffer, in: -5...15, step: 1)
-                            .tint(DesignSystem.amber)
+                    // Speed Alert Profiles row — first item in ALERTS
+                    Button(action: { showingAlertProfiles = true }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundColor(DesignSystem.cyan)
+                                .frame(width: 20)
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Speed Alert Profiles")
+                                    .foregroundColor(.white)
+                                let activeName = driveViewModel.alertProfiles.first(where: { $0.isActive })?.name ?? "Default"
+                                Text("Active: \(activeName)")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.white.opacity(0.4))
+                                .font(.caption.weight(.semibold))
+                        }
                     }
-                    
+
                     Toggle("Audio Alerts", isOn: $audioEnabled)
                         .tint(DesignSystem.neonGreen)
 
@@ -142,28 +156,6 @@ public struct SettingsView: View {
                                 }
                                 .foregroundColor(DesignSystem.cyan)
                             }
-                        }
-                    }
-                    // Speed Alert Profiles row
-                    Button(action: { showingAlertProfiles = true }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: "slider.horizontal.3")
-                                .foregroundColor(DesignSystem.cyan)
-                                .frame(width: 20)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Speed Alert Profiles")
-                                    .foregroundColor(.white)
-                                let activeName = driveViewModel.alertProfiles.first(where: { $0.isActive })?.name ?? "Default"
-                                Text("Active: \(activeName)")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.white.opacity(0.4))
-                                .font(.caption.weight(.semibold))
                         }
                     }
                 }
