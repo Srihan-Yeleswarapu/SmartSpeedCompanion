@@ -192,6 +192,130 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
     
+    // MARK: - Vehicle Profiles
+    /// All saved vehicle profiles. Loaded from SwiftData on init.
+    @Published public var vehicleProfiles: [VehicleProfile] = []
+    /// True when the vehicle profile picker sheet should be presented.
+    @Published public var showVehicleProfilePicker: Bool = false
+    
+    /// Loads all vehicle profiles from SwiftData, creating a default profile if none exist.
+    public func loadVehicleProfiles(context: ModelContext) {
+        let descriptor = FetchDescriptor<VehicleProfile>(sortBy: [SortDescriptor(\.createdAt, order: .forward)])
+        if let profiles = try? context.fetch(descriptor) {
+            if profiles.isEmpty {
+                // Create default "Primary Vehicle" profile from current @AppStorage values
+                let ud = UserDefaults.standard
+                let defaultProfile = VehicleProfile(
+                    name: "Primary Vehicle",
+                    isActive: true,
+                    userBuffer: Int(ud.double(forKey: "userBuffer")),
+                    audioAlertsEnabled: ud.bool(forKey: "audioAlertsEnabled"),
+                    hapticAlertsEnabled: ud.bool(forKey: "hapticAlertsEnabled"),
+                    hapticAlertStyle: ud.string(forKey: "hapticAlertStyle") ?? "strong",
+                    avoidHighways: ud.bool(forKey: "avoidHighways"),
+                    vehicleIconId: ud.string(forKey: "selectedVehicleIconId") ?? "default_blue",
+                    measurementSystem: ud.string(forKey: "measurementSystem") ?? "Imperial"
+                )
+                context.insert(defaultProfile)
+                try? context.save()
+                vehicleProfiles = [defaultProfile]
+            } else {
+                vehicleProfiles = profiles
+                // Ensure at least one profile is active
+                if !profiles.contains(where: { $0.isActive }), let first = profiles.first {
+                    activateVehicleProfile(first.id, context: context)
+                }
+            }
+        }
+    }
+    
+    /// Creates a new vehicle profile with default settings.
+    @discardableResult
+    public func createVehicleProfile(name: String, context: ModelContext) -> VehicleProfile {
+        let profile = VehicleProfile(name: name, isActive: true)
+        context.insert(profile)
+        try? context.save()
+        for p in vehicleProfiles { p.isActive = false }
+        vehicleProfiles.append(profile)
+        applyVehicleProfileSettings(profile)
+        return profile
+    }
+    
+    /// Activates a vehicle profile, applying its settings to the app.
+    public func activateVehicleProfile(_ id: UUID, context: ModelContext) {
+        for p in vehicleProfiles {
+            p.isActive = (p.id == id)
+            if p.isActive {
+                applyVehicleProfileSettings(p)
+            }
+        }
+        try? context.save()
+        objectWillChange.send()
+    }
+    
+    /// Deletes a vehicle profile. Cannot delete the last profile.
+    public func deleteVehicleProfile(_ id: UUID, context: ModelContext) {
+        guard vehicleProfiles.count > 1 else { return }
+        if let toDelete = vehicleProfiles.first(where: { $0.id == id }) {
+            let wasActive = toDelete.isActive
+            context.delete(toDelete)
+            try? context.save()
+            vehicleProfiles.removeAll { $0.id == id }
+            if wasActive, let first = vehicleProfiles.first {
+                activateVehicleProfile(first.id, context: context)
+            }
+        }
+    }
+    
+    /// Applies a vehicle profile's settings to the relevant UserDefaults and engines.
+    private func applyVehicleProfileSettings(_ profile: VehicleProfile) {
+        let ud = UserDefaults.standard
+        ud.set(profile.userBuffer, forKey: "userBuffer")
+        ud.set(profile.audioAlertsEnabled, forKey: "audioAlertsEnabled")
+        ud.set(profile.hapticAlertsEnabled, forKey: "hapticAlertsEnabled")
+        ud.set(profile.hapticAlertStyle, forKey: "hapticAlertStyle")
+        ud.set(profile.avoidHighways, forKey: "avoidHighways")
+        ud.set(profile.vehicleIconId, forKey: "selectedVehicleIconId")
+        ud.set(profile.measurementSystem, forKey: "measurementSystem")
+        selectedVehicleIconId = profile.vehicleIconId
+        speedEngine.userBuffer = profile.userBuffer
+        speedEngine.measurementSystem = profile.measurementSystem
+    }
+    
+    // MARK: - Offline Map Regions
+    /// Saved offline map regions. Persisted as JSON in UserDefaults.
+    @Published public var savedOfflineRegions: [OfflineRegion] = []
+    
+    /// Loads saved offline regions from UserDefaults.
+    public func loadOfflineRegions() {
+        guard let data = UserDefaults.standard.data(forKey: "savedOfflineRegions"),
+              let regions = try? JSONDecoder().decode([OfflineRegion].self, from: data) else {
+            savedOfflineRegions = []
+            return
+        }
+        savedOfflineRegions = regions
+    }
+    
+    /// Saves the current map region as an offline area.
+    public func saveOfflineRegion(named label: String, centerLat: Double, centerLon: Double) {
+        let region = OfflineRegion(label: label, lat: centerLat, lon: centerLon)
+        savedOfflineRegions.append(region)
+        persistOfflineRegions()
+    }
+    
+    /// Removes an offline region at the given index.
+    public func removeOfflineRegion(at index: Int) {
+        guard savedOfflineRegions.indices.contains(index) else { return }
+        savedOfflineRegions.remove(at: index)
+        persistOfflineRegions()
+    }
+    
+    private func persistOfflineRegions() {
+        if let data = try? JSONEncoder().encode(savedOfflineRegions) {
+            UserDefaults.standard.set(data, forKey: "savedOfflineRegions")
+        }
+    }
+    
     // MARK: - Deletion States
     /// Controls the UI prompt that asks to delete drives shorter than 90 seconds.
     @Published public var showShortSessionPrompt: Bool = false

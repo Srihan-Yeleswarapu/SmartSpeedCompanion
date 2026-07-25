@@ -11,6 +11,8 @@ public final class DriveSession {
     public var endLocationName: String?
     public var destinationPlaceID: String?
     public var isStarred: Bool?
+    public var vehicleProfileId: String?
+    public var vehicleName: String?
     
     @Relationship(deleteRule: .cascade)
     public var readings: [SpeedReading]
