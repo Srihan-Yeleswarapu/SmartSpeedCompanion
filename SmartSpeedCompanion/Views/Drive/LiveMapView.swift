@@ -248,14 +248,21 @@ public struct LiveMapView: UIViewRepresentable {
             return
         }
 
-        // Re-engage native tracking if it was released
+        // Re-engage native tracking if it was released.
+        // IMPORTANT: animated:false is critical here. Using animated:true tells
+        // MapKit to animate the camera to its DEFAULT altitude/pitch for the
+        // follow-with-heading mode, which immediately conflicts with the camera
+        // system's setCamera call below — creating a tug-of-war that manifests
+        // as rapid zooming in/out. With animated:false the tracking mode snaps
+        // to the user location silently, and the camera system below takes full
+        // ownership of altitude/pitch on this same update pass.
         if uiView.userTrackingMode == .none {
             #if DEBUG || DEVELOPER_BUILD
             if !viewModel.locationManager.isMockMode {
-                uiView.setUserTrackingMode(.followWithHeading, animated: true)
+                uiView.setUserTrackingMode(.followWithHeading, animated: false)
             }
             #else
-            uiView.setUserTrackingMode(.followWithHeading, animated: true)
+            uiView.setUserTrackingMode(.followWithHeading, animated: false)
             #endif
         }
 

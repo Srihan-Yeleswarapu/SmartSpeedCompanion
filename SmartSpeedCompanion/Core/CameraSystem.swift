@@ -550,8 +550,8 @@ public struct CameraDecisionEngine: Sendable {    // ── Key points for altit
 
     // ── Compute the ideal camera state for a given context ─────────────────
     public static func computeTarget(from context: CameraContext) -> TargetCameraState {
-        // ── Stationary guard ──────────────────────────────────────────
-        if context.isStationary || context.userPitchOverride == .forced2D {
+        // ── 2D force override — instant short-circuit ────────────────
+        if context.userPitchOverride == .forced2D {
             let alt = computeBaseAltitude(speed: context.speed, limit: context.speedLimit,
                                           distanceToTurn: context.distanceToNextTurn,
                                           isNavigating: context.isNavigating,
@@ -578,6 +578,19 @@ public struct CameraDecisionEngine: Sendable {    // ── Key points for altit
 
         // ── 3. Compute base pitch from speed ──────────────────────────
         pitch = Self.smoothInterpolate(x: context.speed, knots: Self.pitchLUT)
+
+        // ── NOTE: No binary isStationary guard here! ────────────────────
+        // The altitude and pitch LUTs already handle low speeds smoothly:
+        //   - At 0 mph: altitude = 300 m, pitch = 0°
+        //   - At 3 mph: altitude ≈ 312 m, pitch ≈ 8°
+        // Letting the full computation run at all speeds eliminates the
+        // sharp discontinuity at the 3 mph boundary that was causing
+        // rapid camera oscillation when GPS noise or EMA smoothing
+        // pushed the reported speed across the threshold. The altitude
+        // deadband (25 m) in CameraAnimator filters out the tiny
+        // sub-threshold changes. Pitch for stationary contexts is
+        // gently pulled toward 0 at the end of this function.
+        // ───────────────────────────────────────────────────────────────
 
         // ── 4. Apply context-aware modifiers ──────────────────────────
 
@@ -713,7 +726,19 @@ public struct CameraDecisionEngine: Sendable {    // ── Key points for altit
         altitude = clamp(altitude, min: 200, max: 4500)
         pitch = clamp(pitch, min: 0, max: 62)
 
-        // ── 6. Apply user pitch override (wins over everything) ──────
+        // ── 6. Stationary pitch blend ──────────────────────────────────
+        // When parked / stopped, gently pull pitch toward 0 so the map
+        // lies flat. We use a smooth Hermite blend over the 0–5 mph range
+        // (wider than the original 3 mph binary cutoff) to eliminate the
+        // sharp discontinuity that caused camera oscillation. At 0 mph
+        // pitch goes all the way to 0; at 5+ mph it's untouched.
+        if context.userPitchOverride == .auto && context.speed < 5.0 {
+            let t = context.speed / 5.0          // 0 at 0 mph, 1 at 5 mph
+            let s = t * t * (3.0 - 2.0 * t)      // Hermite smoothstep
+            pitch *= s                           // 0° at 0 mph, full pitch at 5+ mph
+        }
+
+        // ── 7. Apply user pitch override (wins over everything) ──────
         switch context.userPitchOverride {
         case .forced2D:
             pitch = 0
