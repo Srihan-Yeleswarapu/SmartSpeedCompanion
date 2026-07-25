@@ -1,4 +1,6 @@
 import Foundation
+import UIKit
+import SwiftUI
 
 /// Represents a selectable vehicle icon that replaces the default blue dot on the map.
 /// All icons are free and unlocked by default. The `isPremium` flag is reserved for the

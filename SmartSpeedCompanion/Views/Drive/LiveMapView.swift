@@ -160,7 +160,7 @@ public struct LiveMapView: UIViewRepresentable {
         let image = UIImage(systemName: icon.systemImageName, withConfiguration: symbolConfig)?
             .withTintColor(tint, renderingMode: .alwaysOriginal)
 
-        guard let userLoc = map.userLocation else { return }
+        let userLoc = map.userLocation
 
         // 1. In-place image swap on the live annotation view. This is
         //    the fast, no-side-effect path that handles ~all icon
