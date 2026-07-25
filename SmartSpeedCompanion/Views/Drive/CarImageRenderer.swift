@@ -307,7 +307,6 @@ public enum CarImageRenderer {
             )
             let windshieldPath = UIBezierPath(
                 roundedRect: windshieldRect,
-                cornerRadius: cabinW * 0.06,
                 byRoundingCorners: [.topLeft, .topRight],
                 cornerRadii: CGSize(width: cabinW * 0.06, height: cabinW * 0.06)
             ).cgPath
@@ -341,7 +340,6 @@ public enum CarImageRenderer {
             )
             let rearWindowPath = UIBezierPath(
                 roundedRect: rearWindowRect,
-                cornerRadius: cabinW * 0.05,
                 byRoundingCorners: [.bottomLeft, .bottomRight],
                 cornerRadii: CGSize(width: cabinW * 0.05, height: cabinW * 0.05)
             ).cgPath
