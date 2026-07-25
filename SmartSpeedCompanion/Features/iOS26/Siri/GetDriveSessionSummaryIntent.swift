@@ -101,9 +101,10 @@ enum DriveSummaryFormatter {
         return f.string(from: date)
     }
 
-    /// Converts a dialog string into the `IntentDialog` type required by `.result(dialog:)`.
-    static func dialog(_ text: String) -> IntentDialog {
-        IntentDialog.full(LocalizedStringResource(stringLiteral: text))
+    /// Converts a dialog string into the format expected by `.result(dialog:)`.
+    /// Follows the same pattern as the existing intents in SpeedAppIntents.swift.
+    static func dialog(_ text: String) -> String {
+        text
     }
 }
 

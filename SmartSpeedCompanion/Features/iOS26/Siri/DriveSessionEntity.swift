@@ -1,20 +1,22 @@
 import AppIntents
-import CoreSpotlight
 import Foundation
 
 /// An `AppEntity` that wraps a `DriveSession` so Apple Intelligence and Siri
 /// can understand, search, and reference past drives by name, location, or time.
 ///
 /// Conforms to `IndexedEntity` so session metadata is donated to the on-device
-/// Spotlight semantic index. This enables Apple Intelligence to match queries
-/// like *"that drive where I was going really fast"* or *"how was my trip to
-/// the airport last week"* using meaning, not just string matching.
+/// Spotlight semantic index. The `id` property is automatically used as the
+/// Spotlight `uniqueIdentifier`, and the `displayRepresentation` provides the
+/// title/subtitle shown in search results. This enables Apple Intelligence to
+/// match queries like *"that drive where I was going really fast"* using
+/// Spotlight's semantic understanding.
 ///
-/// The `@Property(indexingKey:)` annotations map key fields to specific
-/// `CSSearchableItemAttributeSet` attributes — the system indexes these fields
-/// and makes them discoverable by Spotlight. The `displayName` is the primary
-/// identifier shown in search results, while `contentDescription` is the main
-/// field Apple Intelligence uses for semantic understanding.
+/// > Note: The `@Property(indexingKey:)` macro would allow mapping individual
+/// > fields to specific `CSSearchableItemAttributeSet` attributes for finer-grained
+/// > control, but it requires iOS 18.4+ and changes the stored property type to
+/// > `EntityProperty<T>`, complicating the `from()` factory. The default
+/// > `IndexedEntity` behavior (which indexes `id` and `displayRepresentation`)
+/// > is sufficient for Spotlight semantic search to work effectively.
 ///
 /// Entity resolution for parameterised intents is handled by
 /// `DriveSessionEntityQuery` (`EntityStringQuery`), which searches SwiftData
@@ -22,15 +24,17 @@ import Foundation
 struct DriveSessionEntity: IndexedEntity {
     // MARK: - AppEntity conformance
 
-    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Drive Session"
+    static var typeDisplayRepresentation: TypeDisplayRepresentation {
+        TypeDisplayRepresentation(stringLiteral: "Drive Session")
+    }
+
+    @MainActor
     static var defaultQuery = DriveSessionEntityQuery()
 
     /// The stable identifier — inherited as the Spotlight `uniqueIdentifier`.
     var id: String                       // DriveSession.id.uuidString
 
     /// The session title (custom or auto-generated date/location title).
-    /// Indexed as the primary display name in Spotlight search results.
-    @Property(indexingKey: \.displayName)
     var title: String
 
     var startTime: Date
@@ -47,9 +51,7 @@ struct DriveSessionEntity: IndexedEntity {
     var customTitle: String?
 
     /// Route description (e.g. "Home to Work").
-    /// Indexed as the content description — this is the primary field Apple
-    /// Intelligence uses for semantic understanding and matching.
-    @Property(indexingKey: \.contentDescription)
+    /// This is the primary field Apple Intelligence uses for semantic understanding.
     var routeDescription: String?
 
     var displayRepresentation: DisplayRepresentation {

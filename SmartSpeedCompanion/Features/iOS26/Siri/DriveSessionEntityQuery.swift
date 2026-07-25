@@ -91,13 +91,13 @@ struct DriveSessionEntityQuery: EntityStringQuery {
             return #Predicate { $0.startTime >= yesterday && $0.startTime < today }
         }
         if lower == "this week" {
-            let startOfWeek = Calendar.current.dateInterval(for: .weekOfYear, of: Date())?.start ?? Date()
+            let startOfWeek = Calendar.current.dateInterval(of: Calendar.Component.weekOfYear, for: Date())?.start ?? Date()
             return #Predicate { $0.startTime >= startOfWeek }
         }
         if lower == "last week" {
             let cal = Calendar.current
-            let thisWeek = cal.dateInterval(for: .weekOfYear, of: Date())?.start ?? Date()
-            let lastWeek = cal.date(byAdding: .weekOfYear, value: -1, to: thisWeek) ?? thisWeek
+            let thisWeek = cal.dateInterval(of: Calendar.Component.weekOfYear, for: Date())?.start ?? Date()
+            let lastWeek = cal.date(byAdding: .day, value: -7, to: thisWeek) ?? thisWeek
             return #Predicate { $0.startTime >= lastWeek && $0.startTime < thisWeek }
         }
 
