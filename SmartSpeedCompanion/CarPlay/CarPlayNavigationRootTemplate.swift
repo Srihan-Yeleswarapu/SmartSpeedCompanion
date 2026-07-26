@@ -49,7 +49,9 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         // Observe CarPlay-started navigation (session restoration, trip preview "Start").
         // Without this delegate, the app never learns about sessions CarPlay starts
         // internally — e.g. after "Session interrupted — restore route?" → Yes.
-        mapTemplate.delegate = self
+        // CPMapTemplate exposes `mapDelegate` (not `delegate`) for the
+        // CPMapTemplateDelegate protocol.
+        mapTemplate.mapDelegate = self
 
         // Navigation Bar Buttons (Top - Representing the 25% overlay conceptually).
         // Placeholder labels honor Settings → UNITS so a metric user's first
