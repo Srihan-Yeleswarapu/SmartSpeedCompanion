@@ -839,7 +839,7 @@ public final class CameraAnimator {
     // Real altitude transitions (entering/exiting a highway etc.) easily
     // exceed 50 m, so responsiveness on actual speed changes is unchanged.
     private let altitudeDeadband: Double = 50.0
-    private let pitchDeadband: Double = 3.0
+    private let pitchDeadband: Double = 5.0
 
     // ── Cooldown ───────────────────────────────────────────────────────
     private let minInterval: TimeInterval = 0.4
