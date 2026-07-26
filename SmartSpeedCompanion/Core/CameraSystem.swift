@@ -1136,10 +1136,29 @@ public final class CameraAnimator {
                                          tau: animTau)
 
         // 6. Apply to MapKit
+        //
+        // CRITICAL: Use `mapView.camera = cam` (property setter) instead of
+        // `mapView.setCamera(cam, animated:)`.  Apple's MKMapView docs state:
+        //
+        //   "If the user tracking mode is MKUserTrackingModeFollow or
+        //    MKUserTrackingModeFollowWithHeading, setting a new camera
+        //    object on the map view doesn't change the center point of
+        //    the map. The map view continues to track the user's
+        //    location automatically."
+        //
+        // The older `setCamera(_:animated:)` API may disable user tracking
+        // when the camera is modified, creating a cycle that manifests as
+        // rapid zoom-in/zoom-out oscillation:
+        //   1. setCamera → MapKit disables tracking
+        //   2. Next updateUIView re-engages tracking → MapKit resets to
+        //      default altitude
+        //   3. Cooldown opens → setCamera → back to step 1
+        //
+        // The property setter (iOS 13+) does NOT have this side-effect.
         let cam = mapView.camera.copy() as! MKMapCamera
         cam.centerCoordinateDistance = displayAltitude
         cam.pitch = CGFloat(displayPitch)
-        mapView.setCamera(cam, animated: false)
+        mapView.camera = cam
 
         lastApplyTime = now
         logIfChanged(target, reason: "applied")

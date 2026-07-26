@@ -299,7 +299,10 @@ public struct LiveMapView: UIViewRepresentable {
             if Double(uiView.camera.pitch) != target {
                 let cam = uiView.camera.copy() as! MKMapCamera
                 cam.pitch = CGFloat(target)
-                uiView.setCamera(cam, animated: false)
+                // CRITICAL: Use property setter (iOS 13+) instead of
+                // setCamera(_:animated:) to avoid disabling user tracking
+                // mode. See CameraAnimator.update() for full explanation.
+                uiView.camera = cam
             }
             context.coordinator.lastAppliedPitchMode = userPitchMode
             // Reset the camera animator's internal state so the next tick
