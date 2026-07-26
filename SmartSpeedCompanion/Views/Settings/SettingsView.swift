@@ -81,7 +81,7 @@ public struct SettingsView: View {
         NavigationStack {
             Form {
                 Section(header: Text("ALERTS").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
-                    // Speed Alert Profiles row — first item in ALERTS
+                    // Speed Buffer Profiles row — first item in ALERTS
                     Button(action: { showingAlertProfiles = true }) {
                         HStack(spacing: 10) {
                             Image(systemName: "slider.horizontal.3")
@@ -89,7 +89,7 @@ public struct SettingsView: View {
                                 .frame(width: 20)
                             
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Speed Alert Profiles")
+                                Text("Speed Buffer Profiles")
                                     .foregroundColor(.white)
                                 let activeName = driveViewModel.alertProfiles.first(where: { $0.isActive })?.name ?? "Default"
                                 Text("Active: \(activeName)")

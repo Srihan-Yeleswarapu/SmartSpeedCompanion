@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-/// A speed alert profile with per-road-type buffer thresholds.
+/// A speed buffer profile with per-road-type buffer thresholds.
 /// Users can create multiple profiles (e.g. "Daily Commute", "Weekend Cruise")
 /// and switch between them. Follows the same @Model pattern as DriveSession.
 @Model

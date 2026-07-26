@@ -140,10 +140,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// True if the user has manually panned the map away from current tracking.
     @Published public var isMapDetached: Bool = false
     
-    // MARK: - Speed Alert Profiles
-    /// All saved speed alert profiles. Loaded from SwiftData on init.
+    // MARK: - Speed Buffer Profiles
+    /// All saved speed buffer profiles. Loaded from SwiftData on init.
     @Published public var alertProfiles: [SpeedAlertProfile] = []
-    /// True when the alert profiles list sheet should be presented.
+    /// True when the buffer profiles list sheet should be presented.
     @Published public var showAlertProfilesSheet: Bool = false
     /// The profile currently being edited (nil = creating new).
     public var editingProfile: SpeedAlertProfile? = nil
@@ -160,9 +160,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// If non-nil, we are editing an existing named location.
     public var editingNamedLocation: NamedLocation? = nil
     
-    // MARK: - Alert Profile Management
+    // MARK: - Buffer Profile Management
     
-    /// Loads all alert profiles from SwiftData, activating the first one if none are active.
+    /// Loads all buffer profiles from SwiftData, activating the first one if none are active.
     public func loadAlertProfiles(context: ModelContext) {
         let descriptor = FetchDescriptor<SpeedAlertProfile>(sortBy: [SortDescriptor(\.createdAt, order: .forward)])
         if let profiles = try? context.fetch(descriptor) {
@@ -174,7 +174,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
     
-    /// Creates a new speed alert profile with default buffer values, inserts into SwiftData, and activates it.
+    /// Creates a new speed buffer profile with default buffer values, inserts into SwiftData, and activates it.
     @discardableResult
     public func createNewProfile(name: String, context: ModelContext) -> SpeedAlertProfile {
         let profile = SpeedAlertProfile(name: name, isActive: true)
@@ -226,7 +226,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
         if alertProfiles.isEmpty {
             // Auto-seed a fresh Default. Treated identical to a fresh
-            // install so the user keeps a working alert profile even
+            // install so the user keeps a working buffer profile even
             // after deleting their last one. Same defaults as the
             // model initializer so thresholds match the rest of the app.
             //

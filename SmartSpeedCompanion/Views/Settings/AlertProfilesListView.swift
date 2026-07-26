@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 
-/// List of saved speed alert profiles. Tap to activate, swipe to delete,
+/// List of saved speed buffer profiles. Tap to activate, swipe to delete,
 /// tap the edit button to customize per-road-type buffers.
 public struct AlertProfilesListView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
@@ -23,10 +23,10 @@ public struct AlertProfilesListView: View {
                         Image(systemName: "speedometer")
                             .font(.system(size: 40))
                             .foregroundColor(DesignSystem.bgCard)
-                        Text("No alert profiles yet")
+                        Text("No buffer profiles yet")
                             .font(.headline)
                             .foregroundColor(.gray)
-                        Text("Create a profile to customize per-road-type speed alert buffers.")
+                        Text("Create a profile to customize per-road-type speed buffer thresholds.")
                             .font(.caption)
                             .foregroundColor(.gray)
                             .multilineTextAlignment(.center)
@@ -98,7 +98,7 @@ public struct AlertProfilesListView: View {
             }
             .scrollContentBackground(.hidden)
             .background(DesignSystem.bgDeep.ignoresSafeArea())
-            .navigationTitle("Alert Profiles")
+            .navigationTitle("Buffer Profiles")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
@@ -132,7 +132,7 @@ public struct AlertProfilesListView: View {
                     newProfileName = ""
                 }
             } message: {
-                Text("Enter a name for your new alert profile (e.g. \"Daily Commute\").")
+                Text("Enter a name for your new buffer profile (e.g. \"Daily Commute\").")
             }
         }
         .preferredColorScheme(.dark)

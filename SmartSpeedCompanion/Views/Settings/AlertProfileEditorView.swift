@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 
-/// Form for editing a speed alert profile's per-road-type buffer thresholds.
+/// Form for editing a speed buffer profile's per-road-type buffer thresholds.
 /// Same styling as SettingsView sections.
 public struct AlertProfileEditorView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
