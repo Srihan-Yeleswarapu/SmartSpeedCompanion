@@ -701,8 +701,17 @@ public struct LiveMapView: UIViewRepresentable {
                 maneuverAnnotation = nil
             }
 
-            // History line (color-coded by speed status)
-            buildHistoryOverlays(mapView, viewModel: viewModel)
+            // History line (color-coded by speed status).
+            // DEFENSE-IN-DEPTH: skip the call entirely when navigating or
+            // selecting a route. The inner guard in buildHistoryOverlays
+            // already checks isNavigating, but during reroute flows there
+            // can be a transient window where isNavigating flips false
+            // briefly — if historyChanged fires in that gap the full
+            // session trail gets drawn as red over-limit polylines.
+            // Gating here eliminates that race.
+            if !viewModel.isNavigating && !viewModel.isSelectingRoute {
+                buildHistoryOverlays(mapView, viewModel: viewModel)
+            }
         }
 
         /// Renders ALL of `routes` as map polylines during the route-selection
