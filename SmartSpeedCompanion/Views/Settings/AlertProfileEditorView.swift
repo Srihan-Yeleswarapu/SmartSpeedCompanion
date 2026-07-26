@@ -134,6 +134,16 @@ public struct AlertProfileEditorView: View {
         if let idx = driveViewModel.alertProfiles.firstIndex(where: { $0.id == p.id }) {
             driveViewModel.alertProfiles[idx] = p
         }
+
+        // If this is the active profile, immediately re-apply its buffer
+        // to the SpeedEngine so changes take effect without requiring
+        // the user to deactivate/reactivate. TestFlight feedback:
+        // "Profile. Not active" — user edited the active profile but
+        // the engine still used the old buffer value.
+        if p.isActive {
+            driveViewModel.speedEngine.userBuffer = p.defaultBuffer
+        }
+
         dismiss()
     }
 }

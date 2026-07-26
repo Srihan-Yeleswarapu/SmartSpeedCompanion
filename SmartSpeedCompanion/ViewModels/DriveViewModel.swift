@@ -167,8 +167,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let descriptor = FetchDescriptor<SpeedAlertProfile>(sortBy: [SortDescriptor(\.createdAt, order: .forward)])
         if let profiles = try? context.fetch(descriptor) {
             alertProfiles = profiles
-            // Ensure at least one profile is active
-            if !profiles.contains(where: { $0.isActive }), let first = profiles.first {
+            if let activeProfile = profiles.first(where: { $0.isActive }) {
+                // Re-apply the active profile's buffer to the SpeedEngine.
+                // TestFlight feedback: "Profile. Not active" — on app launch
+                // the @AppStorage value could be stale if the profile was
+                // edited in a previous session. Force-sync from SwiftData
+                // so the engine always matches the persisted profile.
+                speedEngine.userBuffer = activeProfile.defaultBuffer
+            } else if let first = profiles.first {
                 activateProfile(first.id, context: context)
             }
         }

@@ -321,9 +321,15 @@ fileprivate struct SearchBarView: View {
             .frame(maxWidth: isLandscape ? 360 : .infinity, alignment: .center)
             .liquidGlassChip(cornerRadius: isLandscape ? 10 : 14, tint: DesignSystem.cyan.opacity(0.04), interactive: true)
             
-            if isFocused {
-                // Named locations section — shown above recent searches
-                let filteredNamed = searchText.isEmpty ? driveViewModel.namedLocations : driveViewModel.namedLocations.filter { $0.name.lowercased().contains(searchText.lowercased()) }
+            if isFocused && !searchText.isEmpty {
+                // Named locations section — only shown when actively typing.
+                // TestFlight FB (srihan.yeleswarapu): "If I type something
+                // into the search bar, and then backspace it completely,
+                // then everything shows up!" Showing all saved locations
+                // when the search field is empty overwhelmed the screen.
+                // Gate on !searchText.isEmpty so the list only appears
+                // when the user is actively filtering.
+                let filteredNamed = driveViewModel.namedLocations.filter { $0.name.lowercased().contains(searchText.lowercased()) }
                 
                 if !filteredNamed.isEmpty {
                     VStack(alignment: .leading, spacing: 0) {
@@ -391,7 +397,7 @@ fileprivate struct SearchBarView: View {
                                 }
                             }
                         }
-                        .frame(maxHeight: 200)
+                        .frame(maxHeight: 180)
                     }
                     .liquidGlass(cornerRadius: 16, interactive: true)
                     .padding(.top, 2)
@@ -462,14 +468,14 @@ fileprivate struct SearchBarView: View {
                                 }
                             }
                         }
-                        .frame(maxHeight: 240)
+                        .frame(maxHeight: 200)
                     }
                     .liquidGlass(cornerRadius: 16, interactive: true)
                     .padding(.top, 2)
                 }
             }
             
-            if !driveViewModel.searchCompletions.isEmpty && isFocused {
+            if !driveViewModel.searchCompletions.isEmpty && isFocused && !searchText.isEmpty {
                 VStack(spacing: 0) {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
@@ -513,7 +519,7 @@ fileprivate struct SearchBarView: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 320)
+                    .frame(maxHeight: 240)
                 }
                 .liquidGlass(cornerRadius: 16, interactive: true)
                 .padding(.top, 2)
