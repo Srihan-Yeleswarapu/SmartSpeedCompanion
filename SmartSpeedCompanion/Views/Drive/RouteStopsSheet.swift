@@ -16,7 +16,7 @@ import MapKit
 
 public struct RouteStopsSheet: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
-    @Environment(\\.dismiss) private var dismiss
+    @Environment(\.dismiss) private var dismiss
 
     @State private var editMode: EditMode = .inactive
     @State private var showAddStopSearch = false
@@ -43,7 +43,7 @@ public struct RouteStopsSheet: View {
             }
             .background(DesignSystem.bgPanel)
             .navigationBarHidden(true)
-            .environment(\\.editMode, $editMode)
+            .environment(\.editMode, $editMode)
             // Add-stop search sheet
             .sheet(isPresented: $showAddStopSearch) {
                 AddStopSearchSheet { mapItem in
@@ -211,7 +211,7 @@ public struct RouteStopsSheet: View {
             .listRowSeparator(.hidden)
 
             // Intermediate stops
-            ForEach(Array(driveViewModel.routeStops.enumerated()), id: \\.element.id) { index, stop in
+            ForEach(Array(driveViewModel.routeStops.enumerated()), id: \.element.id) { index, stop in
                 StopRow(
                     index: index + 1,
                     stop: stop,
@@ -536,7 +536,7 @@ fileprivate struct DestinationRow: View {
 
 fileprivate struct AddStopSearchSheet: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
-    @Environment(\\.dismiss) private var dismiss
+    @Environment(\.dismiss) private var dismiss
     let onSelect: (MKMapItem) -> Void
 
     @State private var query = ""
@@ -616,7 +616,7 @@ fileprivate struct AddStopSearchSheet: View {
     private var quickCategories: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(QuickCategory.allCases, id: \\.self) { category in
+                ForEach(QuickCategory.allCases, id: \.self) { category in
                     Button(action: {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         query = category.rawValue
@@ -683,7 +683,7 @@ fileprivate struct AddStopSearchSheet: View {
     private var resultsList: some View {
         ScrollView {
             VStack(spacing: 0) {
-                ForEach(results, id: \\.self) { item in
+                ForEach(results, id: \.self) { item in
                     Button(action: {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         onSelect(item)
