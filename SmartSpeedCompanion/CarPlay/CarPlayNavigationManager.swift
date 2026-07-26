@@ -178,7 +178,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     /// (called by `startNavigation`) ends any previous session first, so our
     /// properly-configured trip replaces the CarPlay-created one cleanly.
     public func handleCarPlayStartedTrip(_ trip: CPTrip) async {
-        guard let destination = trip.destination else { return }
+        let destination = trip.destination
 
         do {
             let route = try await calculateRoute(to: destination)

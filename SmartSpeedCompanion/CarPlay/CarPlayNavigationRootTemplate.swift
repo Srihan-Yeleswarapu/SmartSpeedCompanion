@@ -4,6 +4,7 @@
 import CarPlay
 import Combine
 
+@MainActor
 class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTemplateDelegate {
 
     @MainActor let mapTemplate: CPMapTemplate
@@ -266,7 +267,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             Task { @MainActor in
                 await self.viewModel.addStopToRoute(first)
                 // Pop back to the main map after adding
-                self.interfaceController?.popToRootTemplate(animated: true)
+                await self.interfaceController?.popToRootTemplate(animated: true)
             }
         }
     }
