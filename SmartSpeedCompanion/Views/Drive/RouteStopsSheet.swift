@@ -16,7 +16,7 @@ import MapKit
 
 public struct RouteStopsSheet: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss) var dismissAction: DismissAction
 
     @State private var editMode: EditMode = .inactive
     @State private var showAddStopSearch = false
@@ -79,7 +79,7 @@ public struct RouteStopsSheet: View {
                 Spacer()
 
                 // Close button
-                Button(action: { dismiss() }) {
+                Button(action: { dismissAction() }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 24))
                         .foregroundColor(.white.opacity(0.5))
@@ -536,7 +536,7 @@ fileprivate struct DestinationRow: View {
 
 fileprivate struct AddStopSearchSheet: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss) var dismissAction: DismissAction
     let onSelect: (MKMapItem) -> Void
 
     @State private var query = ""
