@@ -511,15 +511,47 @@ public class SmartSpeedLimitService: ObservableObject {
     /// Handle a resolver miss. Mirrors the previous catch-block logic: hold the
     /// last valid limit within a grace window, then clear caches if we cross
     /// the threshold.
+    ///
+    /// ROAD-NAME-AWARE GRACE: when the geocoder reports a different road name
+    /// than the one on which `lastValidLimit` was committed, the grace window
+    /// shrinks from 20 to 3 consecutive misses. Holding a limit from a
+    /// different road is worse than briefly showing "--". The small window
+    /// still prevents flicker from GPS cross-street snaps at intersections.
+    ///
+    /// IMPORTANT: when the road-change effective threshold is exceeded
+    /// (consecutiveMissCount >= effectiveThreshold), we drop to "--"
+    /// immediately instead of continuing to return the stale `lastValidLimit`.
     private func handleMiss(
         coordinate: CLLocationCoordinate2D,
         roadName: String?
     ) async -> Int {
         if consecutiveMissCount < missThresholdBeforeClear, lastValidLimit > 0 {
-            // Grace window: keep the previous limit visible for up to 20
-            // consecutive misses before giving up to "No Data".
-            self.currentLimit = lastValidLimit
-            return lastValidLimit
+            // Detect road change: geocoder now says a different road than
+            // when the committed limit was last established.
+            let roadChanged: Bool = {
+                guard let current = roadName, !current.isEmpty,
+                      let committed = lastStable?.roadName, !committed.isEmpty else {
+                    return false  // no geocode opinion either time = assume same road
+                }
+                return current != committed
+            }()
+
+            let effectiveThreshold = roadChanged ? min(3, missThresholdBeforeClear) : missThresholdBeforeClear
+
+            if consecutiveMissCount < effectiveThreshold {
+                // Grace window: keep the previous limit visible for a short
+                // window before dropping to "No Data". Shorter when the road
+                // name changed.
+                self.currentLimit = lastValidLimit
+                return lastValidLimit
+            } else if roadChanged {
+                // Road changed AND we've exceeded the road-change threshold.
+                // Drop to "--" immediately instead of holding the stale
+                // limit from the previous road.
+                self.currentLimit = 0
+                self.dataSource = .noData
+                return 0
+            }
         }
         if consecutiveMissCount >= missThresholdBeforeClear {
             await ArizonaSpeedLimitService.shared.clearCache()

@@ -352,6 +352,15 @@ public actor ArizonaSpeedLimitService {
             // Tight gates block the S 202 mega-bbox case from regressing:
             // a freeway 65 m from the user with the wrong heading do
             // NOT pick up, but the right road RIGHT under the user does.
+            //
+            // NAME-MATCH GATE: In addition to the spatial + bearing
+            // gates, each candidate must also pass a name-match check
+            // via `RoadNameMatcher.score(...) >= NAME_MATCH_THRESHOLD`.
+            // This prevents Pass 1.5 from picking up a completely
+            // different road that happens to share the user's bearing
+            // (e.g. a residential street near a 35 mph arterial). The
+            // E Riggs Rd case still works because "RIGGS" tokens are
+            // present in both the geocoded name and the SQLite RouteId.
             if let currentHeading = heading {
                 var salvageLimit: Int? = nil
                 var salvageRouteId: String? = nil
@@ -370,6 +379,18 @@ public actor ArizonaSpeedLimitService {
                     let isNorthSouth = dy > (dx * 1.5)
                     let isEastWest   = dx > (dy * 1.5)
                     guard isNorthSouth || isEastWest else { continue }
+                    // Name-match gate: the candidate's RouteId must share
+                    // at least some token or numeric identity with the
+                    // geocoded road name. Without this, a nearby arterial
+                    // (e.g. "BASELINE RD") that the user is NOT on can
+                    // be picked up via bearing alignment alone.
+                    let nameMatch = RoadNameMatcher.score(
+                        geocodedName: providedRoadName,
+                        sqliteRouteId: segment.routeId
+                    )
+                    guard nameMatch >= NAME_MATCH_THRESHOLD else {
+                        continue
+                    }
                     let roadHeading = isNorthSouth ? 0.0 : 90.0
                     // Normalize the heading's mod-180 remainder into [0, 180).
                     // `Double.truncatingRemainder(dividingBy:)` returns a

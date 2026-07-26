@@ -250,6 +250,10 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     /// This is the main API used by SpeedLimitService.
     /// - If `roadName` is non-nil and non-empty, name-first lookup runs.
     /// - If name-first misses (or no name available), spatial fallback runs.
+    /// - When a road name IS available and the spatial fallback finds a match,
+    ///   the result's road name is validated against the geocoded name via
+    ///   `RoadNameMatcher.score()` to prevent returning data from a nearby
+    ///   but completely different road.
     /// - Returns the best match, or nil if nothing is cached nearby.
     public func lookup(coordinate: CLLocationCoordinate2D, roadName: String?, bearing: Double?) -> CachedRoad? {
         // Primary path: name-first
@@ -260,7 +264,22 @@ public final class HERELocalBatchCache: @unchecked Sendable {
         }
 
         // Secondary path: spatial fallback
-        return lookupNearest(to: coordinate, radiusMeters: 50)
+        if let spatial = lookupNearest(to: coordinate, radiusMeters: 50) {
+            // When a road name was provided by the geocoder, validate the
+            // spatial result's road name actually matches the geocoded name.
+            // A nearby cached point from a completely different road would
+            // be wrong to return (e.g. neighborhood road vs adjacent arterial).
+            if let name = roadName, !name.isEmpty {
+                let matchScore = RoadNameMatcher.score(
+                    geocodedName: name,
+                    sqliteRouteId: spatial.roadName
+                )
+                guard matchScore >= 0.5 else { return nil }
+            }
+            return spatial
+        }
+
+        return nil
     }
 
     /// Store multiple road segments from a batch API response.
