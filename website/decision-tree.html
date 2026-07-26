@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Speedio — Speed Limit Decision Tree</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0b0d14;
+    --panel: #131620;
+    --panel-hover: #1a1e2a;
+    --border: #1f2538;
+    --text: #dfe3f0;
+    --text-dim: #7078a0;
+    --green: #34d399;
+    --green-bg: rgba(52,211,153,0.08);
+    --green-border: rgba(52,211,153,0.25);
+    --amber: #fbbf24;
+    --amber-bg: rgba(251,191,36,0.08);
+    --amber-border: rgba(251,191,36,0.25);
+    --red: #f87171;
+    --red-bg: rgba(248,113,113,0.08);
+    --red-border: rgba(248,113,113,0.25);
+    --blue: #60a5fa;
+    --blue-bg: rgba(96,165,250,0.08);
+    --blue-border: rgba(96,165,250,0.25);
+    --purple: #a78bfa;
+    --purple-bg: rgba(167,139,250,0.08);
+    --purple-border: rgba(167,139,250,0.25);
+    --cyan: #22d3ee;
+    --cyan-bg: rgba(34,211,238,0.08);
+    --cyan-border: rgba(34,211,238,0.25);
+    --pink: #f472b6;
+    --radius: 12px;
+    --node-width: 220px;
+    --arrow: #2a3350;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 20px 40px;
+  }
+
+  header {
+    text-align: center;
+    padding: 32px 0 16px;
+    max-width: 700px;
+  }
+  header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  header p {
+    color: var(--text-dim);
+    font-size: 14px;
+    margin-top: 6px;
+    line-height: 1.6;
+  }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 12px 20px;
+    margin-bottom: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .legend-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ── Flow container ── */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    width: 100%;
+    max-width: 1100px;
+    position: relative;
+  }
+
+  /* ── Row ── */
+  .row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    position: relative;
+    padding: 6px 0;
+  }
+  .row-label {
+    width: 100%;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 2px;
+    opacity: 0.6;
+  }
+
+  /* ── Arrow connector ── */
+  .arrow-down {
+    width: 0; height: 28px;
+    border-left: 2px dashed var(--arrow);
+    position: relative;
+    flex-shrink: 0;
+  }
+  .arrow-down::after {
+    content: '';
+    position: absolute;
+    bottom: -4px; left: 50%;
+    transform: translateX(-50%);
+    width: 8px; height: 8px;
+    border-right: 2px solid var(--arrow);
+    border-bottom: 2px solid var(--arrow);
+    rotate: 45deg;
+  }
+  .arrow-down.solid {
+    border-left-style: solid;
+  }
+  .arrow-down.double {
+    width: 0; height: 28px;
+    border-left: 2px dashed var(--arrow);
+  }
+
+  /* ── Branch arms ── */
+  .branch-wrapper {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .branch-wrapper .arrow-down { display: none; }
+
+  .branch-arm {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 120px;
+  }
+  .branch-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin: 2px 0 6px;
+    padding: 2px 10px;
+    border-radius: 4px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+  }
+  .branch-label.green { color: var(--green); border-color: var(--green-border); }
+  .branch-label.red   { color: var(--red);   border-color: var(--red-border); }
+  .branch-label.amber { color: var(--amber); border-color: var(--amber-border); }
+
+  /* ── Nodes ── */
+  .node {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 18px;
+    width: var(--node-width);
+    text-align: center;
+    cursor: default;
+    transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+    position: relative;
+    user-select: none;
+    flex-shrink: 0;
+  }
+  .node:hover {
+    background: var(--panel-hover);
+    border-color: var(--blue-border);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+  .node .icon {
+    font-size: 18px;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .node .label {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .node .sub {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+    line-height: 1.4;
+  }
+  .node .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 6px;
+    margin-top: 5px;
+  }
+
+  .node.green   { border-color: var(--green-border);   background: var(--green-bg);   }
+  .node.amber   { border-color: var(--amber-border);   background: var(--amber-bg);   }
+  .node.red     { border-color: var(--red-border);     background: var(--red-bg);     }
+  .node.blue    { border-color: var(--blue-border);    background: var(--blue-bg);    }
+  .node.purple  { border-color: var(--purple-border);  background: var(--purple-bg);  }
+  .node.cyan    { border-color: var(--cyan-border);    background: var(--cyan-bg);    }
+  .node.pink    { border-color: transparent;           background: transparent;       }
+
+  .node.green:hover   { background: rgba(52,211,153,0.14); border-color: var(--green);   }
+  .node.amber:hover   { background: rgba(251,191,36,0.14);  border-color: var(--amber);   }
+  .node.red:hover     { background: rgba(248,113,113,0.14); border-color: var(--red);     }
+  .node.blue:hover    { background: rgba(96,165,250,0.14);  border-color: var(--blue);    }
+  .node.purple:hover  { background: rgba(167,139,250,0.14); border-color: var(--purple);  }
+  .node.cyan:hover    { background: rgba(34,211,238,0.14);  border-color: var(--cyan);    }
+
+  .badge.green { background: rgba(52,211,153,0.15); color: var(--green); }
+  .badge.amber { background: rgba(251,191,36,0.15); color: var(--amber); }
+  .badge.red   { background: rgba(248,113,113,0.15); color: var(--red); }
+
+  /* ── Detail panel ── */
+  .detail-panel {
+    display: none;
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%);
+    width: min(620px, calc(100% - 40px));
+    background: #191e2e;
+    border: 1px solid var(--blue-border);
+    border-radius: 14px;
+    padding: 18px 22px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+    z-index: 100;
+    animation: slideUp 0.25s ease;
+  }
+  .detail-panel.show { display: block; }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateX(-50%) translateY(16px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+  .detail-panel h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .detail-panel p {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+  .detail-panel code {
+    display: inline-block;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    background: rgba(255,255,255,0.06);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .detail-close {
+    position: absolute;
+    top: 12px; right: 14px;
+    background: none; border: none;
+    color: var(--text-dim);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: background 0.15s;
+  }
+  .detail-close:hover { background: rgba(255,255,255,0.06); }
+
+  /* ── Footer ── */
+  footer {
+    margin-top: 40px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 12px;
+    opacity: 0.5;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 800px) {
+    :root { --node-width: 180px; }
+    .row { flex-direction: column; align-items: center; }
+    .branch-wrapper { flex-direction: column; align-items: center; }
+    .branch-arm { min-width: unset; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Speedio Speed Limit Decision Tree</h1>
+  <p>Every GPS tick (~1 Hz) flows through this pipeline. Click any node for details.</p>
+</header>
+
+<div class="legend">
+  <span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span> Commit / Hit</span>
+  <span class="legend-item"><span class="legend-dot" style="background:var(--amber)"></span> Decision / Hold</span>
+  <span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span> Miss / Fail / Reject</span>
+  <span class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span> Action / Process</span>
+  <span class="legend-item"><span class="legend-dot" style="background:var(--purple)"></span> Database / Data Source</span>
+  <span class="legend-item"><span class="legend-dot" style="background:var(--cyan)"></span> Live Provider</span>
+</div>
+
+<div class="flow" id="flow">
+
+  <!-- TOP: GPS Update -->
+  <div class="row">
+    <div class="node blue" data-detail="gps">
+      <span class="icon">📡</span>
+      <div class="label">GPS Location Update</div>
+      <div class="sub">SpeedEngine.processLocation()<br>1 Hz · speed + heading + accuracy</div>
+    </div>
+  </div>
+  <div class="arrow-down solid"></div>
+
+  <!-- Road Geocoder -->
+  <div class="row">
+    <div class="node blue" data-detail="geocoder">
+      <span class="icon">🗺️</span>
+      <div class="label">Road Name Resolver</div>
+      <div class="sub">RoadGeocoder · CLGeocoder / Geoapify<br>50m grid cache · 24h TTL</div>
+    </div>
+  </div>
+  <div class="arrow-down solid"></div>
+
+  <!-- ENTRY: SmartSpeedLimitService.updateSpeedLimit() -->
+  <div class="row">
+    <div class="node amber" data-detail="entry">
+      <span class="icon">🚦</span>
+      <div class="label">SpeedLimit Orchestrator</div>
+      <div class="sub">SmartSpeedLimitService.updateSpeedLimit()<br>resolveCandidate() → finalizeWithContinuity()</div>
+    </div>
+  </div>
+  <div class="arrow-down solid"></div>
+
+  <!-- STEP 1: Cache -->
+  <div class="row">
+    <div class="node amber" data-detail="cache">
+      <span class="icon">💾</span>
+      <div class="label">Step 1: Spatial Cache</div>
+      <div class="sub">50m grid cell · 30 min TTL<br>roadName-hashed lookup</div>
+    </div>
+  </div>
+
+  <!-- Branch: Cache Hit / Cache Miss -->
+  <div class="row">
+    <div class="branch-wrapper">
+      <div class="branch-arm">
+        <span class="branch-label green">CACHE HIT</span>
+        <div class="arrow-down solid"></div>
+        <div class="node green" data-detail="cache-hit">
+          <span class="icon">✅</span>
+          <div class="label">Return Cached Limit</div>
+          <div class="sub">0ms · no network · no I/O</div>
+          <span class="badge green">~60% of ticks</span>
+        </div>
+      </div>
+      <div class="branch-arm">
+        <span class="branch-label red">CACHE MISS</span>
+        <div class="arrow-down solid"></div>
+        <div class="node red" data-detail="cache-miss">
+          <span class="icon">❌</span>
+          <div class="label">Continue Chain</div>
+          <div class="sub">→ Check network reachability</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-down solid"></div>
+
+  <!-- STEP 2: Network check -->
+  <div class="row">
+    <div class="node amber" data-detail="network">
+      <span class="icon">📶</span>
+      <div class="label">Step 2: Network Available?</div>
+      <div class="sub">NWPathMonitor · isConnected</div>
+    </div>
+  </div>
+
+  <!-- Branch: Online / Offline -->
+  <div class="row">
+    <div class="branch-wrapper">
+      <div class="branch-arm">
+        <span class="branch-label green">ONLINE</span>
+        <div class="arrow-down solid"></div>
+        <!-- Live provider chain header -->
+        <div class="node blue" data-detail="live-chain">
+          <span class="icon">🌐</span>
+          <div class="label">Live Provider Chain</div>
+          <div class="sub">Walk providers in order</div>
+        </div>
+        <div class="arrow-down solid"></div>
+        <!-- ArcGIS HPMS -->
+        <div class="node cyan" data-detail="arcgis">
+          <span class="icon">🏛️</span>
+          <div class="label">ArcGIS HPMS</div>
+          <div class="sub">FHWA panel sections<br>AZ interstates + state routes<br>Heading-aware scoring</div>
+          <span class="badge green" style="background:rgba(52,211,153,0.15);color:var(--green)">2s timeout</span>
+        </div>
+        <div class="arrow-down solid"></div>
+        <!-- Overpass OSM -->
+        <div class="node cyan" data-detail="overpass">
+          <span class="icon">🗺️</span>
+          <div class="label">Overpass (OSM)</div>
+          <div class="sub">OpenStreetMap maxspeed tag<br>150m radius · bearing filter<br>Perpendicular ×50 penalty</div>
+          <span class="badge amber" style="background:rgba(251,191,36,0.15);color:var(--amber)">60s 429 backoff</span>
+        </div>
+        <div class="arrow-down solid"></div>
+        <!-- Fall through -->
+        <div class="node amber" data-detail="live-fallthrough">
+          <span class="icon">⏭️</span>
+          <div class="label">Network Fall-Through</div>
+          <div class="sub">All live providers missed<br>→ SQLite fallback</div>
+        </div>
+      </div>
+      <div class="branch-arm">
+        <span class="branch-label red">OFFLINE</span>
+        <div class="arrow-down solid"></div>
+        <!-- Skip live providers -->
+        <div class="node red" data-detail="skip-live">
+          <span class="icon">✈️</span>
+          <div class="label">Skip Live Providers</div>
+          <div class="sub">No network → straight to SQLite</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow from both offline fallthrough and live fallthrough to SQLite -->
+  <div class="arrow-down solid"></div>
+
+  <!-- STEP 3: SQLite -->
+  <div class="row">
+    <div class="node purple" data-detail="sqlite">
+      <span class="icon">🗄️</span>
+      <div class="label">Step 3: SQLite Fallback</div>
+      <div class="sub">ArizonaSpeedLimits.sqlite<br>Circular 2mi cache · ESRI geodatabase</div>
+    </div>
+  </div>
+  <div class="arrow-down solid"></div>
+
+  <!-- SQLite 3-pass scoring -->
+  <div class="row">
+    <div class="node amber" data-detail="sqlite-passes">
+      <span class="icon">🧮</span>
+      <div class="label">3-Pass Scoring Engine</div>
+      <div class="sub">Spatial + heading + speed + name match</div>
+    </div>
+  </div>
+
+  <!-- 3 passes -->
+  <div class="row">
+    <div class="branch-wrapper">
+      <div class="branch-arm">
+        <div class="node purple" data-detail="pass1">
+          <span class="icon">①</span>
+          <div class="label">Pass 1: Name Match</div>
+          <div class="sub">RoadNameMatcher.score()<br>Canonical / subset / numeric<br>Huge 10000× bonus on match</div>
+          <span class="badge green" style="background:rgba(52,211,153,0.15);color:var(--green)">Wins if ≥0.5</span>
+        </div>
+      </div>
+      <div class="branch-arm">
+        <div class="node purple" data-detail="pass15">
+          <span class="icon">①.₅</span>
+          <div class="label">Pass 1.5: Bearing Salvage</div>
+          <div class="sub">Directional bbox alignment<br>User heading vs road axis<br>30m gate · 30° tolerance</div>
+          <span class="badge amber" style="background:rgba(251,191,36,0.15);color:var(--amber)">Salvage path</span>
+        </div>
+      </div>
+      <div class="branch-arm">
+        <div class="node purple" data-detail="pass2">
+          <span class="icon">②</span>
+          <div class="label">Pass 2: Spatial-Only</div>
+          <div class="sub">No road name available<br>2000× ambiguous-corridor penalty<br>Heading + speed differential</div>
+          <span class="badge red" style="background:rgba(248,113,113,0.15);color:var(--red)">Last resort</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Branch: SQLite found / miss -->
+  <div class="row">
+    <div class="branch-wrapper">
+      <div class="branch-arm">
+        <span class="branch-label green">SQLite HIT</span>
+        <div class="arrow-down solid"></div>
+        <div class="node green" data-detail="sqlite-hit">
+          <span class="icon">🎯</span>
+          <div class="label">SQLite Candidate Ready</div>
+          <div class="sub">Limit + roadKey + source label<br>→ Continuity Guard</div>
+        </div>
+      </div>
+      <div class="branch-arm">
+        <span class="branch-label red">SQLITE MISS</span>
+        <div class="arrow-down solid"></div>
+        <div class="node red" data-detail="sqlite-miss">
+          <span class="icon">📭</span>
+          <div class="label">Expanded Search Retry</div>
+          <div class="sub">60m radius (instead of 20m)</div>
+        </div>
+        <div class="arrow-down solid"></div>
+        <!-- miss tally -->
+        <div class="node red" data-detail="miss-tally">
+          <span class="icon">🔢</span>
+          <div class="label">Miss Counter</div>
+          <div class="sub">consecutiveMissCount += 1<br>"No Data" after 20 misses</div>
+        </div>
+        <div class="arrow-down solid"></div>
+        <div class="node green" data-detail="grace-window">
+          <span class="icon">🕊️</span>
+          <div class="label">Grace Window</div>
+          <div class="sub">Show last valid limit<br>Keep old answer for &lt;20 misses</div>
+          <span class="badge green" style="background:rgba(52,211,153,0.15);color:var(--green)">Hold prior</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-down solid"></div>
+
+  <!-- STEP 4: Continuity Guard -->
+  <div class="row">
+    <div class="node amber" data-detail="continuity">
+      <span class="icon">🛡️</span>
+      <div class="label">Step 4: Continuity Guard</div>
+      <div class="sub">finalizeWithContinuity()<br>Prevents flyover / cross-street flicker</div>
+    </div>
+  </div>
+
+  <!-- 4 rules -->
+  <div class="row">
+    <div class="branch-wrapper">
+      <div class="branch-arm">
+        <div class="node green" data-detail="rule1">
+          <span class="icon">①</span>
+          <div class="label">Rule 1: Small Delta</div>
+          <div class="sub">|new - prior| ≤ 15 mph<br>AND consistent road identity</div>
+          <span class="badge green">✅ Commit</span>
+        </div>
+      </div>
+      <div class="branch-arm">
+        <div class="node green" data-detail="rule2">
+          <span class="icon">②</span>
+          <div class="label">Rule 2: Physics Override</div>
+          <div class="sub">|new - speed| ≤ 10 mph<br>AND |prior - speed| &gt; 15 mph</div>
+          <span class="badge green">✅ Commit</span>
+        </div>
+      </div>
+      <div class="branch-arm">
+        <div class="node amber" data-detail="rule3">
+          <span class="icon">③</span>
+          <div class="label">Rule 3: Suspect Hold</div>
+          <div class="sub">Geocoder says same road,<br>provider says different<br>Hold prior limit up to 3×</div>
+          <span class="badge amber">🔒 Hold</span>
+        </div>
+      </div>
+      <div class="branch-arm">
+        <div class="node red" data-detail="rule4">
+          <span class="icon">④</span>
+          <div class="label">Rule 4: Big Delta</div>
+          <div class="sub">|new - prior| &gt; 15 mph<br>AND conflicting road identity</div>
+          <span class="badge red">🔒 Hold</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sink-in -->
+  <div class="row">
+    <div class="node amber" data-detail="sinkin">
+      <span class="icon">⏳</span>
+      <div class="label">Sink-In Threshold</div>
+      <div class="sub">3 consecutive suspect fetches<br>with same identity → commit anyway</div>
+    </div>
+  </div>
+
+  <div class="arrow-down solid"></div>
+
+  <!-- FINAL: HUD -->
+  <div class="row">
+    <div class="node green" data-detail="commit">
+      <span class="icon">📊</span>
+      <div class="label">HUD Update</div>
+      <div class="sub">Publish currentLimit + dataSource<br>Persist to cache · Update SpeedStatus<br>Safe / Warning / Over</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Detail panel -->
+<div class="detail-panel" id="detailPanel">
+  <button class="detail-close" id="detailClose">✕</button>
+  <h3 id="detailTitle"></h3>
+  <p id="detailBody"></p>
+</div>
+
+<footer>Click any node to learn more · Not all paths are shown simultaneously; branches represent the decision tree.</footer>
+
+<script>
+const details = {
+  gps: {
+    title: '📡 GPS Location Update',
+    body: `Every time the iPhone receives a GPS location (~1 Hz), <code>SpeedEngine.processLocation()</code> runs. It:
+    <br><br>• <strong>Filters bad data:</strong> rejects negative speed and <code>speedAccuracy &gt; 5 m/s</code> (±11 mph uncertainty).
+    <br>• <strong>EMA smoothing:</strong> applies an exponential moving average with factor 0.4 to elimintate jitter during steady cruising.
+    <br>• <strong>Dynamic fetch throttle:</strong> only re-queries the speed limit after traveling 80 m on surface streets or 250 m on highways.
+    <br>• <strong>Updates status:</strong> calls <code>updateStatus()</code> immediately (Safe / Warning / Over) based on current speed + user-defined buffer + limit.`
+  },
+  geocoder: {
+    title: '🗺️ Road Name Resolver',
+    body: `The <code>RoadGeocoder</code> resolves (lat, lon) → road name (e.g. "W Frye Rd"). It has two backends:
+    <br><br>• <strong>CLGeocoder (Apple, free):</strong> on-device geocode index hits first. No network required.
+    <br>• <strong>Geoapify (network fallback):</strong> 2.5k req/day free tier. Only used when CLGeocoder misses and the user has configured a key.
+    <br><br>Results are cached in a <strong>50m grid</strong> (same precision as the speed limit cache) with a 24h TTL. In-flight de-dup coalesces concurrent geocode requests into one call.`
+  },
+  entry: {
+    title: '🚦 SpeedLimit Orchestrator',
+    body: `<code>SmartSpeedLimitService.updateSpeedLimit()</code> is the central decision maker. It runs two phases:
+    <br><br>1. <strong>resolveCandidate():</strong> walks the cache → live providers → SQLite fallback and returns a <code>Candidate</code> value (limit, source, roadKey).
+    <br>2. <strong>finalizeWithContinuity():</strong> the continuity guard decides whether to commit the candidate, hold the prior limit, or sink-in after repeated fetches.
+    <br><br>The function is <code>@MainActor</code>-isolated so all <code>@Published</code> UI updates are atomic.`
+  },
+  cache: {
+    title: '💾 Step 1: Spatial Cache',
+    body: `The <code>SpeedLimitResponseCache</code> is a spatial-grid keyed cache with:
+    <br><br>• <strong>50m grid cells</strong> (~0.0005°). Key includes road name hash so the same lat/lon but different road name produces a cache miss.
+    <br>• <strong>In-memory TTL:</strong> 30 minutes. LRU-evicts at 500 entries.
+    <br>• <strong>Disk TTL:</strong> 30 days. Persisted as JSON to <code>/Library/Caches/speedLimitResponses.json</code>. Preloaded at app launch.
+    <br>• <strong>50m distance check:</strong> even on grid hit, verify the stored coordinate is within 50m of the current GPS fix.`
+  },
+  'cache-hit': {
+    title: '✅ Cache Hit — Fast Path',
+    body: `When the cache hits, Speedio returns the stored answer immediately — no network request, no SQLite query. This covers <strong>~60% of GPS ticks</strong> in typical driving (revisiting the same road segments).
+    <br><br>• Latency: <strong>0 ms</strong> (in-memory dictionary lookup)
+    <br>• The response is returned before the continuity guard even fires (cache lookups skip the guard entirely on a true hit).
+    <br>• On disk load at startup: cached sessions from 30 days prior are instantly available offline.`
+  },
+  'cache-miss': {
+    title: '❌ Cache Miss — Full Resolution Chain',
+    body: `When the cache misses (new cell, expired, or stale distance), Speedio proceeds to the live provider chain:
+    <br><br>• First checks <code>NetworkReachability.isConnected</code>
+    <br>• If online, walks <strong>ArcGIS HPMS</strong> → <strong>Overpass (OSM)</strong> in order
+    <br>• If offline (or all live providers return nil), falls through to <strong>SQLite</strong>
+    <br>• Result flows through the continuity guard before being committed to the HUD and written back to the cache.`
+  },
+  network: {
+    title: '📶 Network Reachability Gate',
+    body: `<code>NWPathMonitor</code> publishes whether the device has an active network path. Used to short-circuit the live provider chain when offline:
+    <br><br>• <strong>Online:</strong> walk ArcGIS HPMS → Overpass (OSM) in order.
+    <br>• <strong>Offline:</strong> skip directly to the local SQLite fallback.
+    <br><br>The monitor defaults to <code>true</code> (optimistic) until the first path sample arrives.`
+  },
+  'live-chain': {
+    title: '🌐 Live Provider Chain',
+    body: `When online, Speedio walks the live providers in priority order. Each provider conforms to the <code>SpeedLimitProvider</code> protocol:
+    <br><br>• <strong>Returns</strong> <code>SpeedLimitResponse?</code>: nil = "no coverage here" (walk to next provider). Non-nil = "I have an answer."
+    <br>• <strong>Throws</strong> on I/O failure (timeout, HTTP 429, parse error). The orchestrator catches the error and walks to the next provider.
+    <br>• Both providers self-throttle: skip duplicate queries within 100m of the last success, or 10s of the last failure.`
+  },
+  arcgis: {
+    title: '🏛️ ArcGIS HPMS — Federal Data',
+    body: `The Highway Performance Monitoring System from the FHWA. <strong>Most authoritative source for Arizona highways.</strong>
+    <br><br>• <strong>Coverage:</strong> FHWA "sample panel" sections — interstates, US highways, state routes. Most local streets are <em>not</em> in HPMS.
+    <br>• <strong>Query:</strong> point query against FeatureServer layer 48 (SpeedLimit_2024). Returns speed limit + route number + direction + sign type (regulatory / warning).
+    <br>• <strong>Heading-aware:</strong> scores multiple features by proximity + heading. If you're driving NB, gives strong preference to NB-direction road segments.
+    <br>• <strong>Self-throttles:</strong> no duplicate queries within 100m of last success or within 10s of last failure.`
+  },
+  overpass: {
+    title: '🗺️ Overpass (OpenStreetMap) — Crowdsourced',
+    body: `Queries OSM for <code>way[highway][maxspeed]</code> elements within 150m of the user. <strong>Worldwide coverage, useful everywhere.</strong>
+    <br><br>• <strong>Bearing filter:</strong> fetches full polyline geometry via <code>out geom</code>, computes each segment's bearing, scores against driver heading:
+    <br>&nbsp;&nbsp;&nbsp;≤30° = parallel (1×) · ≤60° = oblique (5×) · &gt;60° = perpendicular (<strong>50× penalty</strong>)
+    <br>• <strong>Rate limit handling:</strong> after HTTP 429, ignores Overpass for 60 seconds.
+    <br>• <strong>Converts km/h → mph</strong> for European <code>maxspeed</code> values.
+    <br>• <strong>Parses parenthetical context:</strong> "30 mph (truck)" → 30 mph.`
+  },
+  'live-fallthrough': {
+    title: '⏭️ Live Fall-Through → SQLite',
+    body: `When <strong>all live providers</strong> either return nil (no coverage) or throw (network error), the orchestrator falls through to the local SQLite database:
+    <br><br>• ArcGIS HPMS misses on most local streets (not in FHWA panel).
+    <br>• Overpass misses when no OSM <code>maxspeed</code> tag exists (common on US residential/arterial roads where the tag hasn't been surveyed).
+    <br>• SQLite serves as the <strong>guaranteed baseline</strong> for Arizona roads.
+    <br>• Outside Arizona: if both live providers miss and SQLite has no data → "No Data" on the HUD.`
+  },
+  'skip-live': {
+    title: '✈️ Offline: Skip Live Providers',
+    body: `When the device has no network connectivity (<code>NetworkReachability.isConnected == false</code>), Speedio bypasses all live providers and goes straight to the local SQLite database:
+    <br><br>• <strong>CLGeocoder still works</strong> (Apple's on-device geocode index is available even offline) → road name flows in → SQLite name match kicks in.
+    <br>• Data source shows <strong>"DB"</strong> on the HUD.
+    <br>• If SQLite also misses (outside Arizona), the system enters the grace window and eventually shows "No Data."`
+  },
+  sqlite: {
+    title: '🗄️ Step 3: SQLite Fallback',
+    body: `The bundled <code>ArizonaSpeedLimits.sqlite</code> file from the ESRI geodatabase. <strong>A comprehensive database of Arizona road speed limits.</strong>
+    <br><br>• <strong>Circular cache:</strong> upon moving &gt;1 mile from the last cache center, loads all segments in a 2-mile radius into memory. Subsequent queries within that radius hit the memory cache — no file I/O.
+    <br>• <strong>Grid cache:</strong> 0.02° (~2.2km) cells with <code>floor()</code>-based stable keys. Queries the SQLite spatial index.
+    <br>• <strong>Clear on 20 consecutive misses:</strong> prevents stale bounding-box data from pinning the wrong road.
+    <br>• Each segment stores: <code>minx, maxx, miny, maxy</code> (bounding box), <code>limit</code> (mph), <code>routeId</code> (e.g. "07 FRYE RD").`
+  },
+  'sqlite-passes': {
+    title: '🧮 SQLite 3-Pass Scoring Engine',
+    body: `The SQLite scoring engine runs up to three passes to find the best-matching road segment:
+    <br><br><strong>Pass 1 — Name Match (gates at 200m):</strong> if road name available, score each candidate with <code>RoadNameMatcher.score()</code>. A match ≥0.5 wins with a 10000× bonus. Rejects SQLite entirely if no name match found (falls through to live providers).
+    <br><br><strong>Pass 1.5 — Bearing Salvage (gates at 30m):</strong> if name match failed, check directional bbox alignment within 30° of user heading. Tight 30m physical gate prevents freeway pickup.
+    <br><br><strong>Pass 2 — Spatial-Only (gates at 20m/1000m):</strong> no road name available. Uses distance + heading + speed differential + ambiguous-corridor penalty (+2000 for high-aspect-ratio bboxes &gt;250m from centerline).`
+  },
+  pass1: {
+    title: '① Pass 1: Road Name Match',
+    body: `When <code>RoadGeocoder</code> provides a road name, scoring wins via <code>RoadNameMatcher.score()</code>:
+    <br><br>• <strong>1.0</strong> — exact canonical match (e.g. "FRYE RD" == "FRYE RD")
+    <br>• <strong>0.85</strong> — geocoded tokens ⊆ route-id tokens (e.g. "FRYE RD" ⊂ "07 FRYE RD")
+    <br>• <strong>0.7</strong> — numeric match + strict highway family (e.g. "I-17" == "I-17")
+    <br>• <strong>0.5</strong> — numeric match + generic type keyword (e.g. "Route 17" + "SR-17")
+    <br>• <strong>0.0</strong> — no match
+    <br><br>The <strong>NAME_MATCH_BONUS_MAGNITUDE (10000)</strong> is subtracted from the score so a name match decisively wins over any pure-spatial candidate.`
+  },
+  pass15: {
+    title: '①.₅ Pass 1.5: Bearing-Aligned Salvage',
+    body: `When Pass 1's name match fails (e.g. SQLite RouteId has whitespace drift that breaks normalization), the bearing salvage pass runs:
+    <br><br>• Candidate bbox must be <strong>strongly directional</strong> (N-S: dy &gt; 1.5×dx, or E-W: dx &gt; 1.5×dy)
+    <br>• Candidate must be within <strong>30m</strong> of the user (tight gate prevents freeway pickup)
+    <br>• User heading must align with candidate's dominant axis within <strong>30°</strong>
+    <br>• Excellent alignment (&lt;10°): +100 bonus. Acceptable (10-30°): +30 bonus.
+    <br><br>This salvages cases like <strong>E Riggs Rd</strong> in Chandler where the name normalization drifted but the user is clearly on an E-W arterial.`
+  },
+  pass2: {
+    title: '② Pass 2: Spatial-Only Scoring',
+    body: `When no road name is available (CLGeocoder returned nil), the spatial-only fallback kicks in:
+    <br><br>• <strong>Score = (distance + 25) × headingMultiplier + centerlineOffset + ambiguousPenalty</strong>
+    <br>• <strong>Heading multiplier:</strong> if candidate is directional and user heading differs &gt;40° → ×40 penalty. &gt;20° → ×5. &lt;5° from speed → ×0.7 reward.
+    <br>• <strong>Ambiguous corridor penalty (+2000):</strong> aspect ratio &gt;3:1 AND centerline offset &gt;250m → massive penalty so a tight local road wins over an engulfing freeway bbox.
+    <br>• <strong>Hysteresis ×0.15:</strong> if the same routeId was the last committed answer.
+    <br>• Gate: ambiguous corridors use 20m radius; other candidates use 1000m.`
+  },
+  'sqlite-hit': {
+    title: '🎯 SQLite Candidate → Continuity Guard',
+    body: `When the SQLite engine finds a winning candidate, it bundles: <code>limit</code> (mph), <code>routeId</code> (e.g. "07 FRYE RD"), <code>source</code> (.localDB or .localDBRecovered), and sends it to the continuity guard.
+    <br><br>The continuity guard then decides: commit immediately, hold as suspect, or sink-in after repeated fetches.
+    <br><br>If committed, the result is published to the HUD and written to the response cache so the next GPS tick in that 50m cell is an instant cache hit.`
+  },
+  'sqlite-miss': {
+    title: '📭 SQLite Miss → Expanded Retry',
+    body: `When the first SQLite pass finds no segment within 20m of the user:
+    <br><br>• <strong>Expanded search</strong> retries with a 60m radius instead of 20m. This catches roads where the geodatabase bounding boxes are misaligned with the GPS point.
+    <br>• If expanded search also misses → the candidate is a <strong>Miss</strong>.
+    <br>• Misses increase <code>consecutiveMissCount</code>.
+    <br>• Within the first 19 consecutive misses, the <strong>last valid limit</strong> is preserved (grace window).
+    <br>• At 20 consecutive misses: <strong>both caches are cleared</strong> (SQLite spatial cache + response cache) to prevent stale bbox data from pinning the wrong road. HUD shows "No Data."`
+  },
+  'miss-tally': {
+    title: '🔢 Miss Counter & Cache Clear',
+    body: `Consecutive misses are tracked per drive session:
+    <br><br>• After <strong>20 consecutive misses</strong> (≈20-83 seconds of driving with no data), Speedio:
+    <br>&nbsp;&nbsp;1. Clears the <code>ArizonaSpeedLimitService</code> spatial grid cache
+    <br>&nbsp;&nbsp;2. Clears the <code>SpeedLimitResponseCache</code> (both memory and disk)
+    <br>&nbsp;&nbsp;3. Resets <code>lastValidLimit</code> and <code>consecutiveMissCount</code> to 0
+    <br>&nbsp;&nbsp;4. Sets <code>dataSource = .noData</code>
+    <br><br>This <strong>prevents stale bounding-box data</strong> from pinning the wrong road when the user has genuinely left the covered area.`
+  },
+  'grace-window': {
+    title: '🕊️ Grace Window — Hold Prior Limit',
+    body: `For the first <strong>19 consecutive cache misses</strong>, Speedio holds the <strong>last valid limit</strong> instead of showing "No Data." This prevents the HUD from blinking on and off when you briefly pass through an area with no coverage:
+    <br><br>• The HUD continues showing the previous speed limit and the data source remains whatever it was.
+    <br>• After 20 misses: the system concludes the user has left the coverage area → clears caches → shows "No Data."
+    <br>• This mirrors the user experience of physical road signs staying in view for a few seconds after you pass them.`
+  },
+  continuity: {
+    title: '🛡️ Step 4: Continuity Guard',
+    body: `The continuity guard (<code>finalizeWithContinuity()</code>) is the cognitive layer that prevents the HUD from flickering when GPS accuracy or road-name resolution momentarily snags.
+    <br><br><strong>Motivating case:</strong> driving under a flyover (e.g. S Alma School Road under US-60 in Mesa). CLGeocoder briefly resolves to the <em>overpass road</em> (US-60, 75 mph) for 3-5 seconds before snapping back to the arterial (45 mph). Without the guard, the HUD flashes 75 → 45 → 75.
+    <br><br>The guard fires <strong>before cache writes</strong>, so the 75 mph flyover flicker never poisons the response cache.`
+  },
+  rule1: {
+    title: '① Rule 1: Small Delta (≤15 mph)',
+    body: `When <code>|new candidate - prior limit| ≤ 15 mph</code> AND road identity is consistent, commit immediately.
+    <br><br><strong>Exception:</strong> if the geocoder says "same road" (matching road names) but the provider says "different road" (different roadKey) — route through the <strong>suspect hold</strong> even for small deltas. This catches cross-street GPS snaps.
+    <br><br>Example: cruising on a 45 mph arterial, minor speed variation from GPS noise → 45 stays at 45 → no flicker.`
+  },
+  rule2: {
+    title: '② Rule 2: Physics Override',
+    body: `When the driver's actual GPS speed matches the new candidate's limit within 10 mph, AND the prior limit is more than 15 mph away from the driver's speed — commit despite any geocode disagreement.
+    <br><br><strong>Models the highway on-ramp:</strong> you're accelerating from 45 mph to 72 mph on the US-60 on-ramp. The speed limit candidate is 75 mph. Prior limit was 45 mph. The geocode might still say "Alma School Rd" but <code>|75 - 72| = 3 ≤ 10</code> AND <code>|45 - 72| = 27 &gt; 15</code> → <strong>commit 75 mph immediately.</strong>`
+  },
+  rule3: {
+    title: '③ Rule 3: Suspect Hold',
+    body: `When road identity is contested — geocoder says one road but provider returns a different road key — hold the <strong>prior committed limit</strong> for up to 3 consecutive fetches:
+    <br><br>• Stores the suspect candidate in memory
+    <br>• On the 2nd fetch with the <em>same</em> suspect identity → increment count
+    <br>• On the 3rd fetch with the <em>same</em> suspect identity → sink-in and commit
+    <br>• If ANY fetch disagrees (different roadKey) → drop suspect and commit the new one
+    <br><br>At ~500ms cadence per GPS tick, 3 suspect fetches ≈ 1.5 seconds. This rejects flyover flicker (~3-5 sec) while accepting real road transitions quickly.`
+  },
+  rule4: {
+    title: '④ Rule 4: Big Delta (>15 mph)',
+    body: `When <code>|new candidate - prior limit| &gt; 15 mph</code> AND road identity is conflicting → hold the prior limit.
+    <br><br>This is the general case for cross-street snaps: e.g. you're on a 45 mph road and GPS momentarily snaps to the cross-street which is 25 mph (20 mph delta). The guard catches this and holds at 45 mph.
+    <br><br>The <code>SUSPICIOUS_JUMP_MPH</code> threshold (15 mph) was chosen empirically after TestFlight feedback showed a 45→25 cross-street snap (20 mph delta) was being committed immediately.`
+  },
+  sinkin: {
+    title: '⏳ Sink-In: 3 Consecutive Suspect Fetches',
+    body: `When the same suspect candidate has been held back 3 times, the guard concludes the road <em>has genuinely changed</em> and the geocode just hasn't caught up:
+    <br><br>• Counter reset when the suspect identity changes
+    <br>• After 3 consecutive fetches with same identity → commit the candidate and clear suspect state
+    <br><br>Without sink-in: driving onto a new road with a large speed delta and different road name would pin you to the OLD limit forever. This is unacceptable — the guard must eventually accept a genuine road transition.`
+  },
+  commit: {
+    title: '📊 HUD Update — Final Output',
+    body: `Once the continuity guard commits a candidate, Speedio:
+    <br><br>• <strong>Publishes to UI:</strong> <code>currentLimit</code> (mph) and <code>dataSource</code> (e.g. "Live (ArcGIS)", "DB", "No Data")
+    <br>• <strong>Persists to cache:</strong> writes the response to <code>SpeedLimitResponseCache</code> (memory + disk) off the main actor
+    <br>• <strong>Updates SpeedStatus:</strong> compares your smoothed speed against (limit + user buffer):
+    <br>&nbsp;&nbsp;&nbsp;🟢 Safe: speed &lt; limit + buffer
+    <br>&nbsp;&nbsp;&nbsp;🟡 Warning: within 1-2 mph of threshold
+    <br>&nbsp;&nbsp;&nbsp;🔴 Over: speed &gt; limit + buffer
+    <br><br>The HUD color, gauge position, and status indicator all update live.`
+  }
+};
+
+// Click handler
+document.querySelectorAll('.node[data-detail]').forEach(el => {
+  el.addEventListener('click', () => {
+    const key = el.dataset.detail;
+    const info = details[key] || { title: 'Unknown', body: 'No detail available.' };
+    document.getElementById('detailTitle').textContent = info.title;
+    document.getElementById('detailBody').innerHTML = info.body;
+    document.getElementById('detailPanel').classList.add('show');
+  });
+});
+
+document.getElementById('detailClose').addEventListener('click', () => {
+  document.getElementById('detailPanel').classList.remove('show');
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.getElementById('detailPanel').classList.remove('show');
+});
+
+// Click outside close
+document.addEventListener('click', (e) => {
+  const panel = document.getElementById('detailPanel');
+  if (panel.classList.contains('show') && !panel.contains(e.target) && !e.target.closest('.node')) {
+    panel.classList.remove('show');
+  }
+});
+</script>
+
+</body>
+</html>

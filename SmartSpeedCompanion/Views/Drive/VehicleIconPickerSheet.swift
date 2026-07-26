@@ -73,10 +73,8 @@ public struct VehicleIconPickerSheet: View {
 
     private var previewHeader: some View {
         VStack(spacing: 8) {
-            // 96pt hero circle featuring the programmatically-rendered
-            // 3D car with the selected body color and ALWAYS-RED brake
-            // lights. The car is drawn via Core Graphics at a size that
-            // fits comfortably inside the circle.
+            // 96pt hero circle featuring the selected icon rendered
+            // as an SF Symbol at a size that fills the preview nicely.
             ZStack {
                 Circle()
                     .fill(DesignSystem.bgCard)
@@ -85,15 +83,12 @@ public struct VehicleIconPickerSheet: View {
                     .stroke(DesignSystem.cyan.opacity(0.4), lineWidth: 2)
                     .frame(width: 96, height: 96)
 
-                // Render the 3D car using Core Graphics — same image
-                // that appears on the map. The car body uses the selected
-                // icon's tint color and the brake lights are always red.
-                if let carImage = CarImageRenderer.renderCarPreview(bodyColor: selectedIcon.tintColor.uiColor) {
-                    Image(uiImage: carImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 48, height: 84)
-                }
+                // Render the selected icon using its SF Symbol — same
+                // symbol that appears on the map. The tint color matches
+                // the icon's designated palette.
+                Image(systemName: selectedIcon.systemImageName)
+                    .font(.system(size: 40))
+                    .foregroundColor(selectedIcon.tintColor.color)
             }
             Text(selectedIcon.displayName)
                 .font(.system(size: 16, weight: .bold))

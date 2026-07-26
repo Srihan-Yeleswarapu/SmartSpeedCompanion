@@ -125,6 +125,8 @@ public struct RoadNameMatcher: Sendable {
     /// Removes zero-padded direction/terminus markers (" 0"),
     /// strips a leading numeric prefix + space ("07 FRYE RD" -> "FRYE RD"),
     /// strips leading directional prefix ("WEST FRYE RD" -> "FRYE RD"),
+    /// converts compound highway identifiers ("I 010" -> "I-10"),
+    /// strips trailing direction suffixes ("I-10 W" -> "I-10"),
     /// and expands common suffix aliases.
     public static func normalize(_ raw: String) -> String {
         var s = raw.uppercased().trimmingCharacters(in: .whitespaces)
@@ -133,7 +135,6 @@ public struct RoadNameMatcher: Sendable {
         // Drop trailing " 0" terminus marker that the AZ HPMS file attaches.
         if s.hasSuffix(" 0") { s = String(s.dropLast(2)).trimmingCharacters(in: .whitespaces) }
         // Strip leading numeric prefix (e.g. "07 FRYE RD" -> "FRYE RD").
-        // Use a simple split rather than a regex to keep this dependency-free.
         let parts = s.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
         var idx = 0
         if idx < parts.count, Int(parts[idx]) != nil {
@@ -143,17 +144,64 @@ public struct RoadNameMatcher: Sendable {
         if idx < parts.count, DIRECTION_PREFIXES.contains(parts[idx]) {
             idx += 1
         }
-        // Apply suffix aliases to every remaining token (use last token).
-        var tail = parts
-        if let last = tail.last, let expansion = SUFFIX_ALIASES[last] {
-            tail[tail.count - 1] = expansion
+
+        // Work with a mutable copy of parts for all remaining transformations.
+        var working = parts
+
+        // --- Compound highway conversion: "I 010" -> "I-10" ---
+        // The AZ HPMS RouteId stores interstates as "  I 010" (single-letter
+        // prefix + space + zero-padded number), while CLGeocoder returns
+        // "I-10" (letter-hyphen-number). Normalizing the HPMS form lets
+        // canonical (1.0) and token-subset (0.85) matches fire instead of
+        // falling through to numeric-only matching.
+        if idx + 1 < working.count,
+           working[idx].count == 1,
+           working[idx].first?.isLetter == true,
+           working[idx + 1].first?.isNumber == true {
+            let rawSecond = working[idx + 1]
+            var numberOnly = rawSecond.prefix(while: { $0.isNumber })
+            while numberOnly.hasPrefix("0") {
+                numberOnly = numberOnly.dropFirst()
+            }
+            if numberOnly.isEmpty { numberOnly = "0" }
+            let suffix = rawSecond.drop(while: { $0.isNumber })
+            working[idx] = "\(working[idx])-\(numberOnly)\(suffix)"
+            working.remove(at: idx + 1)
         }
-        // Also apply aliases to mid-tokens in case abbreviation is mid-name
-        // (e.g. "N FRYE RD" - "FRYE" has no alias but "RD" got caught already).
-        return tail[idx...].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+
+        // --- Concatenated highway form: "I010" -> "I-10" (no space or hyphen) ---
+        // Some RouteId variants omit the space between letter prefix and number.
+        if idx < working.count,
+           let firstChar = working[idx].first,
+           firstChar.isLetter,
+           working[idx].dropFirst().first?.isNumber == true {
+            let letter = String(firstChar)
+            let restStr = String(working[idx].dropFirst())
+            var numberOnly = restStr.prefix(while: { $0.isNumber })
+            while numberOnly.hasPrefix("0") {
+                numberOnly = numberOnly.dropFirst()
+            }
+            if numberOnly.isEmpty { numberOnly = "0" }
+            let suffix = restStr.drop(while: { $0.isNumber })
+            working[idx] = "\(letter)-\(numberOnly)\(suffix)"
+        }
+
+        // --- Strip trailing direction suffix (e.g., "I-10 W" -> "I-10") ---
+        // Common CLGeocoder output appends a cardinal suffix.
+        while idx < working.count, DIRECTION_PREFIXES.contains(working.last ?? "") {
+            working.removeLast()
+        }
+
+        // --- Apply suffix aliases (e.g., "STREET" -> "ST") ---
+        if let last = working.last, let expansion = SUFFIX_ALIASES[last] {
+            working[working.count - 1] = expansion
+        }
+        return working[idx...].joined(separator: " ").trimmingCharacters(in: .whitespaces)
     }
 
-    /// Numeric porton of a road identifier (e.g. "17" from "I-17" or "SR-17").
+    /// Numeric portion of a road identifier (e.g. "17" from "I-17" or "SR-17").
+    /// Strips leading zeros so "010" from AZ HPMS "I 010" normalizes to "10"
+    /// and matches "10" from CLGeocoder's "I-10".
     public static func numericPortion(_ raw: String) -> String {
         var digits = ""
         var seenDigit = false
@@ -161,11 +209,18 @@ public struct RoadNameMatcher: Sendable {
             if ch.isNumber { digits.append(ch); seenDigit = true }
             else if seenDigit { break }
         }
-        return digits
+        // Strip leading zeros so AZ HPMS zero-padded numbers ("010" for I-10)
+        // are numerically comparable to standard representations ("10").
+        let stripped = digits.drop { $0 == "0" }
+        return stripped.isEmpty ? (digits.isEmpty ? "" : "0") : String(stripped)
     }
 
     /// Alpha prefix of a road identifier (e.g. "I" from "I-17", "US" from "US-60",
     /// "" from "17"). Returns uppercased.
+    ///
+    /// Handles the HPMS convention where "U" (single letter) represents a
+    /// US highway: normalizes "U" → "US" so that CLGeocoder's "US 60" can
+    /// match the DB's "U 060" via the strict-family numeric match (0.7).
     public static func alphaPrefix(_ raw: String) -> String {
         let upper = raw.uppercased()
         var letters = ""
@@ -174,6 +229,9 @@ public struct RoadNameMatcher: Sendable {
             else if ch.isNumber { break }
             else { continue }
         }
+        // HPMS stores US highways with a single-letter "U" prefix ("U 060").
+        // Treat it as "US" for family matching against CLGeocoder's "US 60".
+        if letters == "U" { return "US" }
         return letters
     }
 }

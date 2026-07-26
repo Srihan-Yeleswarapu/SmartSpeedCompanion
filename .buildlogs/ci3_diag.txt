@@ -1,5 +1,0 @@
-Total lines: 7811
-=== error:-bearing lines (numbered) ===
-Total hits: 0
-
-=== CONTEXT around each error: (10 before / 2 after) ===

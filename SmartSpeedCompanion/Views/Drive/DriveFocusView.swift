@@ -20,6 +20,7 @@ public struct DriveFocusView: View {
     @State private var speedEntryOpacity: Double = 0
     @State private var limitEntryOffset: CGFloat = 24
     @State private var limitEntryOpacity: Double = 0
+    @State private var roadNameEntryOpacity: Double = 0
     @State private var recEntryOpacity: Double = 0
 
     // ── Continuous animation states ───────────────────────────────
@@ -33,6 +34,13 @@ public struct DriveFocusView: View {
 
     // ── Exit hint ─────────────────────────────────────────────────
     @State private var showExitHint = false
+
+    // ── Road name animation hint ──────────────────────────────────
+    // Tracks whether the road name has appeared at least once so the
+    // subsequent fade transitions feel continuous rather than re-triggering
+    // the entry animation every time the geocode resolves (cached hit)
+    // or a new road is entered.
+    @State private var roadNameEverAppeared: Bool = false
 
     public init() {}
 
@@ -105,6 +113,14 @@ public struct DriveFocusView: View {
                 .opacity(limitEntryOpacity)
                 .offset(y: limitEntryOffset)
 
+            // Road name chip — matches the monospaced glass style from the
+            // map HUD (BottomTransparentHUD). Fades in after the limit section
+            // completes, then stays visible with smooth crossfades when the
+            // road name updates from geocode.
+            roadNameChip
+                .opacity(roadNameEntryOpacity)
+                .padding(.top, 4)
+
             // Recording indicator
             if driveViewModel.isRecording {
                 recordingIndicator
@@ -132,13 +148,19 @@ public struct DriveFocusView: View {
             speedSection(geo: geo)
                 .frame(maxWidth: geo.size.width * 0.4)
 
-            // Right column: limit + optional rec indicator
+            // Right column: limit + road name + optional rec indicator
             VStack(alignment: .leading, spacing: 14) {
                 Spacer()
 
                 limitSection(geo: geo)
                     .opacity(limitEntryOpacity)
                     .offset(x: limitEntryOffset)
+
+                // Road name in landscape — same monospaced chip but
+                // horizontally left-aligned in the column.
+                roadNameChip
+                    .opacity(roadNameEntryOpacity)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 if driveViewModel.isRecording {
                     recordingIndicator
@@ -229,6 +251,44 @@ public struct DriveFocusView: View {
         }
     }
 
+    // MARK: - Road Name Chip
+
+    /// Monospaced uppercase road name displayed in a subtle glass chip,
+    /// matching the style of `BottomTransparentHUD` in the map view.
+    /// Only appears when `currentRoadName` is non-nil and non-empty.
+    /// Uses `.contentTransition(.opacity)` so in-flight geocode updates
+    /// crossfade smoothly rather than jumping.
+    private var roadNameChip: some View {
+        Group {
+            if let roadName = driveViewModel.currentRoadName, !roadName.isEmpty {
+                Text(roadName.uppercased())
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.72))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(DesignSystem.cyan.opacity(0.03))
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                            )
+                    )
+                    .contentTransition(.opacity)
+                    .onAppear { roadNameEverAppeared = true }
+            } else if roadNameEverAppeared {
+                // Keep layout slot occupied with invisible placeholder so
+                // elements below don't jump when geocode temporarily returns
+                // nil (parking lot churn, end-of-drive cleardown).
+                Color.clear
+                    .frame(height: 20)
+            }
+        }
+        .animation(.easeInOut(duration: 0.4), value: driveViewModel.currentRoadName)
+    }
+
     // MARK: - Recording Indicator
 
     private var recordingIndicator: some View {
@@ -295,14 +355,21 @@ public struct DriveFocusView: View {
             }
         }
 
-        // Phase 3: Recording indicator (0.35s delay)
+        // Phase 3: Road name fades in (0.35s delay, same as recording indicator)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            withAnimation(.easeOut(duration: 0.35)) {
+                roadNameEntryOpacity = 1.0
+            }
+        }
+
+        // Phase 4: Recording indicator (0.5s delay — after road name)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             withAnimation(.easeOut(duration: 0.3)) {
                 recEntryOpacity = 1.0
             }
         }
 
-        // Phase 4: Exit hint after a few seconds
+        // Phase 5: Exit hint after a few seconds
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             withAnimation(.easeInOut(duration: 0.5)) {
                 showExitHint = true

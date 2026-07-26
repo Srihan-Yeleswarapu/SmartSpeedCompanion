@@ -13,7 +13,7 @@ public class AppState: ObservableObject {
     // `hasSeenLocationPermission`) — see `OnboardingStep.nextCase` for the
     // helper each "finish" handler uses to advance. `AppRootView` switches
     // directly on `onboardingStep`.
-    @AppStorage("onboardingStep") public var onboardingStep: OnboardingStep = .stateSelection
+    @AppStorage("onboardingStep") public var onboardingStep: OnboardingStep = .questions
 
     @AppStorage("userState") public var userState: String = ""
     // Persisted so we can present Sign In (instead of Sign Up) when a returning user signs out.
@@ -58,12 +58,8 @@ public class AppState: ObservableObject {
         // `.userDidSignUp` (after a successful email/password sign-up OR
         // first-time Apple Sign In, both of which create a new Firebase
         // Auth account), reset the onboarding funnel so the new account
-        // is routed through state selection → survey → privacy
-        // transition → feature tutorial rather than dropped straight into
-        // the Drive tab. This is the *enforced* contract — handlers don't
-        // have to remember, and any future sign-up path (SSO, magic link,
-        // anonymous upgrade) that posts the notification gets the same
-        // behavior for free.
+        // is routed through survey → privacy transition → feature
+        // tutorial rather than dropped straight into the Drive tab.
         NotificationCenter.default.addObserver(
             forName: .userDidSignUp,
             object: nil,
@@ -98,7 +94,9 @@ public class AppState: ObservableObject {
         }
 
         if !UserDefaults.standard.bool(forKey: "hasSelectedState") {
-            onboardingStep = .stateSelection
+            // State selection was removed — users who hadn't picked a state
+            // skip straight to the onboarding questions.
+            onboardingStep = .questions
         } else if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
             onboardingStep = .questions
         } else if !UserDefaults.standard.bool(forKey: "hasSeenTutorialTransition") {
@@ -122,9 +120,9 @@ public class AppState: ObservableObject {
     /// Resets every onboarding-funnel flag back to its "fresh account"
     /// default. Call this right after a successful account-creation
     /// path (email/password sign-up, Apple Sign In first-time grant, etc.)
-    /// so `AppRootView` routes the new account through the funnel (state
-    /// selection → survey → privacy transition → feature tutorial)
-    /// instead of dropping them straight into the Drive tab.
+    /// so `AppRootView` routes the new account through the funnel (survey
+    /// → privacy transition → feature tutorial) instead of dropping them
+    /// straight into the Drive tab.
     ///
     /// `hasEverAuthenticated` is deliberately NOT reset — that flag is a
     /// device-level marker (used to default the post-funnel screen to
@@ -139,7 +137,7 @@ public class AppState: ObservableObject {
     @MainActor
     public func resetOnboardingFunnel() {
         userState = ""
-        onboardingStep = .stateSelection
+        onboardingStep = .questions
     }
 
     private func setupSettingsSync() {
@@ -190,7 +188,10 @@ public enum OnboardingStep: String, Codable, CaseIterable, Sendable {
     /// the funnel in `.complete`, not past it.
     public var nextCase: OnboardingStep {
         switch self {
-        case .stateSelection:    return .questions
+        // `.stateSelection` is a legacy value — persisted users who finish
+        // the onboarding questions should advance to `.transition`, not loop
+        // back to `.questions` which would render the same view infinitely.
+        case .stateSelection:    return .transition
         case .questions:         return .transition
         case .transition:        return .tutorial
         case .tutorial:          return .locationPermission
