@@ -761,6 +761,11 @@ public struct LiveMapView: UIViewRepresentable {
         }
 
         private func buildHistoryOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
+            // Hide history trail when actively navigating or selecting a route
+            // — the route polylines already show the path, and the grey
+            // history trail overlaps them causing visual glitches
+            // (TestFlight feedback: "Distorted trailing map").
+            guard !viewModel.isNavigating, !viewModel.isSelectingRoute else { return }
             guard let session = viewModel.sessionRecorder.currentSession, !session.readings.isEmpty else { return }
 
             var safeCoords: [CLLocationCoordinate2D] = []
