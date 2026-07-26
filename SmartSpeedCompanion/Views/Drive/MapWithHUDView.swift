@@ -181,6 +181,14 @@ public struct MapWithHUDView: View {
                 .presentationCornerRadius(24)
                 .preferredColorScheme(.dark)
         }
+        .sheet(isPresented: $driveViewModel.showRouteStopsSheet) {
+            RouteStopsSheet()
+                .environmentObject(driveViewModel)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(24)
+                .preferredColorScheme(.dark)
+        }
     }
 }
 
@@ -188,58 +196,129 @@ fileprivate struct NavigationInstructionCard: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     
     var body: some View {
-        HStack(spacing: 14) {
-            // Maneuver Icon — fixed size, never overlaps text
-            Image(systemName: driveViewModel.nextManeuverImageName)
-                .font(.system(size: 28, weight: .bold))
-                .foregroundColor(DesignSystem.cyan)
-                .frame(width: 54, height: 54)
-                .background(DesignSystem.cyan.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .frame(width: 54, height: 54) // fixed size — never shrinks into text
-            
-            // Instruction text — gets all remaining space
-            VStack(alignment: .leading, spacing: 3) {
-                Text(driveViewModel.nextManeuverInstruction.isEmpty ? "Follow the route" : driveViewModel.nextManeuverInstruction)
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundColor(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.75)
-                    .fixedSize(horizontal: false, vertical: true)
-                
-                HStack(spacing: 6) {
-                    Text(formatDistance(driveViewModel.distanceToNextTurn))
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(DesignSystem.cyan)
-                    
-                    if let eta = driveViewModel.eta {
-                        Text("·")
-                            .foregroundColor(.white.opacity(0.4))
-                        Text("ETA \(eta, format: .dateTime.hour().minute())")
-                            .font(.system(size: 13))
-                            .foregroundColor(.white.opacity(0.6))
+        VStack(spacing: 8) {
+            // Main navigation info row
+            HStack(spacing: 14) {
+                // Maneuver Icon — fixed size, never overlaps text
+                Image(systemName: driveViewModel.nextManeuverImageName)
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(DesignSystem.cyan)
+                    .frame(width: 54, height: 54)
+                    .background(DesignSystem.cyan.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .frame(width: 54, height: 54) // fixed size — never shrinks into text
+
+                // Instruction text — gets all remaining space
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(driveViewModel.nextManeuverInstruction.isEmpty ? "Follow the route" : driveViewModel.nextManeuverInstruction)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.75)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 6) {
+                        Text(formatDistance(driveViewModel.distanceToNextTurn))
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(DesignSystem.cyan)
+
+                        if let eta = driveViewModel.eta {
+                            Text("·")
+                                .foregroundColor(.white.opacity(0.4))
+                            Text("ETA \(eta, format: .dateTime.hour().minute())")
+                                .font(.system(size: 13))
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+                    }
+
+                    // Stops count badge
+                    if !driveViewModel.routeStops.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "mappin.and.ellipse")
+                                .font(.system(size: 9))
+                                .foregroundColor(DesignSystem.amber)
+                            Text("\(driveViewModel.routeStops.count) stop\(driveViewModel.routeStops.count > 1 ? "s" : "") · \(totalViaTime)")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(DesignSystem.amber)
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Dismiss button
+                Button(action: {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Task { await driveViewModel.endNavigation() }
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white.opacity(0.6))
+                        .padding(10)
+                        .background(Circle().fill(Color.white.opacity(0.1)))
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            
-            // Dismiss button
-            Button(action: {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                Task { await driveViewModel.endNavigation() }
-            }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.white.opacity(0.6))
-                    .padding(10)
-                    .background(Circle().fill(Color.white.opacity(0.1)))
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, driveViewModel.routeStops.isEmpty ? 12 : 4)
+
+            // Action buttons row (Add Stop + Stops list)
+            HStack(spacing: 8) {
+                // Add Stop button
+                Button(action: {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    driveViewModel.showRouteStopsSheet = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 10))
+                        Text(driveViewModel.routeStops.isEmpty ? "Add Stop" : "Edit Stops")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .liquidGlassChip(cornerRadius: 12, tint: DesignSystem.cyan.opacity(0.08), interactive: true)
+                }
+                .buttonStyle(.plain)
+
+                // Optimize button — only appears when there are 2+ stops to reorder
+                if driveViewModel.routeStops.count >= 2 {
+                    Button(action: {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        driveViewModel.showRouteStopsSheet = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.triangle.swap")
+                                .font(.system(size: 10))
+                            Text("Optimize")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundColor(DesignSystem.amber)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(DesignSystem.amber.opacity(0.25), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer()
             }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 12)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
         .liquidGlass(interactive: true)
     }
-    
+
+    private var totalViaTime: String {
+        let total = driveViewModel.routeLegs.reduce(0) { $0 + $1.travelTime }
+        let min = Int(total / 60)
+        if min < 60 { return "\(min) min total" }
+        return "\(min / 60)h \(min % 60)m total"
+    }
+
     private func formatDistance(_ distance: CLLocationDistance) -> String {
         let system = UserDefaults.standard.string(forKey: "measurementSystem") ?? "Imperial"
         

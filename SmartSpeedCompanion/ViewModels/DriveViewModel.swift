@@ -105,7 +105,53 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         set { navigationCoordinator.isRerouting = newValue }
     }
     /// The list of alternate routes returned by MKDirections.
-    @Published public var availableRoutes: [MKRoute] = [] 
+    @Published public var availableRoutes: [MKRoute] = []
+
+    // MARK: - Multi-Stop Route State
+
+    /// The ordered list of intermediate stops. Owned by NavigationCoordinator.
+    public var routeStops: [RouteStop] {
+        get { navigationCoordinator.routeStops }
+        set { navigationCoordinator.routeStops = newValue }
+    }
+
+    /// Route legs with per-leg ETA/distance. Owned by NavigationCoordinator.
+    public var routeLegs: [RouteLeg] {
+        get { navigationCoordinator.routeLegs }
+        set { navigationCoordinator.routeLegs = newValue }
+    }
+
+    /// Comparison of current vs optimal ordering. Owned by NavigationCoordinator.
+    public var orderingComparison: OrderingComparison? {
+        get { navigationCoordinator.orderingComparison }
+        set { navigationCoordinator.orderingComparison = newValue }
+    }
+
+    /// True while multi-stop route is being calculated.
+    public var isCalculatingMultiStop: Bool {
+        get { navigationCoordinator.isCalculatingMultiStop }
+        set { navigationCoordinator.isCalculatingMultiStop = newValue }
+    }
+
+    /// True when the route stops sheet should be presented.
+    @Published public var showRouteStopsSheet: Bool = false
+
+    /// True when we are in "add stop to route" search mode.
+    @Published public var isAddingStopToRoute: Bool = false
+
+    /// Search results for adding a stop to the route.
+    @Published public var addStopSearchResults: [MKMapItem] = []
+
+    /// True while searching for a stop to add.
+    @Published public var isSearchingForStop: Bool = false
+
+    /// Currently selected MKMapItem pending confirmation as a new stop.
+    public var pendingStopMapItem: MKMapItem? = nil
+
+    /// The index within `routeStops` where the next added stop should be inserted.
+    /// Defaults to the end (routeStops.count). The picker UI sets this to the
+    /// index the user selected in the stops list.
+    public var addStopInsertIndex: Int = 0 
     
     // MARK: - Drive Focus Mode
     /// When true, a distraction-free full-screen view replaces the normal HUD.
@@ -1304,6 +1350,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     public func endNavigation() async {
         self.isNavigating = false
         await navigationCoordinator.endNavigation()
+        clearMultiStopState()
         if isRecording {
             endSession()
         }
@@ -1345,6 +1392,98 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         }
     }
     
+    // MARK: - Multi-Stop Route Management
+
+    /// Adds an intermediate stop to the current route. After adding,
+    /// recalculates the multi-stop route and starts navigation.
+    public func addStopToRoute(_ mapItem: MKMapItem, at index: Int? = nil) async {
+        let stop = RouteStop(
+            name: mapItem.name ?? "Stop",
+            address: mapItem.placemark.title,
+            latitude: mapItem.placemark.coordinate.latitude,
+            longitude: mapItem.placemark.coordinate.longitude
+        )
+
+        navigationCoordinator.addStop(stop, at: index)
+        self.showRouteStopsSheet = true
+        self.isAddingStopToRoute = false
+        self.addStopSearchResults = []
+
+        // Recalculate the route with the new stop, then refresh navigation
+        if isNavigating, let route = await navigationCoordinator.calculateMultiStopRoute() {
+            await startNavigation(with: route, isReroute: true)
+        }
+    }
+
+    /// Removes a stop from the route by its ID.
+    public func removeStopFromRoute(_ id: UUID) async {
+        navigationCoordinator.removeStop(id: id)
+
+        if isNavigating, let route = await navigationCoordinator.calculateMultiStopRoute() {
+            await startNavigation(with: route, isReroute: true)
+        }
+    }
+
+    /// Reorders a stop from one index to another (drag-to-reorder).
+    public func moveStopInRoute(from sourceIndex: Int, to destinationIndex: Int) async {
+        navigationCoordinator.moveStop(from: sourceIndex, to: destinationIndex)
+
+        if isNavigating, let route = await navigationCoordinator.calculateMultiStopRoute() {
+            await startNavigation(with: route, isReroute: true)
+        }
+    }
+
+    /// Searches for a location to add as a stop during active navigation.
+    public func searchForStop(query: String) async {
+        guard !query.isEmpty else { addStopSearchResults = []; return }
+        isSearchingForStop = true
+
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        if let userLocation = locationManager.latestLocation {
+            request.region = MKCoordinateRegion(
+                center: userLocation.coordinate,
+                latitudinalMeters: 50000,
+                longitudinalMeters: 50000
+            )
+        }
+        let search = MKLocalSearch(request: request)
+        do {
+            let response = try await search.start()
+            addStopSearchResults = Array(response.mapItems.prefix(6))
+        } catch {
+            addStopSearchResults = []
+        }
+        isSearchingForStop = false
+    }
+
+    /// Compares the current stop ordering against optimal permutations.
+    public func compareStopOrderings() async {
+        _ = await navigationCoordinator.compareStopOrdering()
+    }
+
+    /// Applies the best ordering found by the ordering comparison.
+    public func applyBestStopOrdering() async {
+        let changed = navigationCoordinator.applyBestOrdering()
+        if changed {
+            if isNavigating, let route = await navigationCoordinator.calculateMultiStopRoute() {
+                await startNavigation(with: route, isReroute: true)
+            }
+        }
+    }
+
+    /// Clears all multi-stop state.
+    public func clearMultiStopState() {
+        navigationCoordinator.clearMultiStopState()
+        showRouteStopsSheet = false
+        isAddingStopToRoute = false
+        addStopSearchResults = []
+        isSearchingForStop = false
+        pendingStopMapItem = nil
+    }
+
+    // MARK: - Search
+
     /// Full manual search for points of interest or addresses.
     public func searchDestination(query: String) async {
         guard !query.isEmpty else { searchResults = []; return }

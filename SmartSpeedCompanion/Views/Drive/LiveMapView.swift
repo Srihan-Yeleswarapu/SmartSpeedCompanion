@@ -409,6 +409,19 @@ public struct LiveMapView: UIViewRepresentable {
             }
             return hasher.finalize()
         }
+
+        /// Fingerprint for the stops list so the map rebuilds stop annotations
+        /// when the user adds, removes, or reorders stops.
+        static func stopFingerprint(for stops: [RouteStop]) -> Int {
+            var hasher = Hasher()
+            hasher.combine(stops.count)
+            for stop in stops {
+                hasher.combine(stop.id)
+                hasher.combine(Int(stop.latitude * 1000))
+                hasher.combine(Int(stop.longitude * 1000))
+            }
+            return hasher.finalize()
+        }
         // Maneuver annotation we own — ref so we don't churn annotations on
         // every GPS ping.
         private var maneuverAnnotation: ManeuverAnnotation? = nil
@@ -420,6 +433,7 @@ public struct LiveMapView: UIViewRepresentable {
         private var lastRouteDistance: Double = 0
         private var lastSessionReadingCount: Int = 0
         private var hasAutoFramedRoute: Bool = false
+        private var lastStopFingerprint: Int = 0
 
         #if DEBUG || DEVELOPER_BUILD
         private var simulatedCarAnnotation: MKPointAnnotation?
@@ -506,10 +520,12 @@ public struct LiveMapView: UIViewRepresentable {
             let currentRouteDistance = vm.currentRoute?.distance ?? 0
             let currentReadingCount = vm.sessionRecorder.currentSession?.readings.count ?? 0
             let isNavigating = vm.isNavigating
+            let currentStopFP = Self.stopFingerprint(for: vm.routeStops)
 
             let routeChanged = isNavigating != lastIsNavigating || abs(currentRouteDistance - lastRouteDistance) > 1.0
             // Throttling: only rebuild history every 5 points to save battery
             let historyChanged = currentReadingCount >= lastHistoryCounts.safeCount + lastHistoryCounts.overCount + 5
+            let stopsChanged = currentStopFP != lastStopFingerprint
 
             // Detect when the user dismissed the route picker (isSelectingRoute
             // transitioned true→false). When this happens the overlay fingerprint
@@ -521,7 +537,7 @@ public struct LiveMapView: UIViewRepresentable {
             // rebuild fires (new routes from a fresh search).
             let routePickerOpened = !lastIsSelectingRoute && vm.isSelectingRoute
 
-            guard routeChanged || historyChanged || (isNavigating && lastRouteDistance == 0) || routePickerDismissed || routePickerOpened else {
+            guard routeChanged || historyChanged || stopsChanged || (isNavigating && lastRouteDistance == 0) || routePickerDismissed || routePickerOpened else {
                 // ALTERNATIVE-ROUTE FINGERPRINT: rebuild when availableRoutes
                 // count changes during the route-selection step. We hash
                 // count + a stable signature (sum of distances) so the check
@@ -542,6 +558,7 @@ public struct LiveMapView: UIViewRepresentable {
             lastIsNavigating = isNavigating
             lastIsSelectingRoute = vm.isSelectingRoute
             lastRouteDistance = currentRouteDistance
+            lastStopFingerprint = currentStopFP
             let readings = vm.sessionRecorder.currentSession?.readings ?? []
             let safeCount = readings.filter { !$0.overLimit }.count
             let overCount = readings.filter { $0.overLimit }.count
@@ -667,6 +684,35 @@ public struct LiveMapView: UIViewRepresentable {
                 for camera in nearby.prefix(60) {
                     let ann = SpeedCameraAnnotation(camera: camera)
                     mapView.addAnnotation(ann)
+                }
+            }
+
+            // Route stop annotations — numbered pins for each intermediate stop
+            // so the driver can see them on the map even with the HUD card
+            // occluded (e.g. when panning the map manually).
+            if !viewModel.routeStops.isEmpty {
+                let existingStopIDs = Set(
+                    mapView.annotations.compactMap { $0 as? StopAnnotation }.map(\.stopID)
+                )
+                for (index, stop) in viewModel.routeStops.enumerated() {
+                    if !existingStopIDs.contains(stop.id) {
+                        let ann = StopAnnotation(stop: stop, index: index + 1)
+                        mapView.addAnnotation(ann)
+                    }
+                }
+                // Remove stale stop annotations
+                let currentIDs = Set(viewModel.routeStops.map(\.id))
+                for ann in mapView.annotations {
+                    if let stopAnn = ann as? StopAnnotation, !currentIDs.contains(stopAnn.stopID) {
+                        mapView.removeAnnotation(stopAnn)
+                    }
+                }
+            } else {
+                // Remove all stop annotations when there are no stops
+                for ann in mapView.annotations {
+                    if ann is StopAnnotation {
+                        mapView.removeAnnotation(ann)
+                    }
                 }
             }
 
@@ -917,6 +963,25 @@ public struct LiveMapView: UIViewRepresentable {
                 return view
             }
 
+            // Stop annotation: rendered as a numbered badge on a cyan
+            // marker to mirror Apple Maps' waypoint pins. The number is
+            // the stop order (1, 2, 3...) shown as the glyph.
+            if let stopAnno = annotation as? StopAnnotation {
+                let id = StopAnnotation.reuseIdentifier
+                let view = mapView.dequeueReusableAnnotationView(withIdentifier: id)
+                    as? MKMarkerAnnotationView
+                    ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
+                view.annotation = annotation
+                view.canShowCallout = true
+                view.isEnabled = true
+                view.markerTintColor = UIColor(DesignSystem.amber)
+                view.glyphText = "\(stopAnno.index)"
+                view.glyphTintColor = .white
+                view.displayPriority = .required
+                view.titleVisibility = .visible
+                return view
+            }
+
             // Maneuver annotation: rendered with a giant arrow glyph inside
             // a glassy disc so the upcoming turn is impossible to miss.
             // NOTE: glyphImage must be re-set on EVERY viewFor call — the
@@ -1022,6 +1087,29 @@ final class SpeedCameraAnnotation: NSObject, MKAnnotation {
             latitude: camera.latitude,
             longitude: camera.longitude
         )
+        super.init()
+    }
+}
+
+// MARK: - StopAnnotation
+//
+/// Marker annotation for an intermediate stop on a multi-stop route.
+/// Rendered as a numbered badge so the driver sees each stop's order
+/// directly on the map, matching Apple Maps' waypoint behavior.
+final class StopAnnotation: NSObject, MKAnnotation {
+    static let reuseIdentifier = "StopPin"
+    @objc dynamic var coordinate: CLLocationCoordinate2D
+    let stopID: UUID
+    let index: Int
+    let title: String?
+    let subtitle: String?
+
+    init(stop: RouteStop, index: Int) {
+        self.stopID = stop.id
+        self.index = index
+        self.coordinate = stop.coordinate
+        self.title = stop.name
+        self.subtitle = "Stop \(index)"
         super.init()
     }
 }

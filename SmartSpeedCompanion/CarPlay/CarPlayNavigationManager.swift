@@ -169,6 +169,36 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         advanceToNextStep()
     }
     
+    /// Adopts a navigation session that CarPlay started internally (e.g.
+    /// after the user accepted a session-restoration prompt or tapped "Start"
+    /// on a trip preview). Calculates our own route and runs through the full
+    /// coordinator flow so speed HUD, turn-by-turn, and drive recording all
+    /// reflect the active trip. CarPlay's `CPMapTemplateDelegate.startedTrip`
+    /// fires before this method is called; `startNavigationSession(for:)`
+    /// (called by `startNavigation`) ends any previous session first, so our
+    /// properly-configured trip replaces the CarPlay-created one cleanly.
+    public func handleCarPlayStartedTrip(_ trip: CPTrip) async {
+        guard let destination = trip.destination else { return }
+
+        do {
+            let route = try await calculateRoute(to: destination)
+            // Set destination on the coordinator *before* calling
+            // startNavigation(with:) so the delegate chain fires correctly.
+            // The coordinator reads self.destination inside startNavigation
+            // to pass it through to startNavigationTrigger.
+            viewModel.navigationCoordinator.destination = destination
+            viewModel.navigationCoordinator.destinationItem = destination
+            // Run through the full coordinator pipeline: it resets step flags,
+            // starts the reroute timer, sets ETA/distance, auto-starts session
+            // recording, caches route segments, starts Live Activity, speaks
+            // the initial announcement, and calls back to our
+            // `startNavigation(route:destination:)` via the delegate chain.
+            await viewModel.navigationCoordinator.startNavigation(with: route)
+        } catch {
+            print("handleCarPlayStartedTrip: Failed to calculate route: \(error)")
+        }
+    }
+
     public func endNavigation() {
         navigationSession?.finishTrip()
         navigationSession = nil

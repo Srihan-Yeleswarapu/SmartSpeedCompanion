@@ -191,6 +191,28 @@ public final class NavigationCoordinator: ObservableObject {
     /// Indicates if the system is currently calculating a reroute.
     @Published public var isRerouting: Bool = false
 
+    // MARK: - Multi-Stop Route Support
+
+    /// The ordered list of intermediate stops along the route.
+    /// The final destination is NOT included here — it's stored in `destination`.
+    /// Each stop has per-leg ETA and distance populated after route calculation.
+    @Published public var routeStops: [RouteStop] = []
+
+    /// The full set of route legs (origin → stop1, stop1 → stop2, ..., stopN → destination).
+    /// Populated after a multi-stop route calculation.
+    @Published public var routeLegs: [RouteLeg] = []
+
+    /// Comparison of the current stop order against the most efficient ordering.
+    /// Non-nil after `compareStopOrdering()` completes.
+    @Published public var orderingComparison: OrderingComparison? = nil
+
+    /// True while a multi-stop route calculation is in flight.
+    @Published public var isCalculatingMultiStop: Bool = false
+
+    /// The list of stops for the FINAL destination — this doesn't change when
+    /// reordering, it's always the last item passed in `calculateMultiStopRoute`.
+    private var finalDestinationMapItem: MKMapItem?
+
     // MARK: - Internal nav scratch
 
     /// Wall-clock timestamp of the most recent reroute request, used by the
@@ -308,6 +330,392 @@ public final class NavigationCoordinator: ObservableObject {
         self.voiceAnnouncer = voiceAnnouncer ?? DefaultVoiceAnnouncer()
     }
 
+    // MARK: - Multi-Stop Route Support
+
+    /// Adds an intermediate stop to the route at the given index.
+    /// Index 0 inserts right after the origin; index `routeStops.count` appends.
+    /// After adding, call `calculateMultiStopRoute()` to refresh ETAs.
+    public func addStop(_ stop: RouteStop, at index: Int? = nil) {
+        let idx = index.map { min(max($0, 0), routeStops.count) } ?? routeStops.count
+        routeStops.insert(stop, at: idx)
+    }
+
+    /// Removes a stop by its ID.
+    public func removeStop(id: UUID) {
+        routeStops.removeAll { $0.id == id }
+        routeLegs.removeAll()
+        orderingComparison = nil
+    }
+
+    /// Moves a stop from one position to another (drag-to-reorder).
+    public func moveStop(from sourceIndex: Int, to destinationIndex: Int) {
+        guard sourceIndex >= 0, sourceIndex < routeStops.count,
+              destinationIndex >= 0, destinationIndex < routeStops.count else { return }
+        let stop = routeStops.remove(at: sourceIndex)
+        routeStops.insert(stop, at: destinationIndex)
+    }
+
+    /// Calculates the full multi-stop route from the current location through
+    /// all intermediate stops to the final destination. Each leg is calculated
+    /// separately so we capture per-leg ETA/distance data.
+    ///
+    /// Returns the overall best route for the final leg (origin→destination
+    /// through all waypoints) and populates per-leg estimates on each stop.
+    public func calculateMultiStopRoute() async -> MKRoute? {
+        guard let finalDest = finalDestinationMapItem ?? destination else { return nil }
+        isCalculatingMultiStop = true
+        defer { isCalculatingMultiStop = false }
+
+        let source = MKMapItem.forCurrentLocation()
+        let allLegs = buildLegs(from: source, through: routeStops, to: finalDest)
+
+        var computedLegs: [RouteLeg] = []
+        var overallRoute: MKRoute? = nil
+        var cumulativeTime: TimeInterval = 0
+
+        // Calculate each leg sequentially so we can accumulate times.
+        // Using a task group would be faster but MKDirections has a concurrency
+        // limit; serial is more reliable.
+        for (idx, leg) in allLegs.enumerated() {
+            guard let legRoute = await calculateRouteBetween(
+                source: leg.source,
+                destination: leg.destination
+            ) else { continue }
+
+            let routeLeg = RouteLeg(
+                sourceName: leg.sourceName,
+                destinationName: leg.destinationName,
+                travelTime: legRoute.expectedTravelTime,
+                distance: legRoute.distance,
+                route: legRoute
+            )
+            computedLegs.append(routeLeg)
+            cumulativeTime += legRoute.expectedTravelTime
+
+            // Populate the corresponding stop's per-leg data
+            if idx < routeStops.count {
+                routeStops[idx].travelTimeFromPrevious = legRoute.expectedTravelTime
+                routeStops[idx].distanceFromPrevious = legRoute.distance
+                routeStops[idx].cumulativeTravelTime = cumulativeTime
+            }
+
+            // Keep the first (overall) route for the nav engine
+            if idx == 0 {
+                overallRoute = legRoute
+            }
+        }
+
+        self.routeLegs = computedLegs
+
+        // Update ETA to reflect the total multi-stop journey
+        if let overall = overallRoute {
+            let totalTime = computedLegs.reduce(0) { $0 + $1.travelTime }
+            self.eta = Date().addingTimeInterval(totalTime)
+            self.distanceToDestination = computedLegs.reduce(0) { $0 + $1.distance }
+        }
+
+        return overallRoute
+    }
+
+    /// Compares the current stop ordering against an optimized arrangement.
+    /// Uses Haversine (straight-line) distance for fast comparison instead of
+    /// calling MKDirections for every permutation — this avoids Apple's rate
+    /// limits and keeps the UI responsive. For <= 4 stops we exhaustively
+    /// search all permutations; for > 4 we use a greedy nearest-neighbor
+    /// heuristic. After finding the best order, a single real MKDirections
+    /// call validates the time estimate.
+    public func compareStopOrdering() async -> OrderingComparison? {
+        guard let finalDest = finalDestinationMapItem ?? destination,
+              !routeStops.isEmpty else { return nil }
+
+        let source = MKMapItem.forCurrentLocation()
+        let currentIDs = routeStops.map(\.id)
+
+        // 1. Calculate the current order's total using REAL directions (one
+        //    call per leg, needed for accurate current-ETA display).
+        let currentTime = await totalTravelTimeForOrder(
+            source: source,
+            stops: routeStops,
+            destination: finalDest
+        )
+        guard currentTime > 0 else { return nil }
+
+        // 2. Find the best ordering using Haversine distance (fast, no
+        //    network calls) to estimate which permutation is most efficient.
+        var bestTime = currentTime
+        var bestOrderIDs = currentIDs
+
+        if routeStops.count <= 4 {
+            // Exhaustive search using straight-line distance approximation.
+            // This is extremely fast because it doesn't hit the network.
+            let bestHaversineOrder = await findBestOrderHaversine(
+                source: source,
+                stops: routeStops,
+                destination: finalDest
+            )
+            if let best = bestHaversineOrder {
+                // Verify the best order with real directions
+                let verifiedTime = await totalTravelTimeForOrder(
+                    source: source,
+                    stops: best,
+                    destination: finalDest
+                )
+                if verifiedTime > 0 && verifiedTime < bestTime {
+                    bestTime = verifiedTime
+                    bestOrderIDs = best.map(\.id)
+                }
+            }
+        } else {
+            // Greedy nearest-neighbor using Haversine distance
+            let bestNNOrder = await greedyNearestNeighborHaversine(
+                source: source,
+                stops: routeStops,
+                destination: finalDest
+            )
+            if let best = bestNNOrder {
+                let verifiedTime = await totalTravelTimeForOrder(
+                    source: source,
+                    stops: best,
+                    destination: finalDest
+                )
+                if verifiedTime > 0 && verifiedTime < bestTime {
+                    bestTime = verifiedTime
+                    bestOrderIDs = best.map(\.id)
+                }
+            }
+        }
+
+        let comparison = OrderingComparison(
+            currentOrder: currentIDs,
+            currentTotalTime: currentTime,
+            bestOrder: bestOrderIDs,
+            bestTotalTime: bestTime
+        )
+        self.orderingComparison = comparison
+        return comparison
+    }
+
+    /// Applies the best ordering found by `compareStopOrdering()`.
+    /// Returns true if the order was changed.
+    public func applyBestOrdering() -> Bool {
+        guard let comparison = orderingComparison,
+              comparison.canSaveTime else { return false }
+
+        // Re-map the best order IDs back to RouteStop objects
+        let stopMap = Dictionary(uniqueKeysWithValues: routeStops.map { ($0.id, $0) })
+        var reordered: [RouteStop] = []
+        for id in comparison.bestOrder {
+            if let stop = stopMap[id] {
+                reordered.append(stop)
+            }
+        }
+        if reordered.count == routeStops.count {
+            routeStops = reordered
+            return true
+        }
+        return false
+    }
+
+    /// Clears all multi-stop state.
+    public func clearMultiStopState() {
+        routeStops.removeAll()
+        routeLegs.removeAll()
+        orderingComparison = nil
+        isCalculatingMultiStop = false
+        finalDestinationMapItem = nil
+    }
+
+    // MARK: - Multi-Stop Helpers
+
+    /// Builds the list of (source, destination) pairs for each leg of the journey.
+    private func buildLegs(
+        from source: MKMapItem,
+        through stops: [RouteStop],
+        to destination: MKMapItem
+    ) -> [(source: MKMapItem, destination: MKMapItem, sourceName: String, destinationName: String)] {
+        var legs: [(source: MKMapItem, destination: MKMapItem, sourceName: String, destinationName: String)] = []
+        var previous: (item: MKMapItem, name: String) = (source, "Current Location")
+
+        for stop in stops {
+            let destItem = stop.mapItem
+            legs.append((
+                source: previous.item,
+                destination: destItem,
+                sourceName: previous.name,
+                destinationName: stop.name
+            ))
+            previous = (destItem, stop.name)
+        }
+
+        // Final leg: last stop → final destination
+        legs.append((
+            source: previous.item,
+            destination: destination,
+            sourceName: previous.name,
+            destinationName: destination.name ?? "Destination"
+        ))
+
+        return legs
+    }
+
+    /// Calculates a route between two points.
+    private func calculateRouteBetween(source: MKMapItem, destination: MKMapItem) async -> MKRoute? {
+        let request = MKDirections.Request()
+        request.source = source
+        request.destination = destination
+        request.transportType = .automobile
+        request.requestsAlternateRoutes = false
+        request.departureDate = .now
+
+        if UserDefaults.standard.bool(forKey: "avoidHighways") {
+            request.highwayPreference = .avoid
+        }
+
+        do {
+            let directions = MKDirections(request: request)
+            let response = try await directions.calculate()
+            return response.routes.first
+        } catch {
+            DebugLogger.shared.log("Multi-stop leg calc FAILED: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Computes the total travel time for a specific ordering of stops + destination.
+    private func totalTravelTimeForOrder(
+        source: MKMapItem,
+        stops: [RouteStop],
+        destination: MKMapItem
+    ) async -> TimeInterval {
+        var total: TimeInterval = 0
+        var previous = source
+
+        for stop in stops {
+            if let route = await calculateRouteBetween(source: previous, destination: stop.mapItem) {
+                total += route.expectedTravelTime
+                previous = stop.mapItem
+            } else {
+                return 0
+            }
+        }
+
+        // Final leg
+        if let route = await calculateRouteBetween(source: previous, destination: destination) {
+            total += route.expectedTravelTime
+        } else {
+            return 0
+        }
+
+        return total
+    }
+
+    /// Generates all permutations of an array. Capped at 5 elements for safety.
+    private func generatePermutations<T>(of array: [T]) -> [[T]] {
+        guard array.count <= 5 else { return [array] }
+        guard array.count > 1 else { return [array] }
+
+        var result: [[T]] = []
+        let arr = Array(array)
+
+        func permute(_ prefix: [T], _ remaining: [T]) {
+            if remaining.isEmpty {
+                result.append(prefix)
+                return
+            }
+            for i in 0..<remaining.count {
+                var newRemaining = remaining
+                let chosen = newRemaining.remove(at: i)
+                permute(prefix + [chosen], newRemaining)
+            }
+        }
+
+        permute([], arr)
+        return result
+    }
+
+    /// Computes the Haversine distance between two coordinates in meters.
+    private func haversineDistance(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double {
+        let lat1 = from.latitude * .pi / 180
+        let lon1 = from.longitude * .pi / 180
+        let lat2 = to.latitude * .pi / 180
+        let lon2 = to.longitude * .pi / 180
+
+        let dlat = lat2 - lat1
+        let dlon = lon2 - lon1
+        let a = sin(dlat / 2) * sin(dlat / 2) + cos(lat1) * cos(lat2) * sin(dlon / 2) * sin(dlon / 2)
+        let c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return 6371000 * c // Earth radius in meters
+    }
+
+    /// Finds the best ordering using Haversine (straight-line) distance
+    /// for all permutations (up to 4 stops, 24 permutations). Fast and
+    /// avoids network calls entirely.
+    private func findBestOrderHaversine(
+        source: MKMapItem,
+        stops: [RouteStop],
+        destination: MKMapItem
+    ) async -> [RouteStop]? {
+        guard !stops.isEmpty else { return nil }
+        let sourceCoord = source.placemark.coordinate
+        let destCoord = destination.placemark.coordinate
+
+        let permutations = generatePermutations(of: stops)
+        var bestOrder: [RouteStop]? = nil
+        var bestDistance = Double.greatestFiniteMagnitude
+
+        for perm in permutations {
+            var total: Double = 0
+            var prev = sourceCoord
+
+            for stop in perm {
+                total += haversineDistance(from: prev, to: stop.coordinate)
+                prev = stop.coordinate
+            }
+            total += haversineDistance(from: prev, to: destCoord)
+
+            if total < bestDistance {
+                bestDistance = total
+                bestOrder = perm
+            }
+        }
+
+        return bestOrder
+    }
+
+    /// Greedy nearest-neighbor heuristic using Haversine distance.
+    /// Starts from the current location and always picks the closest
+    /// remaining stop by straight-line distance.
+    private func greedyNearestNeighborHaversine(
+        source: MKMapItem,
+        stops: [RouteStop],
+        destination: MKMapItem
+    ) async -> [RouteStop]? {
+        guard !stops.isEmpty else { return nil }
+        let sourceCoord = source.placemark.coordinate
+        var unvisited = stops
+        var ordered: [RouteStop] = []
+        var current = sourceCoord
+
+        while !unvisited.isEmpty {
+            var bestIdx = 0
+            var bestDist = Double.greatestFiniteMagnitude
+
+            for (i, stop) in unvisited.enumerated() {
+                let dist = haversineDistance(from: current, to: stop.coordinate)
+                if dist < bestDist {
+                    bestDist = dist
+                    bestIdx = i
+                }
+            }
+
+            let chosen = unvisited.remove(at: bestIdx)
+            ordered.append(chosen)
+            current = chosen.coordinate
+        }
+
+        return ordered
+    }
+
     // MARK: - Route Calculation
 
     /// Requests route options from MapKit and triggers the selection view.
@@ -317,6 +725,7 @@ public final class NavigationCoordinator: ObservableObject {
     /// here — that's a UI-state concern for the wrapper method.
     public func selectDestinationAndCalculateRoutes(to destination: MKMapItem, isRerouting: Bool = false) async {
         self.destination = destination
+        self.finalDestinationMapItem = destination
 
         let request = MKDirections.Request()
         request.source = MKMapItem.forCurrentLocation()
@@ -361,13 +770,24 @@ public final class NavigationCoordinator: ObservableObject {
         self.spokenCameraKeys.removeAll()
 
         startRerouteTimer() // Every 5 minutes check for a faster path
-        self.eta = Date().addingTimeInterval(route.expectedTravelTime)
-        // Initialize remaining-route distance right at start so Siri's
-        // `GetDistanceToDestinationIntent` answers correctly even before
-        // the first `updateNavigationProgress` location tick fires
-        // (~1–10 s gap after `startNavigation` runs). Without this, the
-        // first Siri response was "You're almost there — 0 meters".
-        self.distanceToDestination = route.distance
+
+        // Compute ETA from total journey (multi-stop-aware). When routeStops
+        // is populated, `calculateMultiStopRoute` already set `self.eta` and
+        // `self.distanceToDestination` to the sum of ALL leg values. Only
+        // overwrite with the single-leg values when there are no intermediate
+        // stops, so the ETA never shrinks to just the first leg after a stop
+        // is added (code review bug).
+        if routeStops.isEmpty {
+            self.eta = Date().addingTimeInterval(route.expectedTravelTime)
+            self.distanceToDestination = route.distance
+        } else if eta == nil || distanceToDestination == 0 {
+            // Falls back to route values if multi-stop data hasn't been
+            // populated yet (edge case: stops added before route calc).
+            self.eta = Date().addingTimeInterval(route.expectedTravelTime)
+            self.distanceToDestination = route.distance
+        }
+        // When routeStops is non-empty and multi-stop data is present,
+        // we keep the total ETA / distance untouched.
 
         // Automatically start recording the drive session if it hasn't been started manually
         if !self.isRecordingProvider() {
