@@ -561,7 +561,7 @@ fileprivate struct AddStopSearchSheet: View {
                         .onChange(of: query) { _, newValue in
                             if newValue.isEmpty { results = [] }
                         }
-                        .onAppear { }
+                        
 
                     if !query.isEmpty {
                         Button(action: { query = ""; results = [] }) {
