@@ -626,7 +626,7 @@ fileprivate struct BottomTransparentHUD: View {
                         .offset(x: 6, y: -6)
                     }
                 }
-                .offset(x: -40)
+                .offset(x: -30)
                 .frame(maxWidth: .infinity, alignment: .center)
                 LimitSignView(
                     limit: driveViewModel.limit,
