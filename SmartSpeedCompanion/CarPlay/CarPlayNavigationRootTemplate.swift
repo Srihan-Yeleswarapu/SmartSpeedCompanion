@@ -269,7 +269,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             Task { @MainActor in
                 await self.viewModel.addStopToRoute(first)
                 // Pop back to the main map after adding
-                await self.interfaceController?.popToRootTemplate(animated: true)
+                try? await self.interfaceController?.popToRootTemplate(animated: true)
             }
         }
     }
