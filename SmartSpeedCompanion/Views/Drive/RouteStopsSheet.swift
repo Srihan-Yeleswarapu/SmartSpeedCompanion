@@ -694,10 +694,22 @@ fileprivate struct AddStopSearchSheet: View {
                                 .foregroundColor(DesignSystem.cyan)
 
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(item.name ?? "Unknown")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
+                                HStack(spacing: 6) {
+                                    Text(item.name ?? "Unknown")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+
+                                    if isOnRoute(item) {
+                                        Text("On Route")
+                                            .font(.system(size: 9, weight: .black))
+                                            .foregroundColor(.black)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(DesignSystem.cyan)
+                                            .clipShape(Capsule())
+                                    }
+                                }
 
                                 HStack(spacing: 4) {
                                     Text(compactAddress(for: item))
@@ -798,5 +810,35 @@ fileprivate struct AddStopSearchSheet: View {
             results = driveViewModel.addStopSearchResults
             isSearching = false
         }
+    }
+
+    // MARK: - Route Proximity
+
+    /// Returns true if the given map item is within 500m of the active route polyline.
+    private func isOnRoute(_ item: MKMapItem) -> Bool {
+        guard let route = driveViewModel.currentRoute,
+              let itemLocation = item.placemark.location else { return false }
+        let routeDist = shortestDistanceToPolyline(
+            itemLocation.coordinate,
+            polyline: route.polyline
+        )
+        return routeDist <= 500 // 500 meters
+    }
+
+    /// Shortest straight-line distance from a coordinate to any point on the polyline.
+    private func shortestDistanceToPolyline(_ coord: CLLocationCoordinate2D, polyline: MKPolyline) -> CLLocationDistance {
+        let point = MKMapPoint(coord)
+        let pts = polyline.points()
+        let count = polyline.pointCount
+        guard count > 0 else { return .infinity }
+        var minDist: Double = .greatestFiniteMagnitude
+        let step = max(1, count / 50)
+        for i in stride(from: 0, to: count, by: step) {
+            let d = point.distance(to: pts[i])
+            if d < minDist { minDist = d }
+        }
+        let lastDist = point.distance(to: pts[count - 1])
+        if lastDist < minDist { minDist = lastDist }
+        return minDist
     }
 }
