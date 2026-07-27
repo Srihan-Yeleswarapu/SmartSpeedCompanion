@@ -1061,8 +1061,10 @@ fileprivate struct RouteSelectionCard: View {
 //                      moment the user wants it (Apple provides this surface
 //                      inside Apple Maps; no in-app Look Around, per
 //                      TestFlight 2.2.0 FB10).
-//   - "Gas / Food"  — MKLocalSearch category query (gas / cafe / parking / etc.)
-//                      with results rendered in NearbyAmenitiesCard below.
+//   - "Add Stops"   — Opens the RouteStopsSheet where the user can add,
+//                      reorder, or delete intermediate waypoints. Replaced
+//                      the old "Find Nearby" menu (gas / cafe / parking)
+//                      per user request on 2026-07-26.
 fileprivate struct NavigationShortcutsRow: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     let destination: MKMapItem
@@ -1086,14 +1088,11 @@ fileprivate struct NavigationShortcutsRow: View {
                         .foregroundColor(.white)
                         .liquidGlassChip(cornerRadius: 18, interactive: true)
                 }
-                Menu {
-                    Button("Gas") { Task { await driveViewModel.searchNearby(category: .gasStation) } }
-                    Button("Coffee") { Task { await driveViewModel.searchNearby(category: .cafe) } }
-                    Button("Food") { Task { await driveViewModel.searchNearby(category: .restaurant) } }
-                    Button("Parking") { Task { await driveViewModel.searchNearby(category: .parking) } }
-                    Button("Hospital") { Task { await driveViewModel.searchNearby(category: .hospital) } }
-                } label: {
-                    Label("Find Nearby", systemImage: "magnifyingglass.circle")
+                Button(action: {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    driveViewModel.showRouteStopsSheet = true
+                }) {
+                    Label("Add Stops", systemImage: "plus.circle")
                         .labelStyle(.titleAndIcon)
                         .font(.system(size: 13, weight: .bold))
                         .padding(.horizontal, 14)

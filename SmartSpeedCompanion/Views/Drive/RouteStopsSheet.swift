@@ -698,11 +698,24 @@ fileprivate struct AddStopSearchSheet: View {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundColor(.white)
                                     .lineLimit(1)
-                                if let addr = item.placemark.title {
-                                    Text(addr)
+
+                                HStack(spacing: 4) {
+                                    Text(compactAddress(for: item))
                                         .font(.system(size: 11))
                                         .foregroundColor(.white.opacity(0.4))
                                         .lineLimit(1)
+
+                                    Spacer(minLength: 4)
+
+                                    if let distance = distanceFromUser(to: item) {
+                                        Text(formatDistance(distance))
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundColor(.white.opacity(0.6))
+
+                                        Text(formatTimeEstimate(distance))
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(DesignSystem.cyan)
+                                    }
                                 }
                             }
 
@@ -726,6 +739,54 @@ fileprivate struct AddStopSearchSheet: View {
             }
             .padding(.top, 8)
         }
+    }
+
+    // MARK: - Helpers
+
+    /// Returns a short address string (City, State) for display in search results.
+    private func compactAddress(for item: MKMapItem) -> String {
+        let p = item.placemark
+        if let city = p.locality, let state = p.administrativeArea {
+            return "\(city), \(state)"
+        }
+        if let city = p.locality {
+            return city
+        }
+        // Fallback: extract the broader location from the full address
+        if let title = p.title {
+            let parts = title.components(separatedBy: ",")
+            if parts.count >= 2 {
+                return parts.dropFirst().map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: ", ")
+            }
+        }
+        return ""
+    }
+
+    /// Straight-line distance from the user's current location to the given map item.
+    private func distanceFromUser(to item: MKMapItem) -> CLLocationDistance? {
+        guard let userLocation = driveViewModel.locationManager.latestLocation,
+              let itemLocation = item.placemark.location else { return nil }
+        return userLocation.distance(from: itemLocation)
+    }
+
+    /// Formats a distance in meters into a human-readable string (miles or feet).
+    private func formatDistance(_ meters: CLLocationDistance) -> String {
+        let miles = meters / 1609.344
+        if miles < 0.1 {
+            let feet = meters * 3.28084
+            return "\(Int(feet)) ft"
+        }
+        return String(format: "%.1f mi", miles)
+    }
+
+    /// Estimates driving time from straight-line distance at ~30 mph average.
+    private func formatTimeEstimate(_ meters: CLLocationDistance) -> String {
+        // ~30 mph average ≈ 13.4 m/s for local roads
+        let avgSpeedMps: Double = 13.4
+        let seconds = meters / avgSpeedMps
+        let minutes = Int(ceil(seconds / 60))
+        if minutes < 1 { return "<1 min" }
+        return "~\(minutes) min"
     }
 
     private func performSearch() {

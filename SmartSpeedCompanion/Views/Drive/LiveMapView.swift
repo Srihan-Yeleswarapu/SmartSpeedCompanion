@@ -576,19 +576,43 @@ public struct LiveMapView: UIViewRepresentable {
 
             // Route polyline + destination
             if hasActiveRoute, let route = viewModel.currentRoute {
-                // Glow layer (drawn first, sits BELOW the route line)
-                let glowLine = GlowPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
-                glowLine.glowColor = UIColor(DesignSystem.cyan)
-                mapView.addOverlay(glowLine, level: .aboveRoads)
+                let legs = viewModel.routeLegs
+                let hasLegRoutes = legs.count > 1 && legs.allSatisfy({ $0.route != nil })
 
-                // Main route polyline. Use a gradient stroke when the user
-                // has opted in (iOS 17+ MKGradientPolylineRenderer) so the
-                // line has the colored gradient look Apple Maps ships by default.
-                let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
-                polyline.statusColor = UIColor(DesignSystem.cyan)
-                polyline.isRouteOverlay = true
-                polyline.useGradient = viewModel.gradientRouteEnabled
-                mapView.addOverlay(polyline, level: .aboveRoads)
+                if hasLegRoutes {
+                    // MULTI-STOP: draw first leg active (cyan glow + bold),
+                    // remaining legs dimmed (grey) so the driver sees the
+                    // immediate path clearly and the future path as secondary.
+                    if let firstLeg = legs.first, let firstRoute = firstLeg.route {
+                        let glowLine = GlowPolyline(points: firstRoute.polyline.points(), count: firstRoute.polyline.pointCount)
+                        glowLine.glowColor = UIColor(DesignSystem.cyan)
+                        mapView.addOverlay(glowLine, level: .aboveRoads)
+
+                        let activeLine = NavPolyline(points: firstRoute.polyline.points(), count: firstRoute.polyline.pointCount)
+                        activeLine.statusColor = UIColor(DesignSystem.cyan)
+                        activeLine.isRouteOverlay = true
+                        activeLine.useGradient = viewModel.gradientRouteEnabled
+                        mapView.addOverlay(activeLine, level: .aboveRoads)
+                    }
+
+                    for leg in legs.dropFirst() {
+                        if let legRoute = leg.route {
+                            let dimmed = DimmedLegPolyline(points: legRoute.polyline.points(), count: legRoute.polyline.pointCount)
+                            mapView.addOverlay(dimmed, level: .aboveRoads)
+                        }
+                    }
+                } else {
+                    // SINGLE-ROUTE: existing behavior — draw everything bold cyan
+                    let glowLine = GlowPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
+                    glowLine.glowColor = UIColor(DesignSystem.cyan)
+                    mapView.addOverlay(glowLine, level: .aboveRoads)
+
+                    let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
+                    polyline.statusColor = UIColor(DesignSystem.cyan)
+                    polyline.isRouteOverlay = true
+                    polyline.useGradient = viewModel.gradientRouteEnabled
+                    mapView.addOverlay(polyline, level: .aboveRoads)
+                }
 
                 if let dest = viewModel.destination {
                     let destinationAnnotation = MKPointAnnotation()
@@ -600,7 +624,7 @@ public struct LiveMapView: UIViewRepresentable {
                 // MKMapRect auto-fit: when a fresh route appears and we
                 // haven't already framed it, animate to a rect that contains
                 // the entire polyline plus the current location so the user
-                // sees the full trip before zoom-in kicks in.
+                // sees the full trip before zoom-in kicks off.
                 if !hasAutoFramedRoute {
                     var rect = route.polyline.boundingMapRect
                     if let userLoc = viewModel.locationManager.latestLocation {
@@ -921,6 +945,21 @@ public struct LiveMapView: UIViewRepresentable {
                 return renderer
             }
 
+            // DIMMED LEG POLYLINE — used for route legs beyond the first
+            // stop on a multi-stop route. Rendered as a muted grey line so
+            // the driver can still see the route to the final destination,
+            // but it's visually clear that only the first leg is the active
+            // guidance. 0.40 alpha ensures legibility on both dark
+            // (mutedDark) and light (standard / satellite) map styles.
+            if let dimmed = overlay as? DimmedLegPolyline {
+                let renderer = MKPolylineRenderer(polyline: dimmed)
+                renderer.strokeColor = UIColor.white.withAlphaComponent(0.40)
+                renderer.lineWidth = 5.0
+                renderer.lineCap = .round
+                renderer.lineJoin = .round
+                return renderer
+            }
+
             return MKOverlayRenderer(overlay: overlay)
         }
 
@@ -1055,6 +1094,12 @@ class GlowPolyline: MKPolyline {
 class AltRoutePolyline: MKPolyline {
     var routeIndex: Int = 1
 }
+
+/// Polyline used for route legs BEYOND the first stop on a multi-stop
+/// route. Rendered as a dimmed/greyed overlay so the driver can still
+/// see the remaining path (stops 2+, final destination) while the
+/// currently active leg (origin → first stop) stays bold cyan.
+class DimmedLegPolyline: MKPolyline {}
 
 /// Marker annotation for the upcoming turn point. MKMarkerAnnotationView picks
 /// up our SF Symbol `glyph` so the arrow type (left/right/U-turn/exit) mirrors
