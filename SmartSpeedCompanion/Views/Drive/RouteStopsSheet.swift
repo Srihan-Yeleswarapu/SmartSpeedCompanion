@@ -400,11 +400,16 @@ fileprivate struct StopRow: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
 
+                // Show address or a fallback hint so every stop has detail
                 if let address = stop.address, !address.isEmpty {
                     Text(address)
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.4))
                         .lineLimit(1)
+                } else {
+                    Text("Stop \(index)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.25))
                 }
 
                 // Per-leg ETA chip
