@@ -1450,14 +1450,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let search = MKLocalSearch(request: request)
         do {
             let response = try await search.start()
-            var results = Array(response.mapItems.prefix(10))
+            var results = Array(response.mapItems.prefix(20))
             
             // Re-rank results by proximity to user AND proximity to route.
             // TestFlight FB: "order these suggestions as what's closest to
             // you AND how easy it is to get there from your route."
             results = rankByRouteProximity(results)
             
-            addStopSearchResults = Array(results.prefix(6))
+            addStopSearchResults = Array(results.prefix(12))
         } catch {
             addStopSearchResults = []
         }
