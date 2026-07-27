@@ -1450,11 +1450,83 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let search = MKLocalSearch(request: request)
         do {
             let response = try await search.start()
-            addStopSearchResults = Array(response.mapItems.prefix(6))
+            var results = Array(response.mapItems.prefix(10))
+            
+            // Re-rank results by proximity to user AND proximity to route.
+            // TestFlight FB: "order these suggestions as what's closest to
+            // you AND how easy it is to get there from your route."
+            results = rankByRouteProximity(results)
+            
+            addStopSearchResults = Array(results.prefix(6))
         } catch {
             addStopSearchResults = []
         }
         isSearchingForStop = false
+    }
+    
+    /// Re-ranks search results by a composite score combining distance from
+    /// the user's current location with distance from the active route polyline.
+    /// Results closer to both the user AND the route rank higher — places that
+    /// are "on the way" bubble to the top. Falls back to pure user-distance
+    /// ranking when no route is active.
+    private func rankByRouteProximity(_ items: [MKMapItem]) -> [MKMapItem] {
+        guard let userLocation = locationManager.latestLocation else {
+            // No GPS — sort purely by user distance
+            return items.sorted { a, b in
+                let da = a.placemark.location.map { userLocation.distance(from: $0) } ?? .infinity
+                let db = b.placemark.location.map { userLocation.distance(from: $0) } ?? .infinity
+                return da < db
+            }
+        }
+        
+        let route = currentRoute
+        
+        return items.sorted { a, b in
+            let locA = a.placemark.location
+            let locB = b.placemark.location
+            
+            let distA = locA.map { userLocation.distance(from: $0) } ?? .infinity
+            let distB = locB.map { userLocation.distance(from: $0) } ?? .infinity
+            
+            // When navigating, factor in distance from route polyline.
+            // A place 500m from user but right on the route scores better
+            // than a place 400m from user but 2km off-route.
+            if let polyline = route?.polyline {
+                let routeDistA = locA.map { distanceFromPoint($0.coordinate, to: polyline) } ?? .infinity
+                let routeDistB = locB.map { distanceFromPoint($0.coordinate, to: polyline) } ?? .infinity
+                
+                // Composite: user distance + 0.5× route distance.
+                // The 0.5 weight keeps "close to me" dominant while
+                // still boosting places that are easy detours from the route.
+                let scoreA = distA + routeDistA * 0.5
+                let scoreB = distB + routeDistB * 0.5
+                return scoreA < scoreB
+            }
+            
+            // No route active — pure user proximity
+            return distA < distB
+        }
+    }
+    
+    /// Shortest straight-line distance from a coordinate to any point on
+    /// the polyline. Walks every 5th point for O(n/5) performance.
+    private func distanceFromPoint(_ coord: CLLocationCoordinate2D, to polyline: MKPolyline) -> CLLocationDistance {
+        let point = MKMapPoint(coord)
+        let pts = polyline.points()
+        let count = polyline.pointCount
+        guard count > 0 else { return .infinity }
+        
+        var minDist: Double = .greatestFiniteMagnitude
+        let step = max(1, count / 50) // sample ~50 points max
+        for i in stride(from: 0, to: count, by: step) {
+            let d = point.distance(to: pts[i])
+            if d < minDist { minDist = d }
+        }
+        // Also check the last point
+        let lastDist = point.distance(to: pts[count - 1])
+        if lastDist < minDist { minDist = lastDist }
+        
+        return minDist
     }
 
     /// Compares the current stop ordering against optimal permutations.
