@@ -542,6 +542,7 @@ fileprivate struct AddStopSearchSheet: View {
     @State private var query = ""
     @State private var results: [MKMapItem] = []
     @State private var isSearching = false
+    @State private var searchDebouncer: Task<Void, Never>? = nil
 
     var body: some View {
         NavigationStack {
@@ -557,9 +558,20 @@ fileprivate struct AddStopSearchSheet: View {
                         .font(.system(size: 16, weight: .medium))
                         .autocorrectionDisabled()
                         .submitLabel(.search)
-                        .onSubmit { performSearch() }
+                        .onSubmit { searchDebouncer?.cancel(); performSearch() }
                         .onChange(of: query) { _, newValue in
-                            if newValue.isEmpty { results = [] }
+                            if newValue.isEmpty {
+                                results = []
+                                searchDebouncer?.cancel()
+                            } else if newValue.count >= 2 {
+                                // Debounce auto-search: cancel previous, wait 0.4s, then search
+                                searchDebouncer?.cancel()
+                                searchDebouncer = Task {
+                                    try? await Task.sleep(for: .milliseconds(400))
+                                    guard !Task.isCancelled else { return }
+                                    await MainActor.run { performSearch() }
+                                }
+                            }
                         }
                         
 
