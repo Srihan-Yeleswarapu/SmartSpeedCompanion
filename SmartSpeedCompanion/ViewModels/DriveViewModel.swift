@@ -1470,13 +1470,9 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// are "on the way" bubble to the top. Falls back to pure user-distance
     /// ranking when no route is active.
     private func rankByRouteProximity(_ items: [MKMapItem]) -> [MKMapItem] {
-        guard let userLocation = locationManager.latestLocation else {
-            // No GPS — sort purely by user distance
-            return items.sorted { a, b in
-                let da = a.placemark.location.map { userLocation.distance(from: $0) } ?? .infinity
-                let db = b.placemark.location.map { userLocation.distance(from: $0) } ?? .infinity
-                return da < db
-            }
+        guard let userLoc = locationManager.latestLocation else {
+            // No GPS available — keep MKLocalSearch relevance order
+            return items
         }
         
         let route = currentRoute
@@ -1485,8 +1481,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             let locA = a.placemark.location
             let locB = b.placemark.location
             
-            let distA = locA.map { userLocation.distance(from: $0) } ?? .infinity
-            let distB = locB.map { userLocation.distance(from: $0) } ?? .infinity
+            let distA = locA.map { userLoc.distance(from: $0) } ?? .infinity
+            let distB = locB.map { userLoc.distance(from: $0) } ?? .infinity
             
             // When navigating, factor in distance from route polyline.
             // A place 500m from user but right on the route scores better
