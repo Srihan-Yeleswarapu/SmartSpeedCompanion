@@ -30,7 +30,9 @@ public actor SpeedLimitResponseCache {
         let gridKey: String
         let lat: Double
         let lon: Double
-        let cachedAt: Date
+        /// Mutable so `lookup()` can touch it to mark recency without
+        /// re-creating the entire struct.
+        var cachedAt: Date
         let roadName: String?
     }
 
@@ -39,11 +41,13 @@ public actor SpeedLimitResponseCache {
     /// ~50m cells at the equator (~55m at mid-latitudes). Smaller = more cache fragmentation;
     /// larger = more stale cross-cell hits. 0.0005° ≈ 55m.
     private let gridPrecision: Double = 0.0005
-    /// Max cached entries before LRU eviction kicks in.
+    /// Max cached entries before eviction kicks in.
+    /// Eviction scans all values (O(n), ~500 entries) which is a much cheaper
+    /// tradeoff than the O(n) `firstIndex(of:)` on every single lookup/store
+    /// that the old `lruOrder` array required.
     private let maxMemoryEntries: Int = 500
 
     private var memory: [String: Entry] = [:]
-    private var lruOrder: [String] = []
     private let diskURL: URL
 
     /// Memory cache TTL: 30 minutes (Phase 2 polish). Long enough to absorb a typical
@@ -77,25 +81,28 @@ public actor SpeedLimitResponseCache {
 
     /// Look up a cached entry. Returns nil if missing, expired, or recorded coord is
     /// > 50m from the requested coord (Phase 2 dedupe tightening, was 80m).
+    /// On hit, touches `entry.cachedAt` to `Date()` so the eviction policy retains
+    /// recently-looked-up entries. This is an O(1) dictionary lookup plus a cache
+    /// bump — much faster than the old O(n) `lruOrder.firstIndex(of:)` scan.
     public func lookup(at coordinate: CLLocationCoordinate2D, roadName: String? = nil) -> SpeedLimitResponse? {
         let key = gridKey(for: coordinate, roadName: roadName)
-        guard let entry = memory[key], isFresh(entry), entry.roadName == roadName else { return nil }
+        guard var entry = memory[key], isFresh(entry), entry.roadName == roadName else { return nil }
         let recordedLoc = CLLocation(latitude: entry.lat, longitude: entry.lon)
         let queriedLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         // Phase 2 -- tighten from 80m to 50m so adjacent grid cells with mildly
         // different speeds don't flicker the answer under typical driving.
         if recordedLoc.distance(from: queriedLoc) > 50 { return nil }
 
-        // Hit → bump to MRU end of LRU list.
-        if let idx = lruOrder.firstIndex(of: key) {
-            lruOrder.remove(at: idx)
-        }
-        lruOrder.insert(key, at: 0)
+        // Touch cachedAt to mark as recently used (no O(n) LRU list to update).
+        entry.cachedAt = Date()
+        memory[key] = entry
         return entry.response
     }
 
     /// Persist a response. Updates in-memory cache + writes the whole memory table to disk.
     /// Disk write is debounced: we collapse rapid stores via an async task.
+    /// Eviction uses a timestamp scan (O(n) on evict only) instead of the old
+    /// O(n) LRU list on EVERY lookup/store.
     public func store(_ response: SpeedLimitResponse, at coordinate: CLLocationCoordinate2D, roadName: String? = nil) async {
         let key = gridKey(for: coordinate, roadName: roadName)
         let entry = Entry(
@@ -107,14 +114,16 @@ public actor SpeedLimitResponseCache {
             roadName: roadName
         )
         memory[key] = entry
-        if let idx = lruOrder.firstIndex(of: key) {
-            lruOrder.remove(at: idx)
-        }
-        lruOrder.insert(key, at: 0)
 
-        // LRU evict
-        while memory.count > maxMemoryEntries, let oldest = lruOrder.popLast() {
-            memory.removeValue(forKey: oldest)
+        // Evict oldest entries when over capacity.
+        // O(n) scan of ~500 entries, but only runs when cache exceeds limit
+        // (~once per 500 stores, or ~every 8 minutes of driving).
+        if memory.count > maxMemoryEntries {
+            // Find the oldest entry by cachedAt and remove it.
+            // `min(by:)` is O(n) but we only call it when over capacity.
+            if let oldestKey = memory.min(by: { $0.value.cachedAt < $1.value.cachedAt })?.key {
+                memory.removeValue(forKey: oldestKey)
+            }
         }
 
         await persistToDisk()
@@ -124,7 +133,6 @@ public actor SpeedLimitResponseCache {
     /// consecutive misses.
     public func clear() async {
         memory.removeAll()
-        lruOrder.removeAll()
         try? FileManager.default.removeItem(at: diskURL)
     }
 
@@ -137,7 +145,6 @@ public actor SpeedLimitResponseCache {
         let cutoff = Date().addingTimeInterval(-diskTtl)
         for entry in entries where entry.cachedAt > cutoff {
             memory[entry.gridKey] = entry
-            lruOrder.append(entry.gridKey)
         }
         DebugLogger.shared.log("SpeedLimitResponseCache: loaded \(entries.count) entries from disk")
     }

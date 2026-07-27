@@ -20,6 +20,65 @@ public actor ArizonaSpeedLimitService {
     private let gridPrecision = 0.02
     private var spatialCache: [String: [RoadSegment]] = [:]
     private var lastSegmentId: String?
+
+    // ── Spatial Grid Bucketing (performance) ──────────────────────
+    // Partitions the circular cache into ~220m grid cells so the scoring
+    // pipeline only iterates over segments NEAR the user's coordinate
+    // instead of ALL 400+ segments in the 2-mile cache radius.
+    // Bucket size: 0.002 deg ≈ 220m at AZ latitudes.
+    //   - PASS 1 (name-match, 200 m gate): check cells within 2 radius
+    //     (5×5 = 25 cells, covered area ~1.1 km) → ~40-80 segments.
+    //   - PASS 2 (spatial-only, 1000 m radius): check cells within 3
+    //     radius (7×7 = 49 cells, covered area ~1.5 km) → ~80-150 segments.
+    // Versus the old O(n) scan of ALL 400+ segments for every GPS tick.
+    private let bucketSizeDegrees: Double = 0.002
+    private var circularCacheBuckets: [String: [RoadSegment]] = [:]
+
+    /// Build a bucketing key for a coordinate.
+    private func bucketKey(for coordinate: CLLocationCoordinate2D) -> String {
+        let latBucket = floor(coordinate.latitude / bucketSizeDegrees) * bucketSizeDegrees
+        let lonBucket = floor(coordinate.longitude / bucketSizeDegrees) * bucketSizeDegrees
+        return String(format: "b:%.4f_%.4f", latBucket, lonBucket)
+    }
+
+    /// Return only segments whose bbox center falls in a grid region
+    /// near `coordinate`. `radiusCells` controls how many adjacent
+    /// cells to include in each direction.
+    private func getCachedSegmentsNear(
+        _ coordinate: CLLocationCoordinate2D,
+        radiusCells: Int = 2
+    ) -> [RoadSegment] {
+        guard !circularCacheBuckets.isEmpty else {
+            // Fallback: buckets not yet built (shouldn't happen after
+            // refreshCircularCache, but guard against edge cases).
+            return circularCache
+        }
+        let centerLatBucket = floor(coordinate.latitude / bucketSizeDegrees) * bucketSizeDegrees
+        let centerLonBucket = floor(coordinate.longitude / bucketSizeDegrees) * bucketSizeDegrees
+
+        var result: [RoadSegment] = []
+        // Pre-allocate capacity. At radiusCells=2, 25 cells × ~5 seg/cell ≈ 125.
+        result.reserveCapacity((radiusCells * 2 + 1) * (radiusCells * 2 + 1) * 8)
+
+        for row in -radiusCells...radiusCells {
+            for col in -radiusCells...radiusCells {
+                // Re-apply floor() to each adjacent cell so floating-point
+                // drift from the addition doesn't produce a key that differs
+                // from the bucket key computed in `bucketKey(for:)` (which
+                // is used during refreshCircularCache to build the index).
+                let latRaw = centerLatBucket + Double(row) * bucketSizeDegrees
+                let lonRaw = centerLonBucket + Double(col) * bucketSizeDegrees
+                let latK = floor(latRaw / bucketSizeDegrees) * bucketSizeDegrees
+                let lonK = floor(lonRaw / bucketSizeDegrees) * bucketSizeDegrees
+                let key = String(format: "b:%.4f_%.4f", latK, lonK)
+                if let bucket = circularCacheBuckets[key] {
+                    result.append(contentsOf: bucket)
+                }
+            }
+        }
+
+        return result
+    }
     
     private init() {}
     
@@ -215,15 +274,27 @@ public actor ArizonaSpeedLimitService {
             throw URLError(.resourceUnavailable)
         }
 
-        // Trigger recache if first run or if moved > 1 mile from previous cache center
-        let shouldRefresh = lastCacheCenter == nil || 
-                           coordinate.distance(from: lastCacheCenter!) > triggerDistanceMeters
-        
+        // Trigger recache if first run or if moved > 1 mile from previous cache center.
+        // Use inline Haversine instead of creating CLLocation objects.
+        let shouldRefresh: Bool
+        if let center = lastCacheCenter {
+            shouldRefresh = haversineMeters(from: coordinate, to: center) > triggerDistanceMeters
+        } else {
+            shouldRefresh = true
+        }
+
         if shouldRefresh {
             refreshCircularCache(at: coordinate)
         }
 
-        let segments = circularCache // Use the high-speed memory cache
+        // Use spatial-bucketed segments instead of scanning the full circular cache.
+        // PASS 1 is the name-first path — gate is 200 m, so check cells within 2
+        // radius (5×5 = 25 cells, ~1.1 km covered area).
+        // PASS 2 is the spatial-only fallback — gate is 1000 m, so check cells
+        // within 3 radius (7×7 = 49 cells, ~1.5 km covered area).
+        // When no road name is available, the wider radius is used.
+        let bucketRadiusCells = roadName != nil ? 2 : 3
+        let segments = getCachedSegmentsNear(coordinate, radiusCells: bucketRadiusCells)
         
         var closestLimit: Int?
         var closestRouteId: String?
@@ -625,7 +696,34 @@ public actor ArizonaSpeedLimitService {
         
         self.circularCache = segments
         self.lastCacheCenter = center
-        DebugLogger.shared.log("Cache: Refreshed 2-mile radius with \(segments.count) segments.")
+
+        // ── Build spatial bucket index ────────────────────────────────
+        // Partition segments by their bbox center so the hot path only
+        // iterates over segments near the user's coordinate.
+        var newBuckets: [String: [RoadSegment]] = [:]
+        for segment in segments {
+            let centerLat = (segment.miny + segment.maxy) / 2.0
+            let centerLon = (segment.minx + segment.maxx) / 2.0
+            let coord = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
+            let key = bucketKey(for: coord)
+            newBuckets[key, default: []].append(segment)
+        }
+        self.circularCacheBuckets = newBuckets
+
+        DebugLogger.shared.log("Cache: Refreshed 2-mile radius with \(segments.count) segments across \(newBuckets.count) buckets.")
+    }
+
+    /// Inline Haversine distance (meters) between two coordinates.
+    /// Avoids creating CLLocation objects on every GPS tick.
+    private func haversineMeters(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> CLLocationDistance {
+        let R: Double = 6_371_000.0
+        let dLat = (to.latitude - from.latitude) * .pi / 180.0
+        let dLon = (to.longitude - from.longitude) * .pi / 180.0
+        let a = sin(dLat / 2) * sin(dLat / 2) +
+                cos(from.latitude * .pi / 180.0) * cos(to.latitude * .pi / 180.0) *
+                sin(dLon / 2) * sin(dLon / 2)
+        let c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return R * c
     }
 
     private func boundingBox(for center: CLLocationCoordinate2D, radius: Double) -> (minx: Double, maxx: Double, miny: Double, maxy: Double) {
@@ -651,6 +749,10 @@ public actor ArizonaSpeedLimitService {
     /// Clears the spatial cache.
     public func clearCache() {
         spatialCache.removeAll()
+        circularCache.removeAll()
+        circularCacheBuckets.removeAll()
+        lastCacheCenter = nil
+        lastSegmentId = nil
     }
     
     /// Pre-caches speed limits along a planned route.
@@ -670,6 +772,8 @@ public actor ArizonaSpeedLimitService {
 
 // MARK: - Extensions
 extension CLLocationCoordinate2D {
+    /// WGS‑84 ellipsoidal distance (meters) between two coordinates.
+    /// Delegates to CLLocation.distance(from:) for full accuracy.
     func distance(from other: CLLocationCoordinate2D) -> CLLocationDistance {
         let locA = CLLocation(latitude: self.latitude, longitude: self.longitude)
         let locB = CLLocation(latitude: other.latitude, longitude: other.longitude)

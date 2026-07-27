@@ -117,8 +117,15 @@ public final class HERELocalBatchCache: @unchecked Sendable {
             )
         """)
         exec("CREATE INDEX IF NOT EXISTS idx_roads_name_dir ON cached_roads(road_name, direction)")
-        exec("CREATE INDEX IF NOT EXISTS idx_roads_lat ON cached_roads(lat)")
-        exec("CREATE INDEX IF NOT EXISTS idx_roads_lon ON cached_roads(lon)")
+        // Composite spatial index: SQLite can only use one index per table,
+        // so separate (lat) + (lon) indexes meant the spatial query in
+        // lookupNearest always did a partial scan on one dimension. A
+        // composite (lat, lon) index lets the BETWEEN filter on both axes
+        // use a single index seek for O(log n) performance.
+        exec("CREATE INDEX IF NOT EXISTS idx_roads_lat_lon ON cached_roads(lat, lon)")
+        // Keep a separate lon-first index as a query-plan alternative for
+        // edge cases where the lon range is tighter than the lat range.
+        exec("CREATE INDEX IF NOT EXISTS idx_roads_lon_lat ON cached_roads(lon, lat)")
         // Unique constraint: same road at the same coordinate = one row.
         // Across batch fetches, re-fetching an area REPLACES the old row
         // (updating cached_at) rather than inserting a duplicate.

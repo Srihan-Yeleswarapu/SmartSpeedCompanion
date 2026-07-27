@@ -127,12 +127,13 @@ public final class HEREGeofenceManager: ObservableObject {
     /// Called on every GPS tick. Checks if the user has moved significantly
     /// from the last cache check point. If so, queries the SQLite cache for
     /// nearby data. Triggers a background batch fetch if the area is uncached.
+    /// Uses inline Haversine distance to avoid creating CLLocation objects
+    /// on every GPS tick.
     private func onLocationUpdate(_ coordinate: CLLocationCoordinate2D) {
         // Only re-check when the user moves beyond the threshold.
         if let last = lastCheckCoordinate {
-            let loc1 = CLLocation(latitude: last.latitude, longitude: last.longitude)
-            let loc2 = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            guard loc1.distance(from: loc2) >= recheckDistanceMeters else { return }
+            let dist = haversineMeters(from: last, to: coordinate)
+            guard dist >= recheckDistanceMeters else { return }
         }
         // Guard against starting a second batch fetch while one is already
         // in-flight. The user would need to travel 100m during a ~1-2 second
@@ -182,5 +183,20 @@ public final class HEREGeofenceManager: ObservableObject {
             radiusMeters: 1500
         )
         estimatedCoveragePercent = Int(coverage * 100)
+    }
+
+    // MARK: - Helpers
+
+    /// Inline Haversine distance (meters) between two coordinates.
+    /// Avoids creating CLLocation objects on every GPS tick.
+    private func haversineMeters(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> CLLocationDistance {
+        let R: Double = 6_371_000.0
+        let dLat = (to.latitude - from.latitude) * .pi / 180.0
+        let dLon = (to.longitude - from.longitude) * .pi / 180.0
+        let a = sin(dLat / 2) * sin(dLat / 2) +
+                cos(from.latitude * .pi / 180.0) * cos(to.latitude * .pi / 180.0) *
+                sin(dLon / 2) * sin(dLon / 2)
+        let c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return R * c
     }
 }
