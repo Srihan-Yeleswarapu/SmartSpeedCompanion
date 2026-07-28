@@ -1042,6 +1042,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             ud.removeObject(forKey: "navDestinationLon")
             ud.removeObject(forKey: "navDestinationName")
             ud.removeObject(forKey: "navDestinationPlaceId")
+            ud.removeObject(forKey: "navRouteStops")
             return
         }
         let ud = UserDefaults.standard
@@ -1050,6 +1051,10 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         ud.set(dest.name ?? "Destination", forKey: "navDestinationName")
         if #available(iOS 18.0, *), let placeId = dest.identifier?.rawValue {
             ud.set(placeId, forKey: "navDestinationPlaceId")
+        }
+        // Persist intermediate stops so they survive app termination.
+        if let data = try? JSONEncoder().encode(routeStops) {
+            ud.set(data, forKey: "navRouteStops")
         }
         DebugLogger.shared.log("DriveViewModel: saved navigation state")
     }
@@ -1068,6 +1073,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let item = MKMapItem(placemark: placemark)
         item.name = name
         return item
+    }
+    
+    /// Restores intermediate route stops saved by a terminated session.
+    private static func restoreRouteStops() -> [RouteStop] {
+        guard let data = UserDefaults.standard.data(forKey: "navRouteStops") else {
+            return []
+        }
+        return (try? JSONDecoder().decode([RouteStop].self, from: data)) ?? []
     }
     
     /// Checks for an interrupted session on launch. Looks for:
@@ -1120,6 +1133,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             navigationCoordinator.destination = dest
             navigationCoordinator.destinationItem = dest
             interruptedSessionDestinationName = dest.name ?? ""
+            
+            // Restore intermediate stops before recalculating the route.
+            let savedStops = Self.restoreRouteStops()
+            if !savedStops.isEmpty {
+                routeStops = savedStops
+                DebugLogger.shared.log("DriveViewModel: restored \(savedStops.count) stops")
+            }
+            
             Task { @MainActor in
                 await selectDestinationAndCalculateRoutes(to: dest)
                 if let route = availableRoutes.first {
@@ -1161,6 +1182,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         ud.removeObject(forKey: "navDestinationLon")
         ud.removeObject(forKey: "navDestinationName")
         ud.removeObject(forKey: "navDestinationPlaceId")
+        ud.removeObject(forKey: "navRouteStops")
     }
     
     /// Stops recording the session and checks if it's worth saving (long enough).
