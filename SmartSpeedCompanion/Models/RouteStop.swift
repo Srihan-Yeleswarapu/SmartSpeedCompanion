@@ -137,13 +137,16 @@ public struct OrderingComparison: Identifiable {
     }
 
     public var savedFormatted: String {
-        guard timeSaved > 60 else { return "Similar" }
-        let mins = Int(timeSaved / 60)
+        guard timeSaved > 30 else { return "Similar" }
+        let secs = Int(timeSaved)
+        if secs < 60 { return "\(secs)s saved" }
+        let mins = secs / 60
         return "\(mins) min saved"
     }
 
     public var canSaveTime: Bool {
-        timeSaved > 60
+        // 30-second threshold — even small savings matter for drivers
+        timeSaved > 30
     }
 
     private func formatTime(_ seconds: TimeInterval) -> String {
