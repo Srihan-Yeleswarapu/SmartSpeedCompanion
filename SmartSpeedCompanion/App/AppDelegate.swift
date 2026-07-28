@@ -30,6 +30,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         configureFirebase()
+        prewarmFrameworks()
         return true
     }
 
@@ -40,6 +41,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         FirebaseApp.configure(options: options)
         print("Firebase configured successfully.")
+    }
+    
+    /// Pre-warm system frameworks that are cold-loaded on first UITextField focus.
+    /// On iOS 18+, UIKit checks WritingToolsSupport when a text field gains focus,
+    /// which triggers dlopen of WritingToolsUI → GenerativeModels →
+    /// GenerativeFunctionsFoundation. That cold-load can block the main thread
+    /// for 5+ seconds on older devices (see hang report BFE0BF6A). Loading them
+    /// early on a background queue avoids the stall during user interaction.
+    private func prewarmFrameworks() {
+        DispatchQueue.global(qos: .utility).async {
+            _ = NSClassFromString("WritingToolsUI.WritingToolsViewController")
+        }
     }
     
     // Required for multi-scene support (iPhone + CarPlay)

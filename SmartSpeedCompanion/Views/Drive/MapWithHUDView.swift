@@ -358,6 +358,8 @@ fileprivate struct SearchBarView: View {
                 TextField("Where to?", text: $searchText)
                     .foregroundColor(.white)
                     .font(.system(size: isLandscape ? 12 : 14, weight: .medium))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
                     .focused($isFocused)
                     .submitLabel(.search)
                     .onSubmit {

@@ -562,6 +562,7 @@ fileprivate struct AddStopSearchSheet: View {
                         .foregroundColor(.white)
                         .font(.system(size: 16, weight: .medium))
                         .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
                         .submitLabel(.search)
                         .onSubmit { searchDebouncer?.cancel(); performSearch() }
                         .onChange(of: query) { _, newValue in
