@@ -397,30 +397,20 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// occurred — causing subsequent beeps to stay silent even though the
     /// `AVAudioEngine` was still running.
     ///
-    /// Fix: add `!session.isActive` to both guard conditions so we proceed
-    /// to re-activate whenever the session has been silently deactivated
-    /// (e.g. by navigation speech ending, or any other non-interrupting
-    /// deactivation path).
+    /// Fix: always attempt `setActive(true)` before each beep. Calling
+    /// `setActive(true)` on an already-active session is a harmless no-op;
+    /// when the session was silently deactivated (e.g. by navigation
+    /// speech ending), it reliably re-activates it. This is simpler and
+    /// more robust than checking `session.isActive` (which is not exposed
+    /// in Swift by AVAudioSession).
     private func ensureAudioSessionActive() {
         let session = AVAudioSession.sharedInstance()
-        // If we're already monitoring (user is over limit), the session
-        // was already activated by activateAudioDucking(). Only re-activate
-        // if an interruption occurred (e.g. YouTube took over) OR if the
-        // session was silently deactivated (e.g. navigation speech ended).
-        guard timerCancellable == nil || wasInterrupted || !session.isActive else { return }
-        // If other audio is playing and we weren't interrupted, skip
-        // reactivation — unless the session itself is not active (silent
-        // deactivation from navigation speech).
-        guard !session.isOtherAudioPlaying || wasInterrupted || !session.isActive else { return }
         
-        // Log when we detect a silent deactivation (helpful for debugging)
-        if !session.isActive && !wasInterrupted {
-            DebugLogger.shared.log("AlertEngine: audio session was inactive (likely deactivated by navigation speech) — re-activating")
-        }
-        
-        // Re-apply category and activate. This is a defensive call — it's
-        // cheap when the state already matches, and critical when another
-        // app (YouTube) has taken over the session.
+        // Always re-apply category and activate. Calling setActive(true)
+        // on an already-active session is a harmless no-op. When the
+        // session was silently deactivated (e.g. by navigation speech
+        // ending, or an interruption that didn't post a notification),
+        // this re-activates it so the next beep is audible.
         do {
             try session.setCategory(
                 .playback,
