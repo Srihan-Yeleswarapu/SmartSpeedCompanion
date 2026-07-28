@@ -385,13 +385,38 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// Re-activates the audio session and restarts the engine.
     /// Called before every beep if we were interrupted, and after
     /// interruptions end.
+    ///
+    /// ── Silent deactivation fix ─────────────────────────────────────
+    /// DriveViewModel.announce() sets the session to `.spokenAudio` mode,
+    /// and its `speechSynthesizer(_:didFinish:)` delegate calls
+    /// `setActive(false)` after each utterance to restore music volume.
+    /// This deactivates the session WITHOUT posting an
+    /// `AVAudioSession.interruptionNotification` (because `announce()` uses
+    /// `.mixWithOthers`), so `wasInterrupted` never gets set. The original
+    /// guards returned early when monitoring was active and no interruption
+    /// occurred — causing subsequent beeps to stay silent even though the
+    /// `AVAudioEngine` was still running.
+    ///
+    /// Fix: add `!session.isActive` to both guard conditions so we proceed
+    /// to re-activate whenever the session has been silently deactivated
+    /// (e.g. by navigation speech ending, or any other non-interrupting
+    /// deactivation path).
     private func ensureAudioSessionActive() {
         let session = AVAudioSession.sharedInstance()
         // If we're already monitoring (user is over limit), the session
         // was already activated by activateAudioDucking(). Only re-activate
-        // if an interruption occurred (e.g. YouTube took over).
-        guard timerCancellable == nil || wasInterrupted else { return }
-        guard !session.isOtherAudioPlaying || wasInterrupted else { return }
+        // if an interruption occurred (e.g. YouTube took over) OR if the
+        // session was silently deactivated (e.g. navigation speech ended).
+        guard timerCancellable == nil || wasInterrupted || !session.isActive else { return }
+        // If other audio is playing and we weren't interrupted, skip
+        // reactivation — unless the session itself is not active (silent
+        // deactivation from navigation speech).
+        guard !session.isOtherAudioPlaying || wasInterrupted || !session.isActive else { return }
+        
+        // Log when we detect a silent deactivation (helpful for debugging)
+        if !session.isActive && !wasInterrupted {
+            DebugLogger.shared.log("AlertEngine: audio session was inactive (likely deactivated by navigation speech) — re-activating")
+        }
         
         // Re-apply category and activate. This is a defensive call — it's
         // cheap when the state already matches, and critical when another
