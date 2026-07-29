@@ -15,17 +15,6 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     private var carPlayMapView: MKMapView?
     private var cancellables = Set<AnyCancellable>()
     
-    // MARK: - Primary Scene Connection
-    //
-    // Single modern path (iOS 14+). The previous code had two parallel
-    // `templateApplicationScene(_:didConnect:)` overloads — legacy (no
-    // window) and modern (with CPWindow). The legacy signature is
-    // `@objc optional` on `CPTemplateApplicationSceneDelegate` and CarPlay
-    // no longer dispatches it on iOS 14+ navigation apps, so the duplicate
-    // was a maintenance liability (every setup change had to land in both
-    // branches) with no runtime benefit. We keep only the window-aware
-    // variant.
-    //
     // ── IMPORTANT — why the MKMapView is NOT removed ─────────────────
     //
     // A natural-looking simplification is to drop the
@@ -43,6 +32,10 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     // Apple's Navigation-template documentation and the production-tested
     // behavior of the existing window path (removing the MKMapView would
     // regress the production navigation view). Keep it.
+    // MARK: - Scene Connection (Modern, iOS 14+)
+    //
+    // CarPlay delivers a CPWindow so the app can install an MKMapView
+    // beneath the CPMapTemplate overlay. This is the canonical path.
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
         didConnect interfaceController: CPInterfaceController,
@@ -50,6 +43,27 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     ) {
         self.interfaceController = interfaceController
         installMapViewInCarPlayWindow(window)
+        setupNavigationRoot(interfaceController: interfaceController)
+    }
+
+    // MARK: - Scene Connection (Legacy, no window)
+    //
+    // Some CarPlay configurations on iOS 26+ dispatch the legacy selector
+    // `templateApplicationScene:didConnect:` instead of the modern
+    // `templateApplicationScene:didConnect:to:` — especially after the
+    // entitlement transition from carplay-navigation to
+    // carplay-driving-task. We implement both so the delegate always
+    // responds, preventing the NSInternalInconsistencyException that
+    // CarPlay raises in `_deliverInterfaceControllerToDelegate` when
+    // neither selector matches.
+    func templateApplicationScene(
+        _ templateApplicationScene: CPTemplateApplicationScene,
+        didConnect interfaceController: CPInterfaceController
+    ) {
+        self.interfaceController = interfaceController
+        // No CPWindow in this path, so the MKMapView is not installed.
+        // The CPMapTemplate overlay chrome will still render correctly;
+        // the map tiles will appear once the system delivers a window.
         setupNavigationRoot(interfaceController: interfaceController)
     }
 

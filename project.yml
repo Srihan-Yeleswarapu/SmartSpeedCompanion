@@ -152,6 +152,9 @@ targets:
             CPTemplateApplicationSceneSessionRoleApplication:
               - UISceneConfigurationName: CarPlay Configuration
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
+            CPTemplateApplicationDashboardSceneSessionRoleApplication:
+              - UISceneConfigurationName: CarPlay Configuration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
         # `audio` is required in UIBackgroundModes so the app can play speed-
         # limit alert tones while the phone is locked or the user is in another
         # app. Without this entitlement the system suspends audio playback
