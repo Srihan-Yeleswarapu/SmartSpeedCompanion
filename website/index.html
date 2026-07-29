@@ -38,7 +38,21 @@
       border: 1px solid var(--panel-border);
       border-radius: 14px; padding: 14px 20px; max-width: 340px;
     }
-    header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.3px; }
+    header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.3px; display: flex; align-items: center; gap: 10px; }
+    header h1 .nav-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--accent); text-decoration: none;
+      padding: 3px 10px; border-radius: 999px;
+      border: 1px solid rgba(0,212,255,0.3);
+      background: rgba(0,212,255,0.08);
+      transition: all 0.2s ease;
+    }
+    header h1 .nav-link:hover {
+      background: rgba(0,212,255,0.18);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
     header p { font-size: 12px; color: var(--mute); margin-top: 4px; line-height: 1.5; }
     header .dot {
       display: inline-block; width: 8px; height: 8px; border-radius: 50%;
@@ -181,7 +195,7 @@
 <body>
   <div id="app">
     <header>
-      <h1><span class="dot"></span>Speedio Lookup</h1>
+      <h1><span class="dot"></span>Speedio Lookup <a href="carplay-simulator.html" class="nav-link">&#128755; CarPlay</a></h1>
       <p>Click anywhere on the map. The pipeline mirrors the iOS app&rsquo;s SmartSpeedLimitService exactly: Cache &rarr; HERE Batch &rarr; HERE REST &rarr; ArcGIS HPMS &rarr; Overpass &rarr; AZ SQLite. The big number shows what the app would display; the cards below show each provider individually.</p>
       <p style="margin-top:6px;font-size:11px;">
         <span id="here-status" style="color:var(--miss);">HERE API: <span id="here-status-text">checking&hellip;</span></span>

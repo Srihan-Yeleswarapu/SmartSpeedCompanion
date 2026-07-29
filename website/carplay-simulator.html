@@ -1,0 +1,1909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Speedio · CarPlay Simulator</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    /* ── Design Tokens (mirrored from SmartSpeedCompanion/Views/Shared/DesignSystem.swift) ── */
+    :root {
+      --bg-deep:       #040510;
+      --bg-panel:      #0B0C1E;
+      --bg-card:       #0F1022;
+      --cyan:          #00D4FF;
+      --neon-green:    #00FF9D;
+      --amber:         #FFB800;
+      --alert-red:     #FF3D71;
+      --text-primary:  #F0F4F9;
+      --text-muted:    #8E95A9;
+      --text-dim:      #545B6E;
+      --glass-bg:      rgba(11, 12, 30, 0.78);
+      --glass-border:  rgba(255, 255, 255, 0.10);
+      --glass-edge:    rgba(255, 255, 255, 0.22);
+      --radius-sm:     8px;
+      --radius-md:     14px;
+      --radius-lg:     20px;
+      --radius-xl:     28px;
+      --shadow-glass:  0 8px 32px rgba(0, 0, 0, 0.6);
+      --font-display:  'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+      --font-mono:     'SF Mono', 'Menlo', 'JetBrains Mono', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: var(--font-display);
+      background: var(--bg-deep);
+      color: var(--text-primary);
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* ── CarPlay Main Container ── */
+    #carplay {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+      background: var(--bg-deep);
+    }
+
+    /* ── 75/25: Navigation Sidebar (25%) ── */
+    #nav-sidebar {
+      position: relative;
+      width: 25%;
+      min-width: 280px;
+      max-width: 360px;
+      height: 100%;
+      background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-card) 100%);
+      border-right: 1px solid var(--glass-border);
+      display: flex;
+      flex-direction: column;
+      z-index: 10;
+      overflow: hidden;
+    }
+
+    #nav-sidebar .brand {
+      padding: 20px 20px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+
+    #nav-sidebar .brand .logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--cyan), var(--neon-green));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 14px;
+      color: var(--bg-deep);
+    }
+
+    #nav-sidebar .brand h2 {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text-primary);
+    }
+
+    #nav-sidebar .brand .badge {
+      margin-left: auto;
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(0, 212, 255, 0.12);
+      color: var(--cyan);
+      border: 1px solid rgba(0, 212, 255, 0.25);
+      font-weight: 600;
+    }
+
+    /* ── Trip Preview / Navigation Info ── */
+    #trip-info {
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      flex-shrink: 0;
+    }
+
+    #trip-info .eta-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    #trip-info .eta {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    #trip-info .eta-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    #trip-info .dist-row {
+      margin-top: 6px;
+      display: flex;
+      gap: 16px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    #trip-info .dest-name {
+      margin-top: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #trip-info .dest-name svg { flex-shrink: 0; }
+
+    .nav-state-empty #trip-info {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100px;
+    }
+
+    .nav-state-empty #trip-info .empty-msg {
+      color: var(--text-dim);
+      font-size: 13px;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    /* ── Upcoming Maneuvers List ── */
+    #maneuvers {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 0;
+    }
+
+    #maneuvers::-webkit-scrollbar { width: 3px; }
+    #maneuvers::-webkit-scrollbar-track { background: transparent; }
+    #maneuvers::-webkit-scrollbar-thumb { background: var(--text-dim); border-radius: 3px; }
+
+    .maneuver-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      border-left: 3px solid transparent;
+      transition: all 0.2s ease;
+      cursor: default;
+    }
+
+    .maneuver-item.active {
+      background: rgba(0, 212, 255, 0.06);
+      border-left-color: var(--cyan);
+    }
+
+    .maneuver-item .icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.06);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 16px;
+    }
+
+    .maneuver-item.active .icon {
+      background: rgba(0, 212, 255, 0.15);
+    }
+
+    .maneuver-item .info { flex: 1; min-width: 0; }
+
+    .maneuver-item .info .instruction {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .maneuver-item .info .distance {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      font-family: var(--font-mono);
+    }
+
+    .maneuver-item .eta-badge {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      flex-shrink: 0;
+    }
+
+    /* ── Navigation Bar (Top of Map Area) ── */
+    #nav-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 56px;
+      z-index: 1001;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      background: linear-gradient(180deg, rgba(4, 5, 16, 0.92) 0%, rgba(4, 5, 16, 0.4) 70%, transparent 100%);
+      pointer-events: none;
+    }
+
+    #nav-bar > * { pointer-events: auto; }
+
+    /* Speed Button (Leading) */
+    #speed-btn {
+      background: var(--glass-bg);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: default;
+      transition: all 0.2s ease;
+    }
+
+    #speed-btn .speed-value {
+      font-size: 24px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--cyan), var(--neon-green));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+    }
+
+    #speed-btn .speed-unit {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    /* Limit Button (Trailing) */
+    #limit-btn {
+      background: var(--glass-bg);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: default;
+      transition: all 0.2s ease;
+    }
+
+    #limit-btn .limit-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      letter-spacing: 0.5px;
+    }
+
+    #limit-btn .limit-value {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    #limit-btn .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      transition: background 0.3s ease;
+    }
+
+    #limit-btn .status-dot.safe    { background: var(--neon-green); box-shadow: 0 0 8px rgba(0, 255, 157, 0.4); }
+    #limit-btn .status-dot.warning { background: var(--amber);     box-shadow: 0 0 8px rgba(255, 184, 0, 0.4); }
+    #limit-btn .status-dot.over    { background: var(--alert-red); box-shadow: 0 0 8px rgba(255, 61, 113, 0.4); animation: pulse-alert 1s infinite; }
+
+    @keyframes pulse-alert {
+      0%, 100% { box-shadow: 0 0 8px rgba(255, 61, 113, 0.4); }
+      50%      { box-shadow: 0 0 16px rgba(255, 61, 113, 0.8); }
+    }
+
+    /* ── Map Area ── */
+    #map-area {
+      flex: 1;
+      position: relative;
+    }
+
+    #map-canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    .leaflet-container {
+      background: #0a0e1a !important;
+    }
+
+    /* ── Map Buttons (Right Side Stack) ── */
+    #map-buttons {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 1001;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .map-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      color: var(--text-primary);
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      position: relative;
+    }
+
+    .map-btn:hover {
+      background: rgba(0, 212, 255, 0.12);
+      border-color: rgba(0, 212, 255, 0.3);
+      transform: scale(1.08);
+    }
+
+    .map-btn:active {
+      transform: scale(0.92);
+    }
+
+    .map-btn .tooltip {
+      position: absolute;
+      right: calc(100% + 12px);
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(4, 5, 16, 0.9);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+    }
+
+    .map-btn:hover .tooltip {
+      opacity: 1;
+    }
+
+    .map-btn.active-btn {
+      background: rgba(0, 212, 255, 0.15);
+      border-color: var(--cyan);
+      color: var(--cyan);
+    }
+
+    .map-btn.danger {
+      color: var(--alert-red);
+    }
+
+    .map-btn.danger:hover {
+      background: rgba(255, 61, 113, 0.12);
+      border-color: rgba(255, 61, 113, 0.3);
+    }
+
+    /* ── Dashboard Shortcut Buttons (Bottom) ── */
+    #dashboard-bar {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1001;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .dash-btn {
+      background: var(--glass-bg);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      min-width: 120px;
+    }
+
+    .dash-btn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      transform: translateY(-2px);
+    }
+
+    .dash-btn:active { transform: translateY(0); }
+
+    .dash-btn .dash-icon {
+      font-size: 20px;
+    }
+
+    .dash-btn .dash-text {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .dash-btn .dash-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .dash-btn .dash-speed {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+    }
+
+    .dash-btn.safe .dash-title,
+    .dash-btn.safe .dash-icon { color: var(--neon-green); }
+    .dash-btn.safe { border-color: rgba(0, 255, 157, 0.2); }
+    .dash-btn.safe:hover { border-color: rgba(0, 255, 157, 0.4); }
+
+    .dash-btn.warning .dash-title,
+    .dash-btn.warning .dash-icon { color: var(--amber); }
+    .dash-btn.warning { border-color: rgba(255, 184, 0, 0.2); }
+    .dash-btn.warning:hover { border-color: rgba(255, 184, 0, 0.4); }
+
+    .dash-btn.over .dash-title,
+    .dash-btn.over .dash-icon { color: var(--alert-red); }
+    .dash-btn.over { border-color: rgba(255, 61, 113, 0.2); }
+    .dash-btn.over:hover { border-color: rgba(255, 61, 113, 0.4); }
+
+    /* ── Navigation Alert / Overspeed Banner ── */
+    #nav-alert {
+      position: absolute;
+      top: 72px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-120%);
+      z-index: 1002;
+      background: rgba(255, 61, 113, 0.12);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255, 61, 113, 0.3);
+      border-radius: 16px;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+      box-shadow: 0 8px 32px rgba(255, 61, 113, 0.15);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #nav-alert.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    #nav-alert .alert-icon {
+      font-size: 24px;
+      color: var(--alert-red);
+      animation: pulse-alert-icon 1s infinite;
+    }
+
+    @keyframes pulse-alert-icon {
+      0%, 100% { transform: scale(1); }
+      50%      { transform: scale(1.15); }
+    }
+
+    #nav-alert .alert-body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    #nav-alert .alert-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--alert-red);
+    }
+
+    #nav-alert .alert-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    #nav-alert .alert-action {
+      pointer-events: auto;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      padding: 8px 16px;
+      color: var(--text-primary);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      margin-left: 8px;
+    }
+
+    #nav-alert .alert-action:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    /* ── Drive State Banner ── */
+    #drive-state {
+      position: absolute;
+      top: 72px;
+      right: 76px;
+      z-index: 1001;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      border-radius: 999px;
+      padding: 6px 14px 6px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      pointer-events: none;
+      transition: all 0.3s ease;
+    }
+
+    #drive-state .rec-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--alert-red);
+      animation: pulse-dot 1.5s infinite;
+    }
+
+    #drive-state.recording .rec-dot { background: var(--alert-red); }
+    #drive-state.idle .rec-dot { background: var(--text-dim); animation: none; }
+    #drive-state.navigating .rec-dot { background: var(--cyan); animation: pulse-dot 1.5s infinite; }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 0.4; }
+      50%      { opacity: 1; }
+    }
+
+    #drive-state .state-label { text-transform: uppercase; letter-spacing: 0.3px; }
+
+    /* ── Search Modal ── */
+    #search-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 1050;
+      background: rgba(4, 5, 16, 0.6);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 80px;
+    }
+
+    #search-overlay.open { display: flex; }
+
+    #search-panel {
+      width: 480px;
+      max-width: 90vw;
+      max-height: 70vh;
+      background: var(--bg-panel);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-glass);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      animation: slide-down 0.25s ease;
+    }
+
+    @keyframes slide-down {
+      0% { opacity: 0; transform: translateY(-20px) scale(0.96); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    #search-header {
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    #search-header input {
+      flex: 1;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 15px;
+      color: var(--text-primary);
+      font-family: var(--font-display);
+      outline: none;
+      transition: border 0.15s ease;
+    }
+
+    #search-header input:focus {
+      border-color: rgba(0, 212, 255, 0.4);
+    }
+
+    #search-header input::placeholder { color: var(--text-dim); }
+
+    #search-header .close-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+
+    #search-header .close-btn:hover { background: rgba(255,255,255,0.10); }
+
+    #search-results {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .search-result {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      cursor: pointer;
+      transition: background 0.1s ease;
+    }
+
+    .search-result:hover { background: rgba(0, 212, 255, 0.06); }
+
+    .search-result .result-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 16px;
+    }
+
+    .search-result .result-info { flex: 1; min-width: 0; }
+    .search-result .result-name { font-size: 14px; font-weight: 600; }
+    .search-result .result-detail { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+
+    .search-result .result-action {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 8px;
+      background: rgba(0, 212, 255, 0.10);
+      color: var(--cyan);
+      border: 1px solid rgba(0, 212, 255, 0.2);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .search-result .result-action:hover {
+      background: rgba(0, 212, 255, 0.18);
+    }
+
+    /* ── Trip Preview Modal ── */
+    #trip-preview {
+      position: absolute;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1010;
+      background: var(--bg-panel);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-glass);
+      padding: 20px 24px;
+      display: none;
+      min-width: 320px;
+      animation: slide-up 0.3s ease;
+    }
+
+    #trip-preview.show { display: block; }
+
+    @keyframes slide-up {
+      0% { opacity: 0; transform: translateX(-50%) translateY(20px); }
+      100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
+    #trip-preview .preview-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    #trip-preview .preview-detail {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    #trip-preview .route-option {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    #trip-preview .route-option:hover {
+      background: rgba(0, 212, 255, 0.06);
+      border-color: rgba(0, 212, 255, 0.2);
+    }
+
+    #trip-preview .route-option .route-meta {
+      display: flex;
+      flex-direction: column;
+    }
+
+    #trip-preview .route-option .route-label {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    #trip-preview .route-option .route-detail {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    #trip-preview .route-option .start-btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      background: var(--cyan);
+      color: var(--bg-deep);
+      font-size: 12px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    #trip-preview .route-option .start-btn:hover { transform: scale(1.05); }
+
+    #trip-preview .preview-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    #trip-preview .preview-actions button {
+      flex: 1;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid var(--glass-border);
+      background: rgba(255,255,255,0.04);
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    #trip-preview .preview-actions button:hover {
+      background: rgba(255,255,255,0.08);
+      color: var(--text-primary);
+    }
+
+    #trip-preview .preview-actions button.primary {
+      background: var(--cyan);
+      color: var(--bg-deep);
+      border-color: var(--cyan);
+    }
+
+    #trip-preview .preview-actions button.primary:hover {
+      filter: brightness(1.1);
+    }
+
+    /* ── Speed Info Panel (HUD overlay on map) ── */
+    #hud-speed {
+      position: absolute;
+      bottom: 90px;
+      left: 20px;
+      z-index: 1001;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    #hud-speed.show { display: flex; }
+
+    #hud-speed .hud-item {
+      background: var(--glass-bg);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--glass-border);
+      border-radius: 10px;
+      padding: 8px 14px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #hud-speed .hud-item .hud-label {
+      color: var(--text-dim);
+      font-weight: 500;
+    }
+
+    #hud-speed .hud-item .hud-value {
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+
+    #hud-speed .hud-item .hud-value.green { color: var(--neon-green); }
+    #hud-speed .hud-item .hud-value.amber { color: var(--amber); }
+    #hud-speed .hud-item .hud-value.red   { color: var(--alert-red); }
+    #hud-speed .hud-item .hud-value.cyan  { color: var(--cyan); }
+
+    /* ── Fade-in animation ── */
+    @keyframes fadeIn {
+      0% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 860px) {
+      #nav-sidebar { display: none; }
+      #nav-bar { padding: 0 12px; }
+      #speed-btn .speed-value { font-size: 20px; }
+      #limit-btn .limit-value { font-size: 17px; }
+      .map-btn { width: 42px; height: 42px; font-size: 16px; }
+      #dashboard-bar { gap: 8px; }
+      .dash-btn { padding: 8px 14px; min-width: 100px; }
+      #search-panel { width: 90vw; }
+    }
+
+    /* ── Leaflet overrides ── */
+    .leaflet-control-zoom a {
+      background: var(--glass-bg) !important;
+      backdrop-filter: blur(12px) !important;
+      color: var(--text-primary) !important;
+      border-color: var(--glass-border) !important;
+    }
+
+    .leaflet-control-zoom a:hover {
+      background: rgba(0, 212, 255, 0.10) !important;
+    }
+
+    .leaflet-control-attribution { display: none !important; }
+
+    .leaflet-pin {
+      width: 28px;
+      height: 28px;
+      background: radial-gradient(circle at 50% 50%, var(--cyan) 10%, rgba(0, 212, 255, 0.4) 35%, transparent 75%);
+      border-radius: 50%;
+      border: 2px solid rgba(0, 212, 255, 0.5);
+      box-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+      animation: pin-drop 0.4s ease-out;
+    }
+
+    @keyframes pin-drop {
+      0% { transform: scale(0.2) translateY(-20px); opacity: 0; }
+      100% { transform: scale(1) translateY(0); opacity: 1; }
+    }
+
+    .route-line {
+      stroke: var(--cyan) !important;
+      stroke-width: 4 !important;
+      stroke-opacity: 0.7 !important;
+      filter: drop-shadow(0 0 6px rgba(0, 212, 255, 0.3));
+    }
+
+    /* ── Micro-interactions ── */
+    @media (hover: hover) {
+      .map-btn .tooltip { transition: opacity 0.15s ease, transform 0.15s ease; transform: translateY(-50%) translateX(4px); }
+      .map-btn:hover .tooltip { opacity: 1; transform: translateY(-50%) translateX(0); }
+    }
+  </style>
+</head>
+<body>
+<div id="carplay">
+  <!-- ── 25% Navigation Sidebar ── -->
+  <aside id="nav-sidebar" class="nav-state-empty">
+    <div class="brand">
+      <div class="logo">⚡</div>
+      <h2>Speedio</h2>
+      <span class="badge">CarPlay</span>
+    </div>
+
+    <div id="trip-info">
+      <div class="empty-msg">
+        <div style="font-size: 32px; margin-bottom: 8px;">🗺️</div>
+        <div>Search for a destination<br>or tap the map to begin</div>
+      </div>
+    </div>
+
+    <div id="maneuvers"></div>
+  </aside>
+
+  <!-- ── 75% Map Area ── -->
+  <div id="map-area">
+    <div id="map-canvas"></div>
+
+    <!-- Navigation Bar -->
+    <div id="nav-bar">
+      <div id="speed-btn">
+        <span class="speed-value" id="speed-value">0</span>
+        <span class="speed-unit" id="speed-unit">MPH</span>
+      </div>
+
+      <div id="limit-btn">
+        <span class="limit-label">LIMIT</span>
+        <span class="limit-value" id="limit-value">--</span>
+        <span class="speed-unit" id="limit-unit">MPH</span>
+        <span class="status-dot safe" id="status-dot"></span>
+      </div>
+    </div>
+
+    <!-- Map Buttons (Right Side) -->
+    <div id="map-buttons">
+      <button class="map-btn" data-action="search" title="Search">
+        <span class="btn-emoji">🔍</span>
+        <span class="tooltip">Search</span>
+      </button>
+      <button class="map-btn" data-action="report" title="Safety Report">
+        <span class="btn-emoji">📊</span>
+        <span class="tooltip">Safety Report</span>
+      </button>
+      <button class="map-btn" data-action="add-stop" title="Add Stop">
+        <span class="btn-emoji">➕</span>
+        <span class="tooltip">Add Stop</span>
+      </button>
+      <button class="map-btn" data-action="start" title="Start Driving">
+        <span class="btn-emoji">▶️</span>
+        <span class="tooltip">Start Session</span>
+      </button>
+      <button class="map-btn danger" data-action="end" title="End">
+        <span class="btn-emoji">⏹️</span>
+        <span class="tooltip">End Session</span>
+      </button>
+      <button class="map-btn active-btn" data-action="mute" title="Mute">
+        <span class="btn-emoji">🔊</span>
+        <span class="tooltip">Mute</span>
+      </button>
+    </div>
+
+    <!-- Drive State -->
+    <div id="drive-state" class="idle">
+      <span class="rec-dot"></span>
+      <span class="state-label" id="state-label">Idle</span>
+    </div>
+
+    <!-- Navigation Alert (Overspeed) -->
+    <div id="nav-alert">
+      <span class="alert-icon">⚠️</span>
+      <div class="alert-body">
+        <span class="alert-title" id="alert-title">SLOW DOWN</span>
+        <span class="alert-subtitle" id="alert-subtitle">Limit is 65 MPH. Watch your speed.</span>
+      </div>
+      <button class="alert-action" id="alert-dismiss">OK</button>
+    </div>
+
+    <!-- Dashboard Buttons -->
+    <div id="dashboard-bar">
+      <div class="dash-btn safe" id="dash-status">
+        <span class="dash-icon">✅</span>
+        <div class="dash-text">
+          <span class="dash-title">SAFE</span>
+          <span class="dash-speed" id="dash-speed">0 MPH</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- HUD Info -->
+    <div id="hud-speed">
+      <div class="hud-item">
+        <span class="hud-label">Buffer</span>
+        <span class="hud-value amber" id="hud-buffer">+0 MPH</span>
+      </div>
+      <div class="hud-item">
+        <span class="hud-label">Consecutive</span>
+        <span class="hud-value cyan" id="hud-consecutive">0s</span>
+      </div>
+    </div>
+
+    <!-- Search Overlay -->
+    <div id="search-overlay">
+      <div id="search-panel">
+        <div id="search-header">
+          <input type="text" id="search-input" placeholder="Search for a destination…" autofocus>
+          <button class="close-btn" id="search-close">✕</button>
+        </div>
+        <div id="search-results"></div>
+      </div>
+    </div>
+
+    <!-- Trip Preview -->
+    <div id="trip-preview"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // ══════════════════════════════════════════════════════════════════
+  //  Speedio · CarPlay Simulator
+  //  Faithfully mirrors the CarPlay interface from
+  //  SmartSpeedCompanion/CarPlay/*.swift
+  // ══════════════════════════════════════════════════════════════════
+
+  // ── Design System Tokens (mirrored from DesignSystem.swift) ──
+  const DS = {
+    cyan:       '#00D4FF',
+    neonGreen:  '#00FF9D',
+    amber:      '#FFB800',
+    alertRed:   '#FF3D71',
+    bgDeep:     '#040510',
+    bgPanel:    '#0B0C1E',
+    bgCard:     '#0F1022',
+  };
+
+  // ── Phoenix-area default center (matches existing site) ──
+  const PHX = { lat: 33.4484, lng: -112.0740 };
+
+  // ── State ──
+  const state = {
+    speed: 0,
+    limit: 0,
+    maxSpeed: 85,
+    status: 'safe',           // 'safe' | 'warning' | 'over'
+    isRecording: false,
+    isNavigating: false,
+    isMuted: false,
+    isSearchOpen: false,
+    isAlertShowing: false,
+    consecutiveSeconds: 0,
+    buffer: 5,
+    destination: null,
+    eta: null,
+  };
+
+  // ── Simulated navigation data ──
+  const NAV_SIM = {
+    destination: null,
+    route: [],
+    currentStepIndex: 0,
+    startedAt: null,
+    etaMinutes: 18,
+    totalDistance: 12.4,    // miles
+    steps: [
+      { instruction: 'Head north on N 7th St',          distance: 0.3, icon: '⬆️' },
+      { instruction: 'Turn right onto E Washington St', distance: 0.8, icon: '↗️' },
+      { instruction: 'Continue onto AZ-202 Loop E',     distance: 3.2, icon: '⬆️' },
+      { instruction: 'Take exit 15 for AZ-143 S',       distance: 1.1, icon: '↘️' },
+      { instruction: 'Merge onto I-10 W',               distance: 5.0, icon: '⬆️' },
+      { instruction: 'Arrive at destination',           distance: 0.0, icon: '📍' },
+    ],
+  };
+
+  // ── Map initialization ──
+  const map = L.map('map-canvas', {
+    zoomControl: true,
+    attributionControl: false,
+  }).setView([PHX.lat, PHX.lng], 12);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd',
+    maxZoom: 19,
+  }).addTo(map);
+
+  // Custom zoom control positioning
+  map.zoomControl.setPosition('bottomright');
+
+  let marker = null;
+  let routeLine = null;
+  let destPin = null;
+
+  // ── DOM refs ──
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => document.querySelectorAll(sel);
+
+  const speedValue   = $('#speed-value');
+  const speedUnit    = $('#speed-unit');
+  const limitValue   = $('#limit-value');
+  const limitUnit    = $('#limit-unit');
+  const statusDot    = $('#status-dot');
+  const dashStatus   = $('#dash-status');
+  const dashSpeed    = $('#dash-speed');
+  const navAlert     = $('#nav-alert');
+  const alertTitle   = $('#alert-title');
+  const alertSubtitle= $('#alert-subtitle');
+  const stateLabel   = $('#state-label');
+  const driveState   = $('#drive-state');
+  const hudBuffer    = $('#hud-buffer');
+  const hudConsecutive = $('#hud-consecutive');
+  const hudSpeed     = $('#hud-speed');
+  const searchOverlay = $('#search-overlay');
+  const searchInput  = $('#search-input');
+  const searchResults = $('#search-results');
+  const tripPreview  = $('#trip-preview');
+  const sidebar      = $('#nav-sidebar');
+  const maneuvers    = $('#maneuvers');
+  const tripInfo     = $('#trip-info');
+
+  // ── Speed Simulator ──
+  let speedInterval = null;
+  let consecTimer = null;
+
+  function getRandomSpeed(targetLimit) {
+    if (targetLimit <= 0) return Math.floor(Math.random() * 25) + 5;
+    const base = targetLimit;
+    // Random variance: -5 to +15 mph
+    const variance = Math.floor(Math.random() * 20) - 5;
+    let s = base + variance;
+    return Math.max(0, Math.min(state.maxSpeed, s));
+  }
+
+  function updateSpeedDisplay() {
+    const s = state.speed;
+    const l = state.limit;
+    const unit = 'MPH';
+
+    speedValue.textContent = s;
+    speedUnit.textContent  = unit;
+    limitValue.textContent = l > 0 ? l : '--';
+    limitUnit.textContent  = l > 0 ? unit : '';
+
+    // Determine status
+    let newStatus = 'safe';
+    if (l > 0) {
+      const ratio = s / l;
+      if (ratio >= 1.15) { newStatus = 'over'; }
+      else if (ratio >= 1.0) { newStatus = 'warning'; }
+    }
+    state.status = newStatus;
+
+    // Status dot
+    statusDot.className = 'status-dot ' + newStatus;
+
+    // Dashboard button
+    dashStatus.className = 'dash-btn ' + newStatus;
+    const dashIcon = newStatus === 'over' ? '⚠️' : newStatus === 'warning' ? '⚡' : '✅';
+    const dashTitle = newStatus === 'over' ? 'OVERSPEED' : newStatus === 'warning' ? 'WARNING' : 'SAFE';
+    dashStatus.querySelector('.dash-title').textContent = dashTitle;
+    dashStatus.querySelector('.dash-icon').textContent = dashIcon;
+    dashSpeed.textContent = `${s} ${unit}`;
+
+    // Consecutive seconds tracking
+    if (newStatus === 'over') {
+      if (!consecTimer) {
+        consecTimer = setInterval(() => {
+          state.consecutiveSeconds++;
+          hudConsecutive.textContent = `${state.consecutiveSeconds}s`;
+          hudSpeed.classList.add('show');
+        }, 1000);
+      }
+      // Only show navigation alert when actively navigating (mirrors
+      // CarPlayNavigationRootTemplate.handleAlerts which gates on
+      // status == .over && !isAlertPresented)
+      if (state.isNavigating) {
+        showOverspeedAlert(s, l);
+      }
+    } else {
+      if (consecTimer) {
+        clearInterval(consecTimer);
+        consecTimer = null;
+      }
+      state.consecutiveSeconds = 0;
+      hudConsecutive.textContent = '0s';
+      hideOverspeedAlert();
+      if (!state.isNavigating) hudSpeed.classList.remove('show');
+    }
+
+    // HUD buffer
+    const diff = s - l;
+    hudBuffer.textContent = diff > 0 ? `+${diff} MPH` : `${diff} MPH`;
+  }
+
+  function startSpeedSim() {
+    if (speedInterval) return;
+    speedInterval = setInterval(() => {
+      state.speed = getRandomSpeed(state.limit);
+      updateSpeedDisplay();
+    }, 1200);
+  }
+
+  function stopSpeedSim() {
+    if (speedInterval) {
+      clearInterval(speedInterval);
+      speedInterval = null;
+    }
+    if (consecTimer) {
+      clearInterval(consecTimer);
+      consecTimer = null;
+    }
+  }
+
+  function setLimit(newLimit) {
+    state.limit = Math.max(0, Math.min(85, newLimit));
+    updateSpeedDisplay();
+  }
+
+  // ── Overspeed Alert ──
+  let alertTimeout = null;
+
+  function showOverspeedAlert(speed, limit) {
+    if (state.isAlertShowing) return;
+    state.isAlertShowing = true;
+    const diff = speed - limit;
+    alertTitle.textContent = `⚠ SLOW DOWN`;
+    alertSubtitle.textContent = `Speeding +${diff} MPH · Limit is ${limit} MPH`;
+    navAlert.classList.add('show');
+
+    // Auto-dismiss after 5s (mirrors CPNavigationAlert duration: 5.0)
+    clearTimeout(alertTimeout);
+    alertTimeout = setTimeout(() => {
+      hideOverspeedAlert();
+    }, 5000);
+  }
+
+  function hideOverspeedAlert() {
+    state.isAlertShowing = false;
+    navAlert.classList.remove('show');
+    clearTimeout(alertTimeout);
+  }
+
+  $('#alert-dismiss').addEventListener('click', hideOverspeedAlert);
+
+  // ── Set limit by clicking map ──
+  const ROAD_LIMITS = {
+    'I-10': 75, 'I-17': 75, 'AZ-202': 65, 'AZ-101': 65,
+    'AZ-51': 65, 'US-60': 65, '7th St': 35, '7th Ave': 35,
+    'Central Ave': 35, 'McDowell Rd': 40, 'Indian School Rd': 40,
+    'Camelback Rd': 40, 'Thomas Rd': 40, 'Bethany Home Rd': 40,
+    'Glendale Ave': 40, 'Dunlap Ave': 40, 'Peoria Ave': 40,
+    'Olive Ave': 35, 'Northern Ave': 45, 'Southern Ave': 45,
+    'Baseline Rd': 45, 'Broadway Rd': 40, 'Main St': 35,
+  };
+
+  function getLimitForRoad(roadName) {
+    const upper = roadName.toUpperCase();
+    for (const [key, limit] of Object.entries(ROAD_LIMITS)) {
+      if (upper.includes(key.toUpperCase())) return limit;
+    }
+    return 25;
+  }
+
+  // ── Reverse geocode (deterministic mock) ──
+  function mockReverseGeocode(lat, lng) {
+    const hash = ((lat * 7 + lng * 13) * 10000).toFixed(0);
+    const names = Object.keys(ROAD_LIMITS);
+    const idx = parseInt(hash) % names.length;
+    const road = names[idx];
+    return {
+      road_name: road,
+      display_name: `${road}, Phoenix, AZ`,
+      lat, lon: lng,
+    };
+  }
+
+  // ── Map Click Handler ──
+  map.on('click', async (e) => {
+    const { lat, lng } = e.latlng;
+
+    // Place marker
+    if (marker) map.removeLayer(marker);
+    marker = L.marker([lat, lng], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div class="leaflet-pin"></div>',
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      }),
+    }).addTo(map);
+
+    // Get road info
+    const rg = mockReverseGeocode(lat, lng);
+    const limit = getLimitForRoad(rg.road_name);
+
+    // Set the limit
+    setLimit(limit);
+
+    // Update sidebar with location context
+    updateSidebarLocation(rg);
+
+    // Auto-start speed sim if not already running
+    startSpeedSim();
+  });
+
+  function updateSidebarLocation(rg) {
+    sidebar.classList.remove('nav-state-empty');
+    tripInfo.innerHTML = `
+      <div class="eta-row">
+        <span class="eta" style="color: var(--cyan);">${rg.road_name}</span>
+        <span class="eta-label">Speed Limit: ${state.limit} MPH</span>
+      </div>
+      <div class="dist-row">
+        <span>📍 ${rg.display_name}</span>
+      </div>
+    `;
+  }
+
+  // ── Cleanup helper for map overlays ──
+  function cleanupMapOverlays(keepMarker) {
+    if (routeLine) {
+      map.removeLayer(routeLine);
+      routeLine = null;
+    }
+    if (destPin) {
+      map.removeLayer(destPin);
+      destPin = null;
+    }
+    if (!keepMarker && marker) {
+      map.removeLayer(marker);
+      marker = null;
+    }
+    // Close any open modals
+    tripPreview.classList.remove('show');
+  }
+
+  // ── Search ──
+  const SEARCH_PLACES = [
+    { name: 'Phoenix Sky Harbor Airport', detail: '3400 E Sky Harbor Blvd, Phoenix', category: 'airport', icon: '✈️' },
+    { name: 'Arizona State University', detail: 'Tempe, AZ', category: 'university', icon: '🎓' },
+    { name: 'Desert Botanical Garden', detail: '1201 N Galvin Pkwy, Phoenix', category: 'park', icon: '🌵' },
+    { name: 'Piestewa Peak Park', detail: '2701 E Squaw Peak Dr, Phoenix', category: 'park', icon: '🏔️' },
+    { name: 'Fashion Square Mall', detail: '7014 E Camelback Rd, Scottsdale', category: 'shopping', icon: '🛍️' },
+    { name: 'Talking Stick Resort', detail: '9800 E Talking Stick Way, Scottsdale', category: 'hotel', icon: '🏨' },
+    { name: 'Gas Station', detail: 'Nearby Chevron · 7th St & McDowell', category: 'gas', icon: '⛽' },
+    { name: 'Coffee', detail: 'Lux Coffee · 5th Ave & Roosevelt', category: 'food', icon: '☕' },
+    { name: 'Parking', detail: 'Downtown Parking Garage · 1st Ave', category: 'parking', icon: '🅿️' },
+    { name: 'Restaurant', detail: 'The Arrogant Butcher · 2nd St & Jefferson', category: 'food', icon: '🍽️' },
+  ];
+
+  function openSearch() {
+    state.isSearchOpen = true;
+    searchOverlay.classList.add('open');
+    searchInput.value = '';
+    searchInput.focus();
+    renderSearchResults(SEARCH_PLACES);
+  }
+
+  function closeSearch() {
+    state.isSearchOpen = false;
+    searchOverlay.classList.remove('open');
+  }
+
+  function renderSearchResults(results) {
+    if (results.length === 0) {
+      searchResults.innerHTML = `
+        <div style="padding: 40px 20px; text-align: center; color: var(--text-dim);">
+          <div style="font-size: 36px; margin-bottom: 12px;">🔍</div>
+          <div>No results found</div>
+        </div>
+      `;
+      return;
+    }
+
+    searchResults.innerHTML = results.map((place, i) => `
+      <div class="search-result" data-index="${i}">
+        <div class="result-icon">${place.icon}</div>
+        <div class="result-info">
+          <div class="result-name">${place.name}</div>
+          <div class="result-detail">${place.detail}</div>
+        </div>
+        <button class="result-action go-btn" data-index="${i}">Navigate</button>
+      </div>
+    `).join('');
+
+    searchResults.querySelectorAll('.go-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.index);
+        const place = results[idx];
+        closeSearch();
+        startNavigationTo(place);
+      });
+    });
+
+    searchResults.querySelectorAll('.search-result').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = parseInt(row.dataset.index);
+        const place = results[idx];
+        closeSearch();
+        startNavigationTo(place);
+      });
+    });
+  }
+
+  searchInput.addEventListener('input', () => {
+    const q = searchInput.value.toLowerCase().trim();
+    if (!q) {
+      renderSearchResults(SEARCH_PLACES);
+      return;
+    }
+    const filtered = SEARCH_PLACES.filter(p =>
+      p.name.toLowerCase().includes(q) || p.detail.toLowerCase().includes(q)
+    );
+    renderSearchResults(filtered);
+  });
+
+  $('#search-close').addEventListener('click', closeSearch);
+
+  searchOverlay.addEventListener('click', (e) => {
+    if (e.target === searchOverlay) closeSearch();
+  });
+
+  // ── Navigation ──
+  function startNavigationTo(destination) {
+    state.destination = destination;
+    state.isNavigating = true;
+    state.isRecording = true;
+    window._sessionStart = Date.now();
+
+    // Show trip preview
+    showTripPreview(destination);
+
+    // Update sidebar
+    sidebar.classList.remove('nav-state-empty');
+    const etaDate = new Date(Date.now() + NAV_SIM.etaMinutes * 60000);
+    const etaStr = etaDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    state.eta = etaDate;
+
+    tripInfo.innerHTML = `
+      <div class="eta-row">
+        <span class="eta">${etaStr}</span>
+        <span class="eta-label">ETA</span>
+      </div>
+      <div class="dist-row">
+        <span>📍 ${NAV_SIM.totalDistance.toFixed(1)} mi</span>
+        <span>⏱️ ${NAV_SIM.etaMinutes} min</span>
+      </div>
+      <div class="dest-name">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${DS.cyan}" stroke-width="2">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+          <circle cx="12" cy="10" r="3" fill="${DS.cyan}"/>
+        </svg>
+        ${destination.name}
+      </div>
+    `;
+
+    renderManeuvers();
+    drawRoute(destination);
+
+    driveState.className = 'navigating';
+    stateLabel.textContent = 'Navigating';
+    hudSpeed.classList.add('show');
+    startSpeedSim();
+  }
+
+  function showTripPreview(dest) {
+    const etaDate = new Date(Date.now() + NAV_SIM.etaMinutes * 60000);
+    const etaStr = etaDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    tripPreview.innerHTML = `
+      <div class="preview-title">${dest.name}</div>
+      <div class="preview-detail">${dest.detail}</div>
+      <div class="route-option">
+        <div class="route-meta">
+          <span class="route-label">Fastest Route</span>
+          <span class="route-detail">${NAV_SIM.totalDistance.toFixed(1)} mi · ${NAV_SIM.etaMinutes} min · Arrive ${etaStr}</span>
+        </div>
+        <button class="start-btn" id="confirm-navigate">Start</button>
+      </div>
+      <div class="preview-actions">
+        <button id="preview-overview">Overview</button>
+        <button class="primary" id="preview-go">Go</button>
+      </div>
+    `;
+    tripPreview.classList.add('show');
+
+    $('#confirm-navigate').addEventListener('click', () => {
+      tripPreview.classList.remove('show');
+      finalizeNavigation();
+    });
+
+    $('#preview-go').addEventListener('click', () => {
+      tripPreview.classList.remove('show');
+      finalizeNavigation();
+    });
+
+    $('#preview-overview').addEventListener('click', () => {
+      if (routeLine) map.fitBounds(routeLine.getBounds(), { padding: [50, 50], maxZoom: 14 });
+    });
+  }
+
+  let stepInterval = null;
+
+  function finalizeNavigation() {
+    if (stepInterval) clearInterval(stepInterval);
+
+    driveState.className = 'navigating';
+    stateLabel.textContent = 'Navigating';
+    activeManeuver(0);
+
+    let stepIdx = 0;
+    stepInterval = setInterval(() => {
+      stepIdx++;
+      if (stepIdx >= NAV_SIM.steps.length) {
+        clearInterval(stepInterval);
+        stepInterval = null;
+        // Arrived
+        driveState.className = 'idle';
+        stateLabel.textContent = 'Arrived';
+        tripInfo.innerHTML = `
+          <div style="text-align:center; padding: 10px 0;">
+            <div style="font-size: 36px; margin-bottom: 8px;">🎉</div>
+            <div style="font-weight: 600; color: var(--neon-green);">Arrived at destination</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${state.destination.name}</div>
+          </div>
+        `;
+        maneuvers.innerHTML = '';
+        return;
+      }
+      activeManeuver(stepIdx);
+      if (routeLine && stepIdx < NAV_SIM.steps.length) {
+        const progress = stepIdx / NAV_SIM.steps.length;
+        const lat = PHX.lat + (0.05 * progress);
+        const lng = PHX.lng + (0.08 * progress);
+        marker?.setLatLng([lat, lng]);
+      }
+    }, 5000);
+  }
+
+  function activeManeuver(index) {
+    NAV_SIM.currentStepIndex = index;
+    $$('.maneuver-item').forEach((el, i) => {
+      el.classList.toggle('active', i === index);
+      if (i === index) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+  }
+
+  function renderManeuvers() {
+    maneuvers.innerHTML = NAV_SIM.steps.map((step, i) => `
+      <div class="maneuver-item ${i === 0 ? 'active' : ''}" data-step="${i}">
+        <div class="icon">${step.icon}</div>
+        <div class="info">
+          <div class="instruction">${step.instruction}</div>
+          <div class="distance">${step.distance > 0 ? step.distance.toFixed(1) + ' mi' : ''}</div>
+        </div>
+        <span class="eta-badge">${i === 0 ? 'Now' : step.distance > 0 ? `${Math.round(step.distance / NAV_SIM.totalDistance * NAV_SIM.etaMinutes)} min` : ''}</span>
+      </div>
+    `).join('');
+  }
+
+  function drawRoute(dest) {
+    cleanupMapOverlays(true); // remove old route/destPin but keep marker
+
+    const start = map.getCenter();
+    const endLat = start.lat + 0.04;
+    const endLng = start.lng + 0.06;
+
+    const points = [];
+    const steps = 40;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const lat = start.lat + (endLat - start.lat) * t + 0.005 * Math.sin(t * Math.PI * 2);
+      const lng = start.lng + (endLng - start.lng) * t + 0.005 * Math.cos(t * Math.PI * 1.5);
+      points.push([lat, lng]);
+    }
+
+    routeLine = L.polyline(points, {
+      color: DS.cyan,
+      weight: 4,
+      opacity: 0.7,
+      className: 'route-line',
+    }).addTo(map);
+
+    destPin = L.marker([endLat, endLng], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div style="width: 24px; height: 24px; background: var(--neon-green); border-radius: 50%; border: 3px solid white; box-shadow: 0 0 16px rgba(0,255,157,0.4);"></div>',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+      }),
+    }).addTo(map);
+
+    map.fitBounds(routeLine.getBounds(), { padding: [60, 60], maxZoom: 13 });
+  }
+
+  // ── Map Button Actions ──
+  // Fix toggleMute: update only the emoji text node, preserve the tooltip span
+  $$('.map-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      switch (action) {
+        case 'search': openSearch(); break;
+        case 'report': showSafetyReport(); break;
+        case 'add-stop': showAddStop(); break;
+        case 'start': startSession(); break;
+        case 'end': endSession(); break;
+        case 'mute': toggleMute(btn); break;
+      }
+    });
+  });
+
+  function startSession() {
+    state.isRecording = true;
+    window._sessionStart = Date.now();
+    driveState.className = 'recording';
+    stateLabel.textContent = 'Recording';
+    startSpeedSim();
+    showToast('Session started', DS.neonGreen);
+  }
+
+  function endSession() {
+    state.isRecording = false;
+    state.isNavigating = false;
+    if (stepInterval) {
+      clearInterval(stepInterval);
+      stepInterval = null;
+    }
+    stopSpeedSim();
+    cleanupMapOverlays(false); // remove route, destPin, and marker
+
+    driveState.className = 'idle';
+    stateLabel.textContent = 'Idle';
+    state.speed = 0;
+    state.limit = 0;
+    updateSpeedDisplay();
+    hudSpeed.classList.remove('show');
+    hideOverspeedAlert();
+    maneuvers.innerHTML = '';
+    tripInfo.innerHTML = `
+      <div class="empty-msg">
+        <div style="font-size: 32px; margin-bottom: 8px;">🗺️</div>
+        <div>Search for a destination<br>or tap the map to begin</div>
+      </div>
+    `;
+    sidebar.classList.add('nav-state-empty');
+    tripPreview.classList.remove('show');
+    showToast('Session ended', '#8E95A9');
+  }
+
+  function toggleMute(btn) {
+    state.isMuted = !state.isMuted;
+    // Update only the emoji span, preserving the tooltip sibling
+    const emojiSpan = btn.querySelector('.btn-emoji');
+    const tooltipSpan = btn.querySelector('.tooltip');
+    if (emojiSpan) emojiSpan.textContent = state.isMuted ? '🔇' : '🔊';
+    if (tooltipSpan) tooltipSpan.textContent = state.isMuted ? 'Unmute' : 'Mute';
+    btn.classList.toggle('active-btn', !state.isMuted);
+    showToast(state.isMuted ? 'Audio muted' : 'Audio unmuted', DS.cyan);
+  }
+
+  // ── Safety Report ──
+  function showSafetyReport() {
+    const unitShort = 'MPH';
+    const duration = state.isRecording
+      ? Math.floor((Date.now() - (window._sessionStart || Date.now())) / 60000)
+      : 0;
+
+    closeSearch();
+
+    const reportEl = document.createElement('div');
+    reportEl.id = 'report-overlay';
+    Object.assign(reportEl.style, {
+      position: 'absolute', inset: '0', zIndex: '1040',
+      background: 'rgba(4,5,16,0.6)', backdropFilter: 'blur(8px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      animation: 'fadeIn 0.2s ease',
+    });
+
+    const reportBg = state.status === 'over' ? DS.alertRed
+                   : state.status === 'warning' ? DS.amber
+                   : DS.neonGreen;
+
+    reportEl.innerHTML = `
+      <div style="background:var(--bg-panel);border:1px solid var(--glass-border);border-radius:20px;padding:28px 32px;max-width:400px;width:90vw;box-shadow:var(--shadow-glass);">
+        <div style="font-size:18px;font-weight:700;margin-bottom:16px;">📊 Safety Report</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
+          <div style="background:rgba(255,255,255,0.04);border-radius:12px;padding:14px;">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Current Speed</div>
+            <div style="font-size:24px;font-weight:700;margin-top:4px;color:${reportBg};">${state.speed} <span style="font-size:14px;color:var(--text-muted);">${unitShort}</span></div>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:12px;padding:14px;">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Drive Time</div>
+            <div style="font-size:24px;font-weight:700;margin-top:4px;">${duration} <span style="font-size:14px;color:var(--text-muted);">min</span></div>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:12px;padding:14px;">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Status</div>
+            <div style="font-size:18px;font-weight:700;margin-top:4px;text-transform:uppercase;color:${reportBg};">${state.status}</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:12px;padding:14px;">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Buffer</div>
+            <div style="font-size:18px;font-weight:700;margin-top:4px;color:${state.speed - state.limit > 0 ? DS.amber : DS.neonGreen};">+${Math.max(0, state.speed - state.limit)} ${unitShort}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button id="report-dismiss" style="flex:1;padding:10px;border-radius:10px;border:1px solid var(--glass-border);background:rgba(255,255,255,0.04);color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;">Dismiss</button>
+          <button id="report-detail" style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(0,212,255,0.2);background:rgba(0,212,255,0.06);color:var(--cyan);font-size:12px;font-weight:600;cursor:pointer;">View Details</button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('map-area').appendChild(reportEl);
+
+    reportEl.querySelector('#report-dismiss').addEventListener('click', () => reportEl.remove());
+    reportEl.querySelector('#report-detail').addEventListener('click', () => {
+      reportEl.remove();
+      showToast('Detailed report — coming soon', DS.cyan);
+    });
+  }
+
+  // ── Add Stop ──
+  function showAddStop() {
+    const categories = [
+      { name: 'Gas Station', icon: '⛽' },
+      { name: 'Coffee', icon: '☕' },
+      { name: 'Food', icon: '🍽️' },
+      { name: 'Parking', icon: '🅿️' },
+    ];
+
+    const overlay = document.createElement('div');
+    overlay.id = 'addstop-overlay';
+    Object.assign(overlay.style, {
+      position: 'absolute', inset: '0', zIndex: '1040',
+      background: 'rgba(4,5,16,0.6)', backdropFilter: 'blur(8px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      animation: 'fadeIn 0.2s ease',
+    });
+
+    overlay.innerHTML = `
+      <div style="background:var(--bg-panel);border:1px solid var(--glass-border);border-radius:20px;padding:24px;max-width:360px;width:90vw;box-shadow:var(--shadow-glass);">
+        <div style="font-size:16px;font-weight:700;margin-bottom:16px;">➕ Add Stop to Route</div>
+        ${categories.map(c => `
+          <div class="as-item" data-name="${c.name}" style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;cursor:pointer;transition:background 0.15s;margin-bottom:4px;">
+            <div style="width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;font-size:18px;">${c.icon}</div>
+            <div style="font-weight:600;font-size:14px;">${c.name}</div>
+            <span style="margin-left:auto;font-size:11px;color:var(--text-dim);">Add +</span>
+          </div>
+        `).join('')}
+        <div style="display:flex;gap:8px;margin-top:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:12px;">
+          <div id="as-search" style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;cursor:pointer;flex:1;transition:background 0.15s;">
+            <div style="font-size:18px;">🔍</div>
+            <div style="font-weight:600;font-size:14px;">Search…</div>
+          </div>
+          <button id="as-dismiss" style="padding:10px 16px;border-radius:10px;border:1px solid var(--glass-border);background:rgba(255,255,255,0.04);color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;">Cancel</button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('map-area').appendChild(overlay);
+
+    overlay.querySelectorAll('.as-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const name = item.dataset.name;
+        overlay.remove();
+        showToast(`Added ${name} to route`, DS.cyan);
+      });
+    });
+    overlay.querySelector('#as-search').addEventListener('click', () => {
+      overlay.remove();
+      openSearch();
+    });
+    overlay.querySelector('#as-dismiss').addEventListener('click', () => overlay.remove());
+  }
+
+  // ── Toast Notifications ──
+  function showToast(message, color = DS.cyan) {
+    let toast = document.getElementById('toast');
+    if (toast) toast.remove();
+
+    toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.textContent = message;
+    Object.assign(toast.style, {
+      position: 'fixed',
+      bottom: '80px',
+      left: '50%',
+      transform: 'translateX(-50%) translateY(20px)',
+      background: 'rgba(11, 12, 30, 0.92)',
+      backdropFilter: 'blur(20px)',
+      border: `1px solid ${color}33`,
+      borderRadius: '12px',
+      padding: '12px 24px',
+      color: color,
+      fontSize: '13px',
+      fontWeight: '600',
+      fontFamily: "'Inter', -apple-system, sans-serif",
+      boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+      opacity: '0',
+      transition: 'all 0.3s ease',
+      zIndex: '2000',
+      pointerEvents: 'none',
+    });
+    document.body.appendChild(toast);
+
+    requestAnimationFrame(() => {
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateX(-50%) translateY(0)';
+    });
+
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateX(-50%) translateY(20px)';
+      setTimeout(() => toast.remove(), 300);
+    }, 2000);
+  }
+
+  // ── Keyboard shortcuts ──
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (state.isSearchOpen) closeSearch();
+      else hideOverspeedAlert();
+      tripPreview.classList.remove('show');
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      openSearch();
+    }
+  });
+
+  // ── Simulate initial state ──
+  setTimeout(() => {
+    setLimit(65);
+
+    const demoLat = 33.4600;
+    const demoLng = -112.0650;
+    marker = L.marker([demoLat, demoLng], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div class="leaflet-pin"></div>',
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      }),
+    }).addTo(map);
+
+    map.setView([demoLat, demoLng], 13);
+
+    const rg = mockReverseGeocode(demoLat, demoLng);
+    updateSidebarLocation(rg);
+
+    startSpeedSim();
+  }, 500);
+</script>
+</body>
+</html>
