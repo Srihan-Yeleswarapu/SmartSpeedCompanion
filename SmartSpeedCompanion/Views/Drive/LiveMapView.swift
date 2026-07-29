@@ -524,7 +524,17 @@ public struct LiveMapView: UIViewRepresentable {
 
             let routeChanged = isNavigating != lastIsNavigating || abs(currentRouteDistance - lastRouteDistance) > 1.0
             // Throttling: only rebuild history every 5 points to save battery
-            let historyChanged = currentReadingCount >= lastHistoryCounts.safeCount + lastHistoryCounts.overCount + 5
+            // SAFETY: never trigger a history-based rebuild while navigating
+            // or selecting a route. During these states we draw route
+            // polylines (not history), so rebuilding overlays every 5 GPS
+            // ticks is pure waste — and worse, the removeOverlays() call
+            // at the top of rebuildOverlays creates a brief flicker where
+            // stale history polylines from the pre-navigation recording
+            // phase flash on-screen before the route polyline is redrawn.
+            // This is the root cause of the "trailing lines" reported in
+            // TestFlight FB (yrk.kaushik@gmail.com). We keep the raw count
+            // so the NEXT non-navigating rebuild sees the full delta.
+            let historyChanged = !isNavigating && !vm.isSelectingRoute && currentReadingCount >= lastHistoryCounts.safeCount + lastHistoryCounts.overCount + 5
             let stopsChanged = currentStopFP != lastStopFingerprint
 
             // Detect when the user dismissed the route picker (isSelectingRoute
@@ -546,8 +556,11 @@ public struct LiveMapView: UIViewRepresentable {
                 if vm.isSelectingRoute && fp != lastAltRouteFingerprint {
                     rebuildOverlays(mapView, viewModel: vm)
                     lastAltRouteFingerprint = fp
-                    lastIsSelectingRoute = true
                 }
+                // Always sync lastIsSelectingRoute even when the guard
+                // short-circuits, otherwise the dismissed-picker detection
+                // fires a stale rebuild on the next pass.
+                lastIsSelectingRoute = vm.isSelectingRoute
                 return
             }
 
