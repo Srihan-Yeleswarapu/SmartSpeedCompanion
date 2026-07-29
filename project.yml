@@ -152,14 +152,16 @@ targets:
             CPTemplateApplicationSceneSessionRoleApplication:
               - UISceneConfigurationName: CarPlay Configuration
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
-        # `audio` intentionally omitted from UIBackgroundModes (Apple Guideline
-        # 2.5.4: background audio is reserved for apps that provide persistent
-        # audible content such as music players or streaming-audio apps; Speedio
-        # only fires short transient tones on speed-limit alerts). AVAudioEngine
-        # / AVAudioSession keep working in the foreground via the `.playback`
-        # category; background-mode `audio` is only needed for playback that
-        # continues after backgrounding.
+        # `audio` is required in UIBackgroundModes so the app can play speed-
+        # limit alert tones while the phone is locked or the user is in another
+        # app. Without this entitlement the system suspends audio playback
+        # shortly after the app backgrounds, leaving users without audible
+        # overspeed warnings — even though GPS location updates continue to
+        # wake the app briefly. Apple Guideline 2.5.4 addresses continuous
+        # streaming-audio apps; transient alert tones for a driving-safety app
+        # are a legitimate exception (similar to navigation alert tones).
         UIBackgroundModes:
+          - audio
           - location
           - fetch
           - remote-notification

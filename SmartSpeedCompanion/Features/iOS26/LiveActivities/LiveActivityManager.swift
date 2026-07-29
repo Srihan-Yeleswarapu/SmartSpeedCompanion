@@ -47,8 +47,16 @@ public class LiveActivityManager {
     
     public func updateActivity(with state: SpeedActivityAttributes.ContentState) {
         Task {
-            // Push updates efficiently. (DriveViewModel should throttle this call to ~5s)
-            await currentActivity?.update(ActivityContent(state: state, staleDate: nil))
+            // Set a short staleDate (2 seconds) so the system treats this as
+            // time-sensitive content. On the Always-On Display, a nil staleDate
+            // tells the system the content never goes stale, which can cause
+            // the system to deprioritize UI refresh cadence to 3+ seconds to
+            // save battery. A 2-second staleDate signals that fresh data is
+            // arriving regularly and the display should update more frequently.
+            await currentActivity?.update(ActivityContent(
+                state: state,
+                staleDate: Date().addingTimeInterval(2)
+            ))
         }
     }
     
