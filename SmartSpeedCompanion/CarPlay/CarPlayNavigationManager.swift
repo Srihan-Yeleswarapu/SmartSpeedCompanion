@@ -24,6 +24,9 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     private var currentSteps: [MKRoute.Step] = []
     private var currentStepIndex: Int = 0
     private var locationCancellable: AnyCancellable?
+    /// Exponential moving average of `location.speed` used by the ETA
+    /// estimator to prevent flickering from noisy GPS speed readings.
+    private var smoothedSpeed: Double = 0
     
     public init(viewModel: DriveViewModel, mapTemplate: CPMapTemplate) {
         self.viewModel = viewModel
@@ -213,6 +216,10 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         viewModel.navigationCoordinator.distanceToNextTurn = 0
         viewModel.navigationCoordinator.distanceToDestination = 0
         viewModel.navigationCoordinator.eta = nil
+        // Reset the smoothed-speed EMA so the next navigation starts from
+        // a clean slate instead of fading from the previous drive's last
+        // reading (which would briefly produce an inaccurate ETA).
+        smoothedSpeed = 0
     }
     
     private func monitorProgress() {
@@ -253,20 +260,117 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
             }
         }
 
-        // Update CarPlay HUD Estimates
-        let totalDistance = Measurement(value: currentRoute.distance - currentRoute.distance(to: currentStepIndex), unit: UnitLength.meters)
-        let timeRemaining = currentRoute.expectedTravelTime * (totalDistance.value / currentRoute.distance)
-        // Mirror the same remaining distance onto the ViewModel so Siri
-        // `GetDistanceToDestinationIntent` can answer while CarPlay is the
-        // active navigation surface. DriveViewModel's own
-        // updateNavigationProgress(...) sets this property on the phone-only
-        // path; both writes converge to roughly the same value (in meters).
-        viewModel.navigationCoordinator.distanceToDestination = totalDistance.value
-        let travelEstimates = CPTravelEstimates(distanceRemaining: totalDistance, timeRemaining: timeRemaining)
+        // ── ETA Estimation ───────────────────────────────────────────
+        //
+        // PROBLEM: The old formula used a proportional estimate based on
+        // step-index position:
+        //   remainingDist = route.distance - steps[0..<currentStepIndex]
+        //   timeRemaining = expectedTravelTime × (remainingDist / totalDist)
+        //
+        // This had two flaws:
+        //   1. Step-index LAG — the index only advances when the user is
+        //      within 15 m of the NEXT step's start coordinate, so
+        //      "completed" distance lags actual travel by potentially
+        //      several kilometers, inflating remainingDist.
+        //   2. No SPEED FEEDBACK — the proportion never adjusts for
+        //      actual driving speed, so a user on an open highway sees
+        //      the same ETA as if they were stuck in traffic.
+        //
+        // FIX: Scan the route polyline to find where the user actually is
+        // (matching to the nearest segment, not step-index), compute the
+        // remaining distance along the polyline, and use location.speed
+        // (CoreLocation-smoothed with an exponential moving average) for
+        // a real-time speed-based estimate that converges within seconds.
+
+        let remainingDist = actualRemainingDistance(route: currentRoute, location: location)
+
+        // Smooth the speed reading with an exponential moving average to
+        // prevent the ETA from visibly bouncing between values on noisy
+        // GPS ticks. alpha = 0.3 gives ~70 % weight to the last 3 readings.
+        let rawSpeed = location.speed            if smoothedSpeed == 0, rawSpeed >= 0 {
+                // CoreLocation returns -1.0 when speed is unavailable
+                // (GPS lock lost, tunnel). Never seed the EMA with -1 —
+                // it would contaminate the average for several ticks.
+                smoothedSpeed = rawSpeed
+            } else if rawSpeed >= 0 {
+                smoothedSpeed = 0.3 * rawSpeed + 0.7 * smoothedSpeed
+            }
+            // If rawSpeed < 0, keep the previous smoothed value unchanged.
+        let speed = max(smoothedSpeed, 1.0)                  // m/s, floor at walking speed (3.6 km/h)
+        let liveEstimate = remainingDist / speed              // seconds
+
+        // Sanity clamp: in stop-and-go traffic the live estimate can swing
+        // to absurd values (e.g. 83 min for 10 km at 2 m/s when Apple's
+        // expected time was 20 min). Cap at 3× the expected proportion so
+        // the user never sees a wildly pessimistic jump from a slow patch.
+        let proportion = remainingDist / currentRoute.distance
+        let proportionalEstimate = currentRoute.expectedTravelTime * proportion
+        let timeRemaining = min(liveEstimate, 3.0 * proportionalEstimate)
+
+        // Mirror the polyline-matched distance onto the ViewModel so
+        // Siri `GetDistanceToDestinationIntent` and the phone-side HUD
+        // both see the same accurate value (in meters).
+        viewModel.navigationCoordinator.distanceToDestination = remainingDist
+        let remainingMeasurement = Measurement(value: remainingDist, unit: UnitLength.meters)
+        let travelEstimates = CPTravelEstimates(distanceRemaining: remainingMeasurement, timeRemaining: timeRemaining)
         
         if let maneuver = currentManeuver {
             session.updateEstimates(travelEstimates, for: maneuver)
         }
+    }
+
+    /// Walks the route polyline to find where `location` actually sits on
+    /// the path (nearest-segment matching, not step-index-based) and
+    /// returns the remaining distance in meters from that point to the
+    /// destination. This eliminates the step-index lag that caused the
+    /// old proportional ETA to overstate remaining distance by several km.
+    private func actualRemainingDistance(route: MKRoute, location: CLLocation) -> CLLocationDistance {
+        let polyline = route.polyline
+        let points = polyline.points()
+        let count = polyline.pointCount
+        guard count > 0 else { return route.distance }
+
+        let userCoord = location.coordinate
+        var minDist = CLLocationDistance.infinity
+        var cumulativeDist: CLLocationDistance = 0
+        var bestDistAlong: CLLocationDistance = route.distance
+
+        for i in 0..<(count - 1) {
+            let p1 = points[i].coordinate
+            let p2 = points[i + 1].coordinate
+
+            let segLen = CLLocation(latitude: p1.latitude, longitude: p1.longitude)
+                .distance(from: CLLocation(latitude: p2.latitude, longitude: p2.longitude))
+
+            let nearest = nearestPointOnSegment(userCoord: userCoord, v: p1, w: p2)
+            let dist = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+                .distance(from: CLLocation(latitude: nearest.latitude, longitude: nearest.longitude))
+
+            if dist < minDist {
+                minDist = dist
+                let distAlongSeg = CLLocation(latitude: p1.latitude, longitude: p1.longitude)
+                    .distance(from: CLLocation(latitude: nearest.latitude, longitude: nearest.longitude))
+                bestDistAlong = cumulativeDist + distAlongSeg
+            }
+
+            cumulativeDist += segLen
+        }
+
+        return max(0, route.distance - bestDistAlong)
+    }
+
+    /// Clamps `userCoord` to the line segment `v→w` and returns the
+    /// closest point on that segment. Used by `actualRemainingDistance`
+    /// to pin the user to the exact route geometry.
+    private func nearestPointOnSegment(userCoord: CLLocationCoordinate2D, v: CLLocationCoordinate2D, w: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+        let l2 = pow(v.longitude - w.longitude, 2) + pow(v.latitude - w.latitude, 2)
+        if l2 == 0 { return v }
+        var t = ((userCoord.longitude - v.longitude) * (w.longitude - v.longitude) + (userCoord.latitude - v.latitude) * (w.latitude - v.latitude)) / l2
+        t = max(0, min(1, t))
+        return CLLocationCoordinate2D(
+            latitude: v.latitude + t * (w.latitude - v.latitude),
+            longitude: v.longitude + t * (w.longitude - v.longitude)
+        )
     }
     
     // Helper to sum distances up to index bounds safely
@@ -334,14 +438,3 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     }
 }
 
-fileprivate extension MKRoute {
-    func distance(to stepIndex: Int) -> CLLocationDistance {
-        var dist: CLLocationDistance = 0
-        for i in 0..<stepIndex {
-            if i < steps.count {
-                dist += steps[i].distance
-            }
-        }
-        return dist
-    }
-}

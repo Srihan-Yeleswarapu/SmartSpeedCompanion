@@ -228,6 +228,9 @@ public final class NavigationCoordinator: ObservableObject {
 
     /// Index of the current MKRoute.Step being guided through.
     private var currentStepIndex: Int = 0
+    /// Exponential moving average of `location.speed` used by the ETA
+    /// estimator to prevent flickering from noisy GPS speed readings.
+    private var smoothedSpeed: Double = 0
     /// Periodic 5-minute traffic-awareneness timer; runs only during nav.
     private var rerouteTimer: Timer?
     /// Per-step announcement gating: key is step index, value is a set of
@@ -879,6 +882,10 @@ public final class NavigationCoordinator: ObservableObject {
         // Drop maneuver scratch state so the next navigation starts clean.
         // (Look Around scratch state removed in TestFlight 2.2.0 / FB10.)
         self.nextManeuverCoordinate = nil
+        // Reset the smoothed-speed EMA so the next navigation starts from
+        // a clean slate instead of fading from the previous drive's last
+        // reading (which would briefly produce an inaccurate ETA).
+        smoothedSpeed = 0
         await navigationDelegate?.endNavigationTrigger()
 
         self.liveActivityEnd()
@@ -995,17 +1002,55 @@ public final class NavigationCoordinator: ObservableObject {
             lastDistanceToTurn = distanceToTurn
         }
 
-        // 4. ETA REFRESH: Re-calculate ETA based on current progress vs expected route time
-        let remainingDistance = route.steps[currentStepIndex...].reduce(0) { $0 + $1.distance }
-        let progressPercent = 1.0 - (remainingDistance / route.distance)
-        let totalExpectedTime = route.expectedTravelTime
-        let newETA = Date().addingTimeInterval(max(30, totalExpectedTime * (1.0 - progressPercent)))
-        self.eta = newETA
-        // Same `remainingDistance` sum is what Siri
-        // `GetDistanceToDestinationIntent` speaks back; mirror it onto the
-        // @Published `distanceToDestination` so the Intent sees live values
-        // even when the user is on the phone (no CarPlay).
-        self.distanceToDestination = remainingDistance
+        // 4. ETA REFRESH: Speed-based estimate using polyline-matched
+        //    remaining distance + real-time speed from CoreLocation.
+        //
+        //    The OLD formula used a proportional estimate:
+        //      remainingDist = steps[currentStepIndex...].reduce(0, +)
+        //      eta = now + max(30, expectedTravelTime × remainingDist/totalDist)
+        //
+        //    BUG #1 (Step-index lag): currentStepIndex only advances when
+        //    the user is within 15 m of the NEXT step's start coordinate.
+        //    "Completed" distance lags actual travel by potentially several
+        //    km, overstating remainingDist and inflating the ETA.
+        //
+        //    BUG #2 (No speed feedback): The proportion assumes constant
+        //    expected speed forever. A driver on an open highway sees the
+        //    same ETA as if stuck in traffic.
+        //
+        //    FIX: Walk the route polyline to find the user's actual
+        //    position, compute remaining distance along the geometry, and
+        //    use location.speed with an exponential moving average for a
+        //    smooth live speed-based estimate that converges within seconds.
+        let remainingDist = actualRemainingDistance(route: route, location: location)
+
+        // Exponential moving average (alpha = 0.3) to dampen GPS speed
+        // noise and prevent the ETA from visibly bouncing between values.
+        let rawSpeed = location.speed
+        if smoothedSpeed == 0, rawSpeed >= 0 {
+            // CoreLocation returns -1.0 when speed is unavailable
+            // (GPS lock lost, tunnel). Never seed the EMA with -1 —
+            // it would contaminate the average for several ticks.
+            smoothedSpeed = rawSpeed
+        } else if rawSpeed >= 0 {
+            smoothedSpeed = 0.3 * rawSpeed + 0.7 * smoothedSpeed
+        }
+        // If rawSpeed < 0, keep the previous smoothed value unchanged.
+        let speed = max(smoothedSpeed, 1.0) // m/s, floor at walking speed (3.6 km/h)
+        let liveEstimate = remainingDist / speed // seconds
+
+        // Sanity clamp: cap the live estimate at 3× the expected
+        // proportional remaining time so stop-and-go traffic doesn't
+        // produce absurdly pessimistic ETAs (e.g. 83 min for 10 km at
+        // 2 m/s when Apple expected 20 min).
+        let proportion = remainingDist / route.distance
+        let proportionalEstimate = route.expectedTravelTime * proportion
+        let timeRemaining = min(liveEstimate, 3.0 * proportionalEstimate)
+
+        self.eta = Date().addingTimeInterval(max(30, timeRemaining))
+        // Mirror the polyline-matched distance onto @Published so Siri
+        // `GetDistanceToDestinationIntent` reads the same accurate value.
+        self.distanceToDestination = remainingDist
 
         // 5. SPEED CAMERA PROXIMITY ALERT
         //    The remaining arrival cue lives in advanceToNextStep at ~50 m,
@@ -1227,6 +1272,46 @@ public final class NavigationCoordinator: ObservableObject {
             if minDistance < 10 { return minDistance }
         }
         return minDistance
+    }
+
+    /// Walks the route polyline to find exactly where `location` sits on
+    /// the path (nearest-segment matching, not step-index-based) and
+    /// returns the remaining distance in meters from that point to the
+    /// destination. This eliminates the step-index lag that caused the
+    /// old proportional ETA to overstate remaining distance by several km.
+    private func actualRemainingDistance(route: MKRoute, location: CLLocation) -> CLLocationDistance {
+        let polyline = route.polyline
+        let points = polyline.points()
+        let count = polyline.pointCount
+        guard count > 0 else { return route.distance }
+
+        let userCoord = location.coordinate
+        var minDist = CLLocationDistance.infinity
+        var cumulativeDist: CLLocationDistance = 0
+        var bestDistAlong: CLLocationDistance = route.distance
+
+        for i in 0..<(count - 1) {
+            let p1 = points[i].coordinate
+            let p2 = points[i + 1].coordinate
+
+            let segLen = CLLocation(latitude: p1.latitude, longitude: p1.longitude)
+                .distance(from: CLLocation(latitude: p2.latitude, longitude: p2.longitude))
+
+            let nearest = nearestPointOnSegment(p: userCoord, v: p1, w: p2)
+            let dist = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+                .distance(from: CLLocation(latitude: nearest.latitude, longitude: nearest.longitude))
+
+            if dist < minDist {
+                minDist = dist
+                let distAlongSeg = CLLocation(latitude: p1.latitude, longitude: p1.longitude)
+                    .distance(from: CLLocation(latitude: nearest.latitude, longitude: nearest.longitude))
+                bestDistAlong = cumulativeDist + distAlongSeg
+            }
+
+            cumulativeDist += segLen
+        }
+
+        return max(0, route.distance - bestDistAlong)
     }
 
     /// Formats distance conversationally (e.g., "in half a mile" instead of
