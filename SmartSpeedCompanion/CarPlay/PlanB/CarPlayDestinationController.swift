@@ -285,7 +285,7 @@ class CarPlayDestinationController {
             listItems.append(listItem)
         }
 
-        let resultHeader = items.count == 1 ? "1 found" : "\\(items.count) found"
+        let resultHeader = items.count == 1 ? "1 found" : "\(items.count) found"
         let section = CPListSection(
             items: listItems,
             header: resultHeader,
@@ -316,6 +316,8 @@ class CarPlayDestinationController {
             await viewModel.selectDestinationAndCalculateRoutes(to: item)
             onDestinationSet()
 
+        }) else { return } // Keep compiler happy with the previous guard
+
             // ── Show confirmation alert ───────────────────────────────
             // CPAlertTemplate is presented modally via presentTemplate.
             // The action handler MUST dismiss the alert first, then pop
@@ -328,7 +330,7 @@ class CarPlayDestinationController {
             ) { [weak self] _ in
                 self?.interfaceController?.dismissTemplate(
                     animated: true
-                ) { _ in
+                ) { _, _ in
                     self?.interfaceController?.popToRootTemplate(
                         animated: true,
                         completion: nil
@@ -368,7 +370,7 @@ class CarPlayDestinationController {
             let response = try await search.start()
             return response.mapItems
         } catch {
-            DebugLogger.shared.log("CarPlay destination search failed: \\(error.localizedDescription)")
+            DebugLogger.shared.log("CarPlay destination search failed: \(error.localizedDescription)")
             return []
         }
     }
@@ -379,7 +381,7 @@ class CarPlayDestinationController {
     private static func compactAddress(for item: MKMapItem) -> String {
         let p = item.placemark
         if let city = p.locality, let state = p.administrativeArea {
-            return "\\(city), \\(state)"
+            return "\(city), \(state)"
         }
         if let city = p.locality {
             return city
