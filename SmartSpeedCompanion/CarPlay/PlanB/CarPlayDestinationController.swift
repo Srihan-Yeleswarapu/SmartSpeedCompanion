@@ -316,8 +316,6 @@ class CarPlayDestinationController {
             await viewModel.selectDestinationAndCalculateRoutes(to: item)
             onDestinationSet()
 
-        }) else { return } // Keep compiler happy with the previous guard
-
             // ── Show confirmation alert ───────────────────────────────
             // CPAlertTemplate is presented modally via presentTemplate.
             // The action handler MUST dismiss the alert first, then pop
