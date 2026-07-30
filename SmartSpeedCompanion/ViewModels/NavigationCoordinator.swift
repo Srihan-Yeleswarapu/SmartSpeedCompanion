@@ -151,13 +151,26 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     /// and re-negotiate on every announcement, producing the severe
     /// stutter/glitch. The session is kept alive for the entire
     /// navigation and only deactivated in `deactivateSession()`.
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        // Audio session stays active — deactivation happens in deactivateSession()
-        DebugLogger.shared.log("NAV VOICE finished: \(utterance.speechString.prefix(40))")
+    ///
+    /// FIX: Do NOT deactivate the audio session between utterances.
+    /// Deactivation was causing CarPlay's audio pipeline to tear down
+    /// and re-negotiate on every announcement, producing the severe
+    /// stutter/glitch. The session is kept alive for the entire
+    /// navigation and only deactivated in `deactivateSession()`.
+    ///
+    /// Uses `print()` instead of `DebugLogger.shared.log()` to avoid
+    /// Swift 6 data-race safety errors on non-Sendable utterance
+    /// properties accessed from a nonisolated delegate context.
+    nonisolated func speechSynthesizer(_: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        #if DEBUG
+        print("[SpeedyIO] NAV VOICE finished: \(utterance.speechString)")
+        #endif
     }
 
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        DebugLogger.shared.log("NAV VOICE cancelled: \(utterance.speechString.prefix(40))")
+    nonisolated func speechSynthesizer(_: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        #if DEBUG
+        print("[SpeedyIO] NAV VOICE cancelled: \(utterance.speechString)")
+        #endif
     }
 }
 
