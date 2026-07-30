@@ -53,6 +53,10 @@ import UIKit
 @MainActor
 protocol VoiceAnnouncer: AnyObject {
     func announce(_ message: String)
+    /// Deactivate the audio session cleanly when navigation ends.
+    /// Keeps the session alive between announcements to avoid CarPlay
+    /// audio pipeline re-negotiation glitches.
+    func deactivateSession()
 }
 
 @MainActor
@@ -71,63 +75,53 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
         setupAudioSession()
     }
 
-    /// AVAudioSession.CategoryOptions bundle used by both
-    /// setupAudioSession() (forced at launch) and announce() (defensive
-    /// re-apply before every utterance). Kept as a class-level static
-    /// so the two paths can't drift if a future change adds e.g.
-    /// `.allowBluetoothHFP` for car-kit routing. iOS 17+ only — project
-    /// `deploymentTarget` is `18.0` per project.yml, so no
-    /// `@available(iOS 17, *)` guard is needed.
+    /// CarPlay-friendly audio session options.
+    ///
+    /// KEY FIXES vs previous options:
+    /// • Removed `.mixWithOthers` — it contradicts `.duckOthers` and causes
+    ///   the CarPlay DSP to oscillate between mixing and ducking, producing
+    ///   glitchy audio.
+    /// • Removed `.allowBluetoothA2DP` — it routes speech through the media
+    ///   A2DP channel instead of CarPlay's dedicated navigation voice
+    ///   channel, which has separate volume control and lower latency.
+    /// • Kept `.duckOthers` — lowers music volume during prompts.
+    /// • Kept `.defaultToSpeaker` and `.interruptSpokenAudioAndMixWithOthers`.
+    /// `.interruptSpokenAudioAndMixWithOthers` requires iOS 17+. Deployment
+    /// target is 18.4, so no `@available` guard is needed.
     private static let navVoiceOptions: AVAudioSession.CategoryOptions = [
         .duckOthers,
-        .mixWithOthers,
         .defaultToSpeaker,
-        .allowBluetoothA2DP,
         .interruptSpokenAudioAndMixWithOthers
     ]
 
+    /// Configure the audio session ONCE at init. Does NOT tear down and
+    /// recreate for each utterance — that was causing CarPlay's audio
+    /// pipeline to re-negotiate between every announcement.
     private func setupAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            if session.isOtherAudioPlaying || session.mode != .spokenAudio || session.category != .playback {
-                if (try? session.setActive(false, options: .notifyOthersOnDeactivation)) == nil {
-                    DebugLogger.shared.log("Audio Session pre-deactivate failed (continuing)")
-                }
-            }
             try session.setCategory(.playback, mode: .spokenAudio, options: Self.navVoiceOptions)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
-            DebugLogger.shared.log("Audio Session Configured (.spokenAudio forced at launch)")
+            DebugLogger.shared.log("Audio Session Configured (spokenAudio, nav voice channel)")
         } catch {
             DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
         }
     }
 
-    /// Spoken text with abbreviation expansion and AVAudioSession defensive
-    /// re-apply so the `.spokenAudio` mode actually sticks, even if
-    /// anything that flipped the session back to `.default` mid-drive
-    /// (CarPlay audio route change, AlertEngine tone reset, an external
-    /// interruption handler, a Bluetooth re-pair) is corrected
-    /// immediately. Cheap no-op when the state already matches, and
-    /// applies the same option set used in setupAudioSession() so
-    /// behavior stays consistent across launch and per-utterance calls.
+    /// Speak the given navigation message.
+    ///
+    /// FIX: No longer re-applies AVAudioSession category on every call
+    /// (that was causing the CarPlay audio pipeline to re-negotiate
+    /// between utterances). The session is set up once in `init()` and
+    /// stays active until `deactivateSession()` is called.
+    /// Also reduced `preUtteranceDelay` from 0.5 to 0.05 to eliminate
+    /// the unnatural half-second gap before each announcement.
     func announce(_ message: String) {
         let expandedMessage = NavigationCoordinator.expandAbbreviations(message)
 
-        let audioSession = AVAudioSession.sharedInstance()
-        try? audioSession.setCategory(.playback, mode: .spokenAudio, options: Self.navVoiceOptions)
-
-        let shouldActivate = audioSession.isOtherAudioPlaying
-        if shouldActivate {
-            do {
-                try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-            } catch {
-                DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
-            }
-        }
-
         let utterance = AVSpeechUtterance(string: expandedMessage)
-        utterance.preUtteranceDelay = 0.5
-        utterance.postUtteranceDelay = 0.2
+        utterance.preUtteranceDelay = 0.05
+        utterance.postUtteranceDelay = 0.1
         if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
         } else {
@@ -140,23 +134,30 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
         DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage) (Voice enabled: \(voiceEnabled))")
     }
 
+    /// Deactivate the audio session. Called when navigation ends so the
+    /// CarPlay audio pipeline is freed and media can resume normally.
+    /// NOT called between individual announcements — that caused the
+    /// glitchy teardown-and-rebuild cycle.
+    func deactivateSession() {
+        synthesizer.stop(at: .immediate)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        DebugLogger.shared.log("Audio Session Deactivated (navigation ended)")
+    }
+
     // MARK: - AVSpeechSynthesizerDelegate
 
+    /// FIX: Do NOT deactivate the audio session between utterances.
+    /// Deactivation was causing CarPlay's audio pipeline to tear down
+    /// and re-negotiate on every announcement, producing the severe
+    /// stutter/glitch. The session is kept alive for the entire
+    /// navigation and only deactivated in `deactivateSession()`.
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            if !synthesizer.isSpeaking {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-                DebugLogger.shared.log("Audio Session Deactivated (Music Restored)")
-            }
-        }
+        // Audio session stays active — deactivation happens in deactivateSession()
+        DebugLogger.shared.log("NAV VOICE finished: \(utterance.speechString.prefix(40))")
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            if !synthesizer.isSpeaking {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            }
-        }
+        DebugLogger.shared.log("NAV VOICE cancelled: \(utterance.speechString.prefix(40))")
     }
 }
 
@@ -886,6 +887,13 @@ public final class NavigationCoordinator: ObservableObject {
         // a clean slate instead of fading from the previous drive's last
         // reading (which would briefly produce an inaccurate ETA).
         smoothedSpeed = 0
+
+        // Deactivate the navigation voice audio session so media can
+        // resume on the CarPlay audio channel. This is the ONLY place
+        // the session is torn down — NOT between individual announcements
+        // (which was causing the severe stutter/glitch).
+        voiceAnnouncer.deactivateSession()
+
         await navigationDelegate?.endNavigationTrigger()
 
         self.liveActivityEnd()
