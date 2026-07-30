@@ -56,13 +56,19 @@ class CarPlaySceneDelegateB: UIResponder,
 
     // MARK: - Setup Helpers
 
-    /// Build the list-based root template and set it on the interface controller.
+    /// Build the list-based root template, start the controller, and set it
+    /// on the interface controller.
     private func setupListRoot(interfaceController: CPInterfaceController) {
         let vm = AppDelegate.sharedDriveViewModel
-        speedListController = CarPlayListSpeedController(
+        let controller = CarPlayListSpeedController(
             interfaceController: interfaceController,
             viewModel: vm
         )
+        // Start the controller: wires item handlers and the display-update timer.
+        // Must be called AFTER init because handlers capture self, and self's
+        // stored properties (listTemplate) must be initialized first.
+        controller.start()
+        speedListController = controller
 
         guard let rootTemplate = speedListController?.listTemplate else { return }
         interfaceController.setRootTemplate(rootTemplate, animated: true, completion: nil)

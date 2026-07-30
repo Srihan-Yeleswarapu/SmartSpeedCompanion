@@ -4,8 +4,13 @@
 // `carplay-driving-task` entitlement.
 //
 // Manages a CPListTemplate with mutable CPListItem references,
-// updated in-place from DriveViewModel's Combine publishers.
+// updated in-place via a timer-based read loop.
 // No CPMapTemplate, no CPNavigationSession — purely list-based.
+//
+// IMPORTANT: After init, the caller MUST call start() to set up
+// item handlers and begin the display update timer. This two-phase
+// init avoids Swift compiler errors about "self used before all
+// stored properties are initialized" inside closures.
 
 import CarPlay
 import Combine
@@ -22,6 +27,12 @@ class CarPlayListSpeedController {
 
     /// The root list template displayed in CarPlay.
     let listTemplate: CPListTemplate
+
+    /// Call this after init to set up handlers and begin updates.
+    func start() {
+        setupItemHandlers()
+        bindViewModel()
+    }
 
     // MARK: - Private properties
 
@@ -47,7 +58,8 @@ class CarPlayListSpeedController {
     private let topSpeedItem: CPListItem
     private var driveInfoSection: CPListSection?
 
-    // Actions section
+    // Actions section items (the report item is the tappable one)
+    private let reportItem: CPListItem
     private let camerasItem: CPListItem
 
     // MARK: - Init
@@ -60,6 +72,10 @@ class CarPlayListSpeedController {
         let unitShort = SpeedFormatting.unitLabelShort(measurementSystem: system)
 
         // ── Create all items with initial placeholders ────────────
+
+        // NOTE: Item handlers are NOT set here because closures would
+        // capture `self` before `listTemplate` is initialized below.
+        // Handlers are wired in `start()` → `setupItemHandlers()`.
 
         // SPEED section
         speedItem = CPListItem(text: "--", detailText: unitShort)
@@ -77,10 +93,6 @@ class CarPlayListSpeedController {
             text: "▶ START DRIVE",
             detailText: "Tap to begin recording"
         )
-        sessionToggleItem.handler = { [weak self] _, completion in
-            self?.handleSessionToggle()
-            completion()
-        }
 
         // DRIVE INFO section (hidden initially)
         durationItem = CPListItem(text: "Duration", detailText: "0 min")
@@ -90,14 +102,10 @@ class CarPlayListSpeedController {
         topSpeedItem.isEnabled = false
 
         // ACTIONS section
-        let reportItem = CPListItem(
+        reportItem = CPListItem(
             text: "Safety Report",
             detailText: "View drive statistics"
         )
-        reportItem.handler = { [weak self] _, completion in
-            self?.presentSafetyReport()
-            completion()
-        }
 
         camerasItem = CPListItem(text: "Cameras Nearby", detailText: "0")
         camerasItem.isEnabled = false
@@ -125,21 +133,29 @@ class CarPlayListSpeedController {
             sections: [speedSection, sessionSection, actionsSection]
         )
 
-        // Empty the drive-info sections array so the section can be
-        // inserted dynamically when recording starts.
         self.driveInfoSection = nil
+    }
 
-        // ── Bind view model publishers ────────────────────────────
-        bindViewModel()
+    // MARK: - Item Handlers (deferred from init)
+
+    /// Wire tap handlers for interactive items. Called from `start()`.
+    private func setupItemHandlers() {
+        sessionToggleItem.handler = { [weak self] _, completion in
+            self?.handleSessionToggle()
+            completion()
+        }
+
+        reportItem.handler = { [weak self] _, completion in
+            self?.presentSafetyReport()
+            completion()
+        }
     }
 
     // MARK: - View Model Binding
 
+    /// Start a 500 ms timer that reads current ViewModel values and
+    /// updates the display. Called from `start()`.
     private func bindViewModel() {
-        // Use a 500ms Timer to periodically read all values from the view model
-        // and update the display. Using a timer avoids the complexity of chaining
-        // `combineLatest` with 6+ publishers (which exceeds Combine's built-in
-        // overload limit) while still providing smooth 2 Hz updates.
         Timer.publish(every: 0.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
@@ -228,8 +244,6 @@ class CarPlayListSpeedController {
             )
             driveInfoSection = section
 
-            // CPListTemplate.sections is a get-only property.
-            // We use updateSections(_:) to replace the full array.
             var current = listTemplate.sections
             if current.count >= 2 {
                 current.insert(section, at: 2)
@@ -248,7 +262,6 @@ class CarPlayListSpeedController {
             // Remove the drive-info section
             driveInfoSection = nil
             var current = listTemplate.sections
-            // Find and remove the section titled "DRIVE INFO"
             current.removeAll { section in
                 section.header == "DRIVE INFO"
             }
