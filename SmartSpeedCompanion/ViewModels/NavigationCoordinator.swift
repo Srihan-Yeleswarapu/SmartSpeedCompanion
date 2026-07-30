@@ -139,7 +139,7 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     /// NOT called between individual announcements — that caused the
     /// glitchy teardown-and-rebuild cycle.
     func deactivateSession() {
-        synthesizer.stop(at: .immediate)
+        synthesizer.stopSpeaking(at: .immediate)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         DebugLogger.shared.log("Audio Session Deactivated (navigation ended)")
     }
