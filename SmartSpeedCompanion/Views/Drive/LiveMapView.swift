@@ -652,8 +652,15 @@ public struct LiveMapView: UIViewRepresentable {
                     mapView.setVisibleMapRect(
                         rect,
                         edgePadding: UIEdgeInsets(top: 80, left: 60, bottom: 200, right: 60),
-                        animated: true
+                        animated: false
                     )
+                    // Sync the camera animator's display altitude with the
+                    // route-fit camera position so it doesn't jump on the
+                    // first frame. The animator's route-init fly-out
+                    // (2.5× boost) re-triggers on the next tick because
+                    // reset() clears `wasNavigating`, and `detectTransitions`
+                    // will re-detect route initiation.
+                    cameraAnimator.reset(to: mapView)
                     hasAutoFramedRoute = true
                 }
             } else if hasAvailableRoutes {
