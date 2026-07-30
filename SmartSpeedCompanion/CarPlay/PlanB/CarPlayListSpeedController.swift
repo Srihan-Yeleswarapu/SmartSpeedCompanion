@@ -60,7 +60,6 @@ class CarPlayListSpeedController {
 
     // Actions section items (the report item is the tappable one)
     private let reportItem: CPListItem
-    private let camerasItem: CPListItem
 
     // MARK: - Init
 
@@ -107,9 +106,6 @@ class CarPlayListSpeedController {
             detailText: "View drive statistics"
         )
 
-        camerasItem = CPListItem(text: "Cameras Nearby", detailText: "0")
-        camerasItem.isEnabled = false
-
         // ── Build initial sections ─────────────────────────────────
 
         let speedSection = CPListSection(
@@ -123,7 +119,7 @@ class CarPlayListSpeedController {
             sectionIndexTitle: nil
         )
         let actionsSection = CPListSection(
-            items: [reportItem, camerasItem],
+            items: [reportItem],
             header: "ACTIONS",
             sectionIndexTitle: nil
         )
@@ -165,8 +161,7 @@ class CarPlayListSpeedController {
                     limit: self.viewModel.limit,
                     status: self.viewModel.status,
                     isRecording: self.viewModel.isRecording,
-                    duration: self.viewModel.sessionDuration,
-                    cameras: self.viewModel.nearbyCameras
+                    duration: self.viewModel.sessionDuration
                 )
             }
             .store(in: &cancellables)
@@ -180,8 +175,7 @@ class CarPlayListSpeedController {
         limit: Int,
         status: SpeedStatus,
         isRecording: Bool,
-        duration: TimeInterval,
-        cameras: [SpeedCamera]
+        duration: TimeInterval
     ) {
         let system = SpeedFormatting.measurementSystem()
         let unitShort = SpeedFormatting.unitLabelShort(measurementSystem: system)
@@ -267,9 +261,6 @@ class CarPlayListSpeedController {
             }
             listTemplate.updateSections(current)
         }
-
-        // ── Cameras item ──────────────────────────────────────────
-        camerasItem.setDetailText("\(cameras.count)")
     }
 
     // MARK: - Session Toggle
