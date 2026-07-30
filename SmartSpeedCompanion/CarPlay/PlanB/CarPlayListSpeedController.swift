@@ -111,11 +111,13 @@ class CarPlayListSpeedController {
         )
         let sessionSection = CPListSection(
             items: [sessionToggleItem],
-            header: "SESSION"
+            header: "SESSION",
+            sectionIndexTitle: nil
         )
         let actionsSection = CPListSection(
             items: [reportItem, camerasItem],
-            header: "ACTIONS"
+            header: "ACTIONS",
+            sectionIndexTitle: nil
         )
 
         listTemplate = CPListTemplate(
@@ -134,25 +136,21 @@ class CarPlayListSpeedController {
     // MARK: - View Model Binding
 
     private func bindViewModel() {
-        // Combine speed + limit + status + recording + duration into
-        // a single throttled pipeline so all display updates are coalesced.
-        viewModel.$speed
-            .combineLatest(
-                viewModel.$limit,
-                viewModel.$status,
-                viewModel.$isRecording,
-                viewModel.$sessionDuration,
-                viewModel.$nearbyCameras
-            )
-            .throttle(for: .milliseconds(500), scheduler: RunLoop.main, latest: true)
-            .sink { [weak self] speed, limit, status, isRecording, duration, cameras in
-                self?.updateDisplay(
-                    speed: speed,
-                    limit: limit,
-                    status: status,
-                    isRecording: isRecording,
-                    duration: duration,
-                    cameras: cameras
+        // Use a 500ms Timer to periodically read all values from the view model
+        // and update the display. Using a timer avoids the complexity of chaining
+        // `combineLatest` with 6+ publishers (which exceeds Combine's built-in
+        // overload limit) while still providing smooth 2 Hz updates.
+        Timer.publish(every: 0.5, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                self.updateDisplay(
+                    speed: self.viewModel.speed,
+                    limit: self.viewModel.limit,
+                    status: self.viewModel.status,
+                    isRecording: self.viewModel.isRecording,
+                    duration: self.viewModel.sessionDuration,
+                    cameras: self.viewModel.nearbyCameras
                 )
             }
             .store(in: &cancellables)
@@ -225,17 +223,20 @@ class CarPlayListSpeedController {
 
             let section = CPListSection(
                 items: [durationItem, topSpeedItem],
-                header: "DRIVE INFO"
+                header: "DRIVE INFO",
+                sectionIndexTitle: nil
             )
             driveInfoSection = section
 
+            // CPListTemplate.sections is a get-only property.
+            // We use updateSections(_:) to replace the full array.
             var current = listTemplate.sections
             if current.count >= 2 {
                 current.insert(section, at: 2)
             } else {
                 current.append(section)
             }
-            listTemplate.sections = current
+            listTemplate.updateSections(current)
 
         } else if isRecording && driveInfoSection != nil {
             // Update existing drive-info items
@@ -251,7 +252,7 @@ class CarPlayListSpeedController {
             current.removeAll { section in
                 section.header == "DRIVE INFO"
             }
-            listTemplate.sections = current
+            listTemplate.updateSections(current)
         }
 
         // ── Cameras item ──────────────────────────────────────────
