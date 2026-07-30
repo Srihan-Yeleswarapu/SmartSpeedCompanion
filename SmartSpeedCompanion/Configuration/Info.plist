@@ -33,13 +33,18 @@
         <string>fetch</string>
         <string>remote-notification</string>
     </array>
+        <!--
+      CPSupportedTemplates for PLAN B (carplay-driving-task only).
+      CPMapTemplate / CPNavigationAlert / CPSearchTemplate are removed
+      because they require the carplay-navigation entitlement which is
+      not yet available in the provisioning profile. Once the profile is
+      regenerated, switch back to CarPlaySceneDelegate (Plan A) and
+      restore the full template set.
+    -->
     <key>CPSupportedTemplates</key>
     <array>
-        <string>CPMapTemplate</string>
-        <string>CPAlertTemplate</string>
-        <string>CPSearchTemplate</string>
-        <string>CPNavigationAlert</string>
         <string>CPListTemplate</string>
+        <string>CPAlertTemplate</string>
         <string>CPInformationTemplate</string>
     </array>
     <key>NSMotionUsageDescription</key>
@@ -57,8 +62,11 @@
                 <dict>
                     <key>UISceneClassName</key>
                     <string>CPTemplateApplicationScene</string>
+                                        <!-- Plan B: CarPlaySceneDelegateB uses list-only templates.
+                         Switch to CarPlaySceneDelegate when provisioning profile
+                         authorizes carplay-navigation. -->
                     <key>UISceneDelegateClassName</key>
-                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegateB</string>
                 </dict>
             </array>
             <key>CPTemplateApplicationDashboardSceneSessionRoleApplication</key>
@@ -66,8 +74,9 @@
                 <dict>
                     <key>UISceneClassName</key>
                     <string>CPTemplateApplicationDashboardScene</string>
+                    <!-- Plan B: same delegate handles dashboard with list-safe APIs -->
                     <key>UISceneDelegateClassName</key>
-                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegateB</string>
                 </dict>
             </array>
             <key>UIWindowSceneSessionRoleApplication</key>
