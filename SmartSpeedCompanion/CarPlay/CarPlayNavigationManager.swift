@@ -287,7 +287,8 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         // Smooth the speed reading with an exponential moving average to
         // prevent the ETA from visibly bouncing between values on noisy
         // GPS ticks. alpha = 0.3 gives ~70 % weight to the last 3 readings.
-        let rawSpeed = location.speed            if smoothedSpeed == 0, rawSpeed >= 0 {
+        let rawSpeed = location.speed
+        if smoothedSpeed == 0, rawSpeed >= 0 {
                 // CoreLocation returns -1.0 when speed is unavailable
                 // (GPS lock lost, tunnel). Never seed the EMA with -1 —
                 // it would contaminate the average for several ticks.
