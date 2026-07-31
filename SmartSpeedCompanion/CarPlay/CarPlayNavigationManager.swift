@@ -48,11 +48,13 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         request.naturalLanguageQuery = query
         let coordinate = viewModel.locationManager.latestLocation?.coordinate ?? CLLocationCoordinate2D()
         request.region = MKCoordinateRegion(center: coordinate, latitudinalMeters: 50000, longitudinalMeters: 50000)
-        request.pointOfInterestFilter = MKPointOfInterestFilter(including: [.gasStation, .parking, .restaurant, .cafe])
-        
+        // No pointOfInterestFilter — the driver picks from ANY category
+        // (gas, coffee, hospital, hotel, EV charger, grocery, etc.), not
+        // just a fixed subset. The query text drives what comes back.
+
         let search = MKLocalSearch(request: request)
-        search.start { response, error in
-            completion(Array(response?.mapItems.prefix(5) ?? []))
+        search.start { response, _ in
+            completion(Array(response?.mapItems.prefix(10) ?? []))
         }
     }
     

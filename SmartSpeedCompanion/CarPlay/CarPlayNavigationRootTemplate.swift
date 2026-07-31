@@ -1,5 +1,6 @@
 // CarPlayNavigationRootTemplate.swift
-// Enhanced root template — comprehensive HUD, settings, profiles, named locations.
+// Enhanced root template — comprehensive HUD, navigation, and named locations.
+// Settings are intentionally NOT shown on CarPlay; they live only in the iPhone app.
 
 import CarPlay
 import Combine
@@ -15,9 +16,6 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     @MainActor private var navigationManager: CarPlayNavigationManager!
 
     // Sub-controllers
-    @MainActor private lazy var settingsController = CarPlaySettingsController(
-        interfaceController: interfaceController, viewModel: viewModel
-    )
     @MainActor private lazy var namedLocationsController = CarPlayNamedLocationsController(
         interfaceController: interfaceController, viewModel: viewModel
     )
@@ -33,7 +31,6 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     @MainActor private var sessionTimerButton: CPBarButton!
 
     // Map Buttons
-    @MainActor private var settingsButton: CPMapButton!
     @MainActor private var searchButton: CPMapButton!
     @MainActor private var savedPlacesButton: CPMapButton!
     @MainActor private var addStopButton: CPMapButton!
@@ -41,6 +38,13 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     @MainActor private var muteButton: CPMapButton!
     @MainActor private var snoozeButton: CPMapButton!
     @MainActor private var wasSnoozeVisible: Bool = false
+    // Incremented on every + category tap; results only push if they belong
+    // to the latest request, so a slow earlier search can't overwrite a
+    // newer category's results (mirrors PlanB's searchGeneration pattern).
+    @MainActor private var stopSearchGeneration: UInt64 = 0
+    // Same guard for the live search box: each keystroke bumps this, and only
+    // the newest query's results may be delivered to the CPSearchTemplate.
+    @MainActor private var searchGeneration: UInt64 = 0
 
     @MainActor
     init(interfaceController: CPInterfaceController, viewModel: DriveViewModel) {
@@ -74,12 +78,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         mapTemplate.trailingNavigationBarButtons = [limitButton, sessionTimerButton]
 
         // Map buttons — colored circular badges for a Google/Apple Maps look.
-        settingsButton = CPMapButton { [weak self] _ in
-            Task { @MainActor in self?.settingsController.showSettings() }
-        }
-        settingsButton.image = CarPlayUI.circleBadge(systemName: "gearshape.fill", color: CarPlayUI.gray)
-        settingsButton.focusedImage = CarPlayUI.circleBadge(systemName: "gearshape.fill", color: CarPlayUI.gray, size: 52)
-
+        // NOTE: No Settings button — settings are phone-only by design.
         searchButton = CPMapButton { [weak self] _ in
             Task { @MainActor in self?.presentSearch() }
         }
@@ -133,7 +132,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
 
         mapTemplate.mapButtons = [
             searchButton, addStopButton, savedPlacesButton,
-            settingsButton, muteButton, startStopButton
+            muteButton, startStopButton
         ]
 
         Task { @MainActor in
@@ -388,13 +387,98 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
 
     @MainActor
     private func searchAndAddStop(query: String) {
+        stopSearchGeneration += 1
+        let generation = stopSearchGeneration
         navigationManager.searchDestination(query: query) { [weak self] results in
-            guard let self = self, let first = results.first else { return }
+            guard let self = self else { return }
             Task { @MainActor in
-                await self.viewModel.addStopToRoute(first)
-                self.interfaceController?.popToRootTemplate(animated: true, completion: nil)
+                // Ignore stale responses: if the driver tapped a different
+                // category (or left the + flow) while this search was in
+                // flight, a newer request is authoritative.
+                guard generation == self.stopSearchGeneration else { return }
+                self.presentStopOptions(title: query, results: results)
             }
         }
+    }
+
+    /// Show a picker of nearby results so the driver chooses the exact place
+    /// (nearest first, with distance) instead of auto-adding the first hit.
+    /// Used by every category shortcut (+ button: gas, coffee, food, parking).
+    @MainActor
+    private func presentStopOptions(title: String, results: [MKMapItem]) {
+        guard !results.isEmpty else {
+            let noResults = CPListItem(text: "No Results", detailText: "Try a different category")
+            noResults.isEnabled = false
+            let template = CPListTemplate(title: title, sections: [
+                CPListSection(items: [noResults], header: nil, sectionIndexTitle: nil)
+            ])
+            interfaceController?.pushTemplate(template, animated: true, completion: nil)
+            return
+        }
+
+        // Nearest first so the closest option is always at the top.
+        let sorted = results.sorted {
+            (distanceFromUser(to: $0) ?? .infinity) < (distanceFromUser(to: $1) ?? .infinity)
+        }
+
+        let items: [CPListItem] = sorted.prefix(10).map { mapItem in
+            let name = mapItem.name ?? "Unknown"
+            let dist = distanceLabel(for: mapItem)
+            let address = mapItem.placemark.title ?? ""
+            let detail = [dist, address].filter { !$0.isEmpty }.joined(separator: " · ")
+            let item = CPListItem(text: name, detailText: detail)
+            if let icon = searchResultIcon(for: mapItem) { item.setImage(icon) }
+            item.handler = { [weak self] _, completion in
+                Task { @MainActor in
+                    guard let self = self else { return }
+                    await self.viewModel.addStopToRoute(mapItem)
+                    self.showStopAddedConfirmation(name: name)
+                }
+                completion()
+            }
+            return item
+        }
+
+        let section = CPListSection(items: items, header: "\(results.count) found", sectionIndexTitle: nil)
+        let template = CPListTemplate(title: title, sections: [section])
+        interfaceController?.pushTemplate(template, animated: true, completion: nil)
+    }
+
+    /// Distance (meters) from the user's current location to a result.
+    private func distanceFromUser(to mapItem: MKMapItem) -> CLLocationDistance? {
+        guard let user = viewModel.locationManager.latestLocation,
+              let loc = mapItem.placemark.location else { return nil }
+        return user.distance(from: loc)
+    }
+
+    /// Short distance string honoring the user's unit preference
+    /// (e.g. "0.4 mi" / "1.2 km" / "800 ft" / "350 m").
+    private func distanceLabel(for mapItem: MKMapItem) -> String {
+        guard let meters = distanceFromUser(to: mapItem) else { return "" }
+        if SpeedFormatting.isMetric(SpeedFormatting.measurementSystem()) {
+            return meters >= 1000
+                ? String(format: "%.1f km", meters / 1000)
+                : String(format: "%.0f m", meters)
+        }
+        let miles = meters / 1609.344
+        return miles >= 0.1
+            ? String(format: "%.1f mi", miles)
+            : String(format: "%.0f ft", meters * 3.28084)
+    }
+
+    /// Brief confirmation after a stop is added, then back to the map.
+    @MainActor
+    private func showStopAddedConfirmation(name: String) {
+        let action = CPAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.interfaceController?.dismissTemplate(animated: true) { _, _ in
+                self?.interfaceController?.popToRootTemplate(animated: true, completion: nil)
+            }
+        }
+        let alert = CPAlertTemplate(
+            titleVariants: ["Stop added: \(name)", "Tap + again to add more stops."],
+            actions: [action]
+        )
+        interfaceController?.presentTemplate(alert, animated: true, completion: nil)
     }
 
     @MainActor
@@ -417,8 +501,14 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     // MARK: - CPSearchTemplateDelegate
 
     func searchTemplate(_ searchTemplate: CPSearchTemplate, updatedSearchText searchText: String, completionHandler: @escaping ([CPListItem]) -> Void) {
-        Task { @MainActor in
-            self.navigationManager.searchDestination(query: searchText) { results in
+        searchGeneration += 1
+        let generation = searchGeneration
+        navigationManager.searchDestination(query: searchText) { [weak self] results in
+            guard let self = self else { return }
+            Task { @MainActor in
+                // Drop stale responses so a slow earlier query can't overwrite
+                // fresher results (or let the driver tap a wrong, stale row).
+                guard generation == self.searchGeneration else { return }
                 let items = results.map { mi in
                     let item = CPListItem(text: mi.name, detailText: mi.placemark.title)
                     if let icon = self.searchResultIcon(for: mi) { item.setImage(icon) }
