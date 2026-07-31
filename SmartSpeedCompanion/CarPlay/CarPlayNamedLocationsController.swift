@@ -52,7 +52,7 @@ class CarPlayNamedLocationsController {
         let items: [CPListItem] = locations.map { location in
             let detailText = location.address ?? savedDateString(location.createdAt)
             let item = CPListItem(text: location.name, detailText: detailText)
-            if let img = UIImage(systemName: "mappin.circle.fill") { item.setImage(img) }
+            item.setImage(CarPlayUI.iconTile(systemName: "mappin.circle.fill", color: CarPlayUI.pink))
 
             // Navigate to this location
             item.handler = { [weak self] _, completion in

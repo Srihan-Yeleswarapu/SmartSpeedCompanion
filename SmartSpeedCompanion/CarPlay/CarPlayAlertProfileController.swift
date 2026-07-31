@@ -57,11 +57,7 @@ class CarPlayAlertProfileController {
             let detailText = "Default: +\(profile.defaultBuffer) · Hwy: +\(profile.highwayBuffer)"
 
             let item = CPListItem(text: title, detailText: detailText)
-            if let img = UIImage(systemName: "speedometer") { item.setImage(img) }
-
-            if isActive {
-                item.accessoryType = .cloud
-            }
+            item.setImage(CarPlayUI.iconTile(systemName: "speedometer", color: CarPlayUI.orange))
 
             item.handler = { [weak self] _, completion in
                 Task { @MainActor in
@@ -121,7 +117,7 @@ class CarPlayAlertProfileController {
 
             let item = CPListItem(text: label, detailText: value == currentBuffer ? "Active" : nil)
             if value == currentBuffer {
-                if let img = UIImage(systemName: "checkmark.circle.fill") { item.setImage(img) }
+                item.setImage(CarPlayUI.iconTile(systemName: "checkmark.circle.fill", color: CarPlayUI.neonGreen))
             }
 
             item.handler = { [weak self] _, completion in

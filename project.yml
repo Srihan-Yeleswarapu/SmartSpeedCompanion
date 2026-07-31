@@ -190,6 +190,7 @@ targets:
           - CPListTemplate
           - CPAlertTemplate
           - CPInformationTemplate
+          - CPGridTemplate
         NSSupportsLiveActivities: true
         UIRequiredDeviceCapabilities:
           - location-services

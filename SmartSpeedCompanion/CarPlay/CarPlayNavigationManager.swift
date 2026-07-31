@@ -107,6 +107,29 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     }
     
     // MARK: - Route Calculation
+
+    /// Calculates up to three alternate routes (fastest first) for the
+    /// CarPlay trip preview so the driver can pick between them, like
+    /// Google Maps. Falls back to a single route if alternates fail.
+    public func calculateRoutes(to destination: MKMapItem, completion: @escaping ([MKRoute]) -> Void) {
+        let request = MKDirections.Request()
+        request.source = MKMapItem.forCurrentLocation()
+        request.destination = destination
+        request.transportType = .automobile
+        request.requestsAlternateRoutes = true
+        request.departureDate = .now
+
+        if UserDefaults.standard.bool(forKey: "avoidHighways") {
+            request.highwayPreference = .avoid
+        }
+
+        let directions = MKDirections(request: request)
+        directions.calculate { response, _ in
+            let routes = Array((response?.routes ?? []).prefix(3))
+            completion(routes)
+        }
+    }
+
     public func calculateRoute(to destination: MKMapItem) async throws -> MKRoute {
         let request = MKDirections.Request()
         request.source = MKMapItem.forCurrentLocation()

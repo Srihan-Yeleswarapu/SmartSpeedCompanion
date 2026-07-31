@@ -73,26 +73,30 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         mapTemplate.leadingNavigationBarButtons = [speedButton, roadNameButton]
         mapTemplate.trailingNavigationBarButtons = [limitButton, sessionTimerButton]
 
-        // Map buttons
+        // Map buttons — colored circular badges for a Google/Apple Maps look.
         settingsButton = CPMapButton { [weak self] _ in
             Task { @MainActor in self?.settingsController.showSettings() }
         }
-        settingsButton.image = UIImage(systemName: "gearshape.fill")!
+        settingsButton.image = CarPlayUI.circleBadge(systemName: "gearshape.fill", color: CarPlayUI.gray)
+        settingsButton.focusedImage = CarPlayUI.circleBadge(systemName: "gearshape.fill", color: CarPlayUI.gray, size: 52)
 
         searchButton = CPMapButton { [weak self] _ in
             Task { @MainActor in self?.presentSearch() }
         }
-        searchButton.image = UIImage(systemName: "magnifyingglass")!
+        searchButton.image = CarPlayUI.circleBadge(systemName: "magnifyingglass", color: CarPlayUI.cyan)
+        searchButton.focusedImage = CarPlayUI.circleBadge(systemName: "magnifyingglass", color: CarPlayUI.cyan, size: 52)
 
         savedPlacesButton = CPMapButton { [weak self] _ in
             Task { @MainActor in self?.namedLocationsController.showSavedPlaces() }
         }
-        savedPlacesButton.image = UIImage(systemName: "bookmark.fill")!
+        savedPlacesButton.image = CarPlayUI.circleBadge(systemName: "bookmark.fill", color: CarPlayUI.pink)
+        savedPlacesButton.focusedImage = CarPlayUI.circleBadge(systemName: "bookmark.fill", color: CarPlayUI.pink, size: 52)
 
         addStopButton = CPMapButton { [weak self] _ in
             Task { @MainActor in self?.presentAddStopSearch() }
         }
-        addStopButton.image = UIImage(systemName: "plus.circle.fill")!
+        addStopButton.image = CarPlayUI.circleBadge(systemName: "plus", color: CarPlayUI.orange)
+        addStopButton.focusedImage = CarPlayUI.circleBadge(systemName: "plus", color: CarPlayUI.orange, size: 52)
 
         startStopButton = CPMapButton { [weak self] _ in
             Task { @MainActor in
@@ -101,17 +105,21 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
                 else { self.viewModel.startSession() }
             }
         }
-        startStopButton.image = UIImage(systemName: "play.fill")!
+        startStopButton.image = CarPlayUI.circleBadge(systemName: "play.fill", color: CarPlayUI.neonGreen)
+        startStopButton.focusedImage = CarPlayUI.circleBadge(systemName: "play.fill", color: CarPlayUI.neonGreen, size: 52)
 
         muteButton = CPMapButton { [weak self] button in
             Task { @MainActor in
                 guard let self = self else { return }
                 let newMuted = !self.navigationManager.getMuted()
                 self.navigationManager.setMuted(newMuted)
-                button.image = UIImage(systemName: newMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")!
+                button.image = CarPlayUI.circleBadge(systemName: newMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                                                     color: newMuted ? CarPlayUI.amber : CarPlayUI.blue)
+                button.focusedImage = button.image
             }
         }
-        muteButton.image = UIImage(systemName: "speaker.wave.2.fill")!
+        muteButton.image = CarPlayUI.circleBadge(systemName: "speaker.wave.2.fill", color: CarPlayUI.blue)
+        muteButton.focusedImage = CarPlayUI.circleBadge(systemName: "speaker.wave.2.fill", color: CarPlayUI.blue, size: 52)
 
         snoozeButton = CPMapButton { [weak self] _ in
             Task { @MainActor in
@@ -120,11 +128,12 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
                 self.updateMapButtons()
             }
         }
-        snoozeButton.image = UIImage(systemName: "hand.raised.fill")!
+        snoozeButton.image = CarPlayUI.circleBadge(systemName: "hand.raised.fill", color: CarPlayUI.alertRed)
+        snoozeButton.focusedImage = CarPlayUI.circleBadge(systemName: "hand.raised.fill", color: CarPlayUI.alertRed, size: 52)
 
         mapTemplate.mapButtons = [
-            settingsButton, searchButton, savedPlacesButton,
-            addStopButton, startStopButton, muteButton
+            searchButton, addStopButton, savedPlacesButton,
+            settingsButton, muteButton, startStopButton
         ]
 
         Task { @MainActor in
@@ -157,7 +166,9 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             .receive(on: RunLoop.main)
             .sink { [weak self] isRecording in
                 guard let self = self else { return }
-                self.startStopButton.image = UIImage(systemName: isRecording ? "stop.fill" : "play.fill")!
+                self.startStopButton.image = CarPlayUI.circleBadge(systemName: isRecording ? "stop.fill" : "play.fill",
+                                                                   color: isRecording ? CarPlayUI.alertRed : CarPlayUI.neonGreen)
+                self.startStopButton.focusedImage = self.startStopButton.image
             }
             .store(in: &cancellables)
 
@@ -181,13 +192,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         let displayLimit = SpeedFormatting.displayLimit(forMph: limit, measurementSystem: system)
         speedButton.title = "\(Int(speed)) \(unitShort)"
         limitButton.title = limit == 0 ? "LIMIT --" : "LIMIT \(displayLimit) \(unitShort)"
-        let c: UIColor
-        switch status {
-        case .over:    c = UIColor(red: 1.0, green: 0.24, blue: 0.44, alpha: 1.0)
-        case .warning: c = UIColor(red: 1.0, green: 0.72, blue: 0.0, alpha: 1.0)
-        case .safe:    c = UIColor(red: 0.0, green: 1.0, blue: 0.62, alpha: 1.0)
-        }
-        limitButton.image = statusCircleImage(color: c, size: 20)
+        limitButton.image = CarPlayUI.statusPill(color: CarPlayUI.statusColor(status))
         roadNameButton.title = (roadName?.isEmpty == false) ? roadName! : ""
     }
 
@@ -195,11 +200,13 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     private func updateSessionTimer(duration: TimeInterval, isRecording: Bool) {
         if !isRecording {
             sessionTimerButton.title = ""
+            sessionTimerButton.image = nil
             if mapTemplate.trailingNavigationBarButtons.contains(sessionTimerButton) {
                 mapTemplate.trailingNavigationBarButtons = [limitButton]
             }
             return
         }
+        sessionTimerButton.image = CarPlayUI.dot(color: CarPlayUI.alertRed)
         let t = Int(duration)
         if t >= 3600 {
             sessionTimerButton.title = String(format: "%d:%02d:%02d", t/3600, (t%3600)/60, t%60)
@@ -321,11 +328,19 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
     }
 
-    private func statusCircleImage(color: UIColor, size: CGFloat = 44) -> UIImage {
-        let r = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-        return r.image { ctx in
-            color.setFill()
-            ctx.cgContext.fillEllipse(in: CGRect(x: 2, y: 2, width: size-4, height: size-4))
+    /// Colored icon tile for a search result based on its POI category.
+    /// `nonisolated` so it can be called from the search completion closure.
+    private nonisolated func searchResultIcon(for mapItem: MKMapItem) -> UIImage? {
+        switch mapItem.pointOfInterestCategory {
+        case .gasStation: return CarPlayUI.iconTile(systemName: "fuelpump.fill", color: CarPlayUI.orange)
+        case .cafe:       return CarPlayUI.iconTile(systemName: "cup.and.saucer.fill", color: CarPlayUI.amber)
+        case .restaurant: return CarPlayUI.iconTile(systemName: "fork.knife", color: CarPlayUI.pink)
+        case .parking:    return CarPlayUI.iconTile(systemName: "p.circle.fill", color: CarPlayUI.blue)
+        case .hotel:      return CarPlayUI.iconTile(systemName: "bed.double.fill", color: CarPlayUI.purple)
+        case .hospital:   return CarPlayUI.iconTile(systemName: "cross.case.fill", color: CarPlayUI.alertRed)
+        case .store:      return CarPlayUI.iconTile(systemName: "bag.fill", color: CarPlayUI.teal)
+        case .evCharger:  return CarPlayUI.iconTile(systemName: "bolt.car.fill", color: CarPlayUI.neonGreen)
+        default:          return CarPlayUI.iconTile(systemName: "mappin.circle.fill", color: CarPlayUI.gray)
         }
     }
 
@@ -339,23 +354,36 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
 
     @MainActor
     private func presentAddStopSearch() {
-        let gas = CPListItem(text: "Gas Station", detailText: "Add a gas stop")
-        gas.handler = { [weak self] _, c in Task { @MainActor in self?.searchAndAddStop(query: "Gas Station") }; c() }
-        let coffee = CPListItem(text: "Coffee", detailText: "Add a coffee stop")
-        coffee.handler = { [weak self] _, c in Task { @MainActor in self?.searchAndAddStop(query: "Coffee") }; c() }
-        let food = CPListItem(text: "Food", detailText: "Add a food stop")
-        food.handler = { [weak self] _, c in Task { @MainActor in self?.searchAndAddStop(query: "Restaurant") }; c() }
-        let parking = CPListItem(text: "Parking", detailText: "Add a parking stop")
-        parking.handler = { [weak self] _, c in Task { @MainActor in self?.searchAndAddStop(query: "Parking") }; c() }
-        let search = CPListItem(text: "Search\u{2026}", detailText: "Search for a specific place")
-        search.handler = { [weak self] _, c in Task { @MainActor in self?.presentSearch() }; c() }
-        var items = [gas, coffee, food, parking, search]
-        if !viewModel.routeStops.isEmpty {
-            let vs = CPListItem(text: "View Stops (\(viewModel.routeStops.count))", detailText: "Manage current stops")
-            vs.handler = { [weak self] _, c in Task { @MainActor in self?.presentStopsList() }; c() }
-            items.insert(vs, at: 0)
+        // Grid of big, colorful quick actions — safe to scan while driving.
+        let gas = CPGridButton(titleVariants: ["Gas Station"],
+                               image: CarPlayUI.iconTile(systemName: "fuelpump.fill", color: CarPlayUI.orange, size: 56)) { [weak self] _ in
+            Task { @MainActor in self?.searchAndAddStop(query: "Gas Station") }
         }
-        interfaceController?.pushTemplate(CPListTemplate(title: "Add Stop", sections: [CPListSection(items: items, header: nil, sectionIndexTitle: nil)]), animated: true, completion: nil)
+        let coffee = CPGridButton(titleVariants: ["Coffee"],
+                                  image: CarPlayUI.iconTile(systemName: "cup.and.saucer.fill", color: CarPlayUI.amber, size: 56)) { [weak self] _ in
+            Task { @MainActor in self?.searchAndAddStop(query: "Coffee") }
+        }
+        let food = CPGridButton(titleVariants: ["Food"],
+                                image: CarPlayUI.iconTile(systemName: "fork.knife", color: CarPlayUI.pink, size: 56)) { [weak self] _ in
+            Task { @MainActor in self?.searchAndAddStop(query: "Restaurant") }
+        }
+        let parking = CPGridButton(titleVariants: ["Parking"],
+                                   image: CarPlayUI.iconTile(systemName: "p.circle.fill", color: CarPlayUI.blue, size: 56)) { [weak self] _ in
+            Task { @MainActor in self?.searchAndAddStop(query: "Parking") }
+        }
+        let search = CPGridButton(titleVariants: ["Search"],
+                                  image: CarPlayUI.iconTile(systemName: "magnifyingglass", color: CarPlayUI.cyan, size: 56)) { [weak self] _ in
+            Task { @MainActor in self?.presentSearch() }
+        }
+        var buttons = [gas, coffee, food, parking, search]
+        if !viewModel.routeStops.isEmpty {
+            let vs = CPGridButton(titleVariants: ["Stops (\(viewModel.routeStops.count))"],
+                                  image: CarPlayUI.iconTile(systemName: "list.bullet", color: CarPlayUI.purple, size: 56)) { [weak self] _ in
+                Task { @MainActor in self?.presentStopsList() }
+            }
+            buttons.insert(vs, at: 0)
+        }
+        interfaceController?.pushTemplate(CPGridTemplate(title: "Add Stop", gridButtons: buttons), animated: true, completion: nil)
     }
 
     @MainActor
@@ -393,6 +421,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             self.navigationManager.searchDestination(query: searchText) { results in
                 let items = results.map { mi in
                     let item = CPListItem(text: mi.name, detailText: mi.placemark.title)
+                    if let icon = self?.searchResultIcon(for: mi) { item.setImage(icon) }
                     item.handler = { [weak self] _, c in
                         Task { @MainActor in
                             self?.interfaceController?.popTemplate(animated: true) { _, _ in self?.presentTripPreview(for: mi) }
@@ -413,13 +442,39 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
 
     @MainActor
     private func presentTripPreview(for destination: MKMapItem) {
-        let rc = CPRouteChoice(summaryVariants: [destination.name ?? "Destination"],
-            additionalInformationVariants: [destination.placemark.title ?? ""],
-            selectionSummaryVariants: ["Start Navigation"])
-        let trip = CPTrip(origin: MKMapItem.forCurrentLocation(), destination: destination, routeChoices: [rc])
-        let pt = CPTripPreviewTextConfiguration(startButtonTitle: "Start",
-            additionalRoutesButtonTitle: nil, overviewButtonTitle: "Overview")
-        mapTemplate.showTripPreviews([trip], textConfiguration: pt)
+        navigationManager.calculateRoutes(to: destination) { [weak self] routes in
+            Task { @MainActor in
+                guard let self = self else { return }
+                let choices: [CPRouteChoice]
+                if routes.isEmpty {
+                    choices = [CPRouteChoice(summaryVariants: [destination.name ?? "Destination"],
+                                             additionalInformationVariants: [destination.placemark.title ?? ""],
+                                             selectionSummaryVariants: ["Start Navigation"])]
+                } else {
+                    let system = SpeedFormatting.measurementSystem()
+                    choices = routes.enumerated().map { index, route in
+                        let eta = route.expectedTravelTime
+                        let etaStr = eta >= 3600
+                            ? String(format: "%d h %02d min", Int(eta) / 3600, (Int(eta) % 3600) / 60)
+                            : String(format: "%d min", max(1, Int(eta) / 60))
+                        let distMi = route.distance / 1609.34
+                        let distStr = SpeedFormatting.isMetric(system)
+                            ? String(format: "%.1f km", distMi * 1.60934)
+                            : String(format: "%.1f mi", distMi)
+                        let title = index == 0 ? "Fastest Route" : "Route \(index + 1)"
+                        return CPRouteChoice(
+                            summaryVariants: [title],
+                            additionalInformationVariants: ["\(etaStr) \u{00B7} \(distStr)"],
+                            selectionSummaryVariants: [title]
+                        )
+                    }
+                }
+                let trip = CPTrip(origin: MKMapItem.forCurrentLocation(), destination: destination, routeChoices: choices)
+                let pt = CPTripPreviewTextConfiguration(startButtonTitle: "Start",
+                    additionalRoutesButtonTitle: routes.count > 1 ? "Routes" : nil, overviewButtonTitle: "Overview")
+                self.mapTemplate.showTripPreviews([trip], textConfiguration: pt)
+            }
+        }
     }
 
     // MARK: - CPMapTemplateDelegate

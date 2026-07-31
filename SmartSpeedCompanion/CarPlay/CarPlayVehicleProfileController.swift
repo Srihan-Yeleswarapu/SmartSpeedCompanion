@@ -59,12 +59,7 @@ class CarPlayVehicleProfileController {
             let detailText = "\(tripsStr) · \(distStr) · \(profile.measurementSystem)"
 
             let item = CPListItem(text: title, detailText: detailText)
-            if let img = UIImage(systemName: "car.fill") { item.setImage(img) }
-
-            // Mark active profile with a checkmark
-            if isActive {
-                item.accessoryType = .cloud
-            }
+            item.setImage(CarPlayUI.iconTile(systemName: "car.fill", color: CarPlayUI.blue))
 
             item.handler = { [weak self] _, completion in
                 Task { @MainActor in

@@ -65,7 +65,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "car.fill") { vehicleItem.setImage(img) }
+        vehicleItem.setImage(CarPlayUI.iconTile(systemName: "car.fill", color: CarPlayUI.blue))
 
         let alertItem = CPListItem(
             text: "Alert Profile",
@@ -77,7 +77,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "speedometer") { alertItem.setImage(img) }
+        alertItem.setImage(CarPlayUI.iconTile(systemName: "speedometer", color: CarPlayUI.orange))
 
         let bufferItem = CPListItem(
             text: "Alert Buffer",
@@ -89,7 +89,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "slider.horizontal.3") { bufferItem.setImage(img) }
+        bufferItem.setImage(CarPlayUI.iconTile(systemName: "slider.horizontal.3", color: CarPlayUI.purple))
 
         let profileSection = CPListSection(
             items: [vehicleItem, alertItem, bufferItem],
@@ -108,7 +108,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "ruler") { unitsItem.setImage(img) }
+        unitsItem.setImage(CarPlayUI.iconTile(systemName: "ruler", color: CarPlayUI.teal))
 
         let voiceItem = CPListItem(
             text: "Voice Navigation",
@@ -120,7 +120,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "waveform") { voiceItem.setImage(img) }
+        voiceItem.setImage(CarPlayUI.iconTile(systemName: "waveform", color: CarPlayUI.indigo))
 
         let avoidItem = CPListItem(
             text: "Avoid Highways",
@@ -132,7 +132,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "road.lanes") { avoidItem.setImage(img) }
+        avoidItem.setImage(CarPlayUI.iconTile(systemName: "road.lanes", color: CarPlayUI.cyan))
 
         let navSection = CPListSection(
             items: [unitsItem, voiceItem, avoidItem],
@@ -151,7 +151,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "map.fill") { mapStyleItem.setImage(img) }
+        mapStyleItem.setImage(CarPlayUI.iconTile(systemName: "map.fill", color: CarPlayUI.teal))
 
         let poiItem = CPListItem(
             text: "Show POIs",
@@ -163,7 +163,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "mappin.and.ellipse") { poiItem.setImage(img) }
+        poiItem.setImage(CarPlayUI.iconTile(systemName: "mappin.and.ellipse", color: CarPlayUI.pink))
 
         let mapSection = CPListSection(
             items: [mapStyleItem, poiItem],
@@ -182,7 +182,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "bookmark.fill") { placesItem.setImage(img) }
+        placesItem.setImage(CarPlayUI.iconTile(systemName: "bookmark.fill", color: CarPlayUI.amber))
 
         let offlineItem = CPListItem(
             text: "Offline Regions",
@@ -194,7 +194,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "square.and.arrow.down") { offlineItem.setImage(img) }
+        offlineItem.setImage(CarPlayUI.iconTile(systemName: "square.and.arrow.down", color: CarPlayUI.blue))
 
         let placesSection = CPListSection(
             items: [placesItem, offlineItem],
@@ -213,7 +213,7 @@ class CarPlaySettingsController {
             }
             completion()
         }
-        if let img = UIImage(systemName: "info.circle.fill") { aboutItem.setImage(img) }
+        aboutItem.setImage(CarPlayUI.iconTile(systemName: "info.circle.fill", color: CarPlayUI.gray))
 
         let aboutSection = CPListSection(
             items: [aboutItem],
@@ -241,7 +241,7 @@ class CarPlaySettingsController {
             let isActive = profile.isActive
             let label = isActive ? "✓ \(profile.name)" : profile.name
             let item = CPListItem(text: label, detailText: profile.measurementSystem)
-            if let img = UIImage(systemName: "car.fill") { item.setImage(img) }
+            item.setImage(CarPlayUI.iconTile(systemName: "car.fill", color: CarPlayUI.blue))
             item.handler = { [weak self] _, completion in
                 Task { @MainActor in
                     self?.activateVehicleProfile(profile.id)
@@ -277,10 +277,7 @@ class CarPlaySettingsController {
                 text: label,
                 detailText: "Buffer: +\(profile.defaultBuffer)"
             )
-            if let img = UIImage(systemName: "speedometer") { item.setImage(img) }
-            if isActive {
-                item.accessoryType = .cloud
-            }
+            item.setImage(CarPlayUI.iconTile(systemName: "speedometer", color: CarPlayUI.orange))
             item.handler = { [weak self] _, completion in
                 Task { @MainActor in
                     self?.activateAlertProfile(profile.id)
@@ -446,7 +443,7 @@ class CarPlaySettingsController {
                 text: location.name,
                 detailText: location.address ?? "Saved location"
             )
-            if let img = UIImage(systemName: "mappin.circle.fill") { item.setImage(img) }
+            item.setImage(CarPlayUI.iconTile(systemName: "mappin.circle.fill", color: CarPlayUI.pink))
             return item
         }
 
@@ -470,7 +467,7 @@ class CarPlaySettingsController {
                 text: region.label,
                 detailText: sizeStr
             )
-            if let img = UIImage(systemName: "square.and.arrow.down.fill") { item.setImage(img) }
+            item.setImage(CarPlayUI.iconTile(systemName: "square.and.arrow.down.fill", color: CarPlayUI.blue))
             return item
         }
 
