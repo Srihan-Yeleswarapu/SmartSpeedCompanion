@@ -93,7 +93,8 @@ class CarPlaySettingsController {
 
         let profileSection = CPListSection(
             items: [vehicleItem, alertItem, bufferItem],
-            header: "PROFILES"
+            header: "PROFILES",
+            sectionIndexTitle: nil
         )
 
         // ── Section 2: Units & Navigation ───────────────────────
@@ -135,7 +136,8 @@ class CarPlaySettingsController {
 
         let navSection = CPListSection(
             items: [unitsItem, voiceItem, avoidItem],
-            header: "UNITS & NAVIGATION"
+            header: "UNITS & NAVIGATION",
+            sectionIndexTitle: nil
         )
 
         // ── Section 3: Map ───────────────────────────────────────
@@ -165,7 +167,8 @@ class CarPlaySettingsController {
 
         let mapSection = CPListSection(
             items: [mapStyleItem, poiItem],
-            header: "MAP"
+            header: "MAP",
+            sectionIndexTitle: nil
         )
 
         // ── Section 4: Places ───────────────────────────────────
@@ -195,7 +198,8 @@ class CarPlaySettingsController {
 
         let placesSection = CPListSection(
             items: [placesItem, offlineItem],
-            header: "PLACES & DATA"
+            header: "PLACES & DATA",
+            sectionIndexTitle: nil
         )
 
         // ── Section 5: About ────────────────────────────────────
@@ -213,7 +217,8 @@ class CarPlaySettingsController {
 
         let aboutSection = CPListSection(
             items: [aboutItem],
-            header: "ABOUT"
+            header: "ABOUT",
+            sectionIndexTitle: nil
         )
 
         let template = CPListTemplate(
@@ -247,7 +252,7 @@ class CarPlaySettingsController {
             return item
         }
 
-        let section = CPListSection(items: items, header: "SELECT VEHICLE")
+        let section = CPListSection(items: items, header: "SELECT VEHICLE", sectionIndexTitle: nil)
         let template = CPListTemplate(title: "Vehicle Profile", sections: [section])
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
     }
@@ -286,7 +291,7 @@ class CarPlaySettingsController {
             return item
         }
 
-        let section = CPListSection(items: items, header: "SELECT ALERT PROFILE")
+        let section = CPListSection(items: items, header: "SELECT ALERT PROFILE", sectionIndexTitle: nil)
         let template = CPListTemplate(title: "Alert Profile", sections: [section])
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
     }
@@ -322,7 +327,7 @@ class CarPlaySettingsController {
             return item
         }
 
-        let section = CPListSection(items: items, header: "SELECT BUFFER")
+        let section = CPListSection(items: items, header: "SELECT BUFFER", sectionIndexTitle: nil)
         let template = CPListTemplate(title: "Alert Buffer", sections: [section])
         template.emptyViewTitleVariants = ["Adjust Buffer"]
         template.emptyViewSubtitleVariants = ["How much over the limit before alerting?"]
@@ -363,7 +368,7 @@ class CarPlaySettingsController {
             completion()
         }
 
-        let section = CPListSection(items: [imperialItem, metricItem], header: "SELECT UNITS")
+        let section = CPListSection(items: [imperialItem, metricItem], header: "SELECT UNITS", sectionIndexTitle: nil)
         let template = CPListTemplate(title: "Units", sections: [section])
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
     }
@@ -419,7 +424,7 @@ class CarPlaySettingsController {
             return item
         }
 
-        let section = CPListSection(items: items, header: "MAP STYLE")
+        let section = CPListSection(items: items, header: "MAP STYLE", sectionIndexTitle: nil)
         let template = CPListTemplate(title: "Map Style", sections: [section])
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
     }
@@ -445,7 +450,7 @@ class CarPlaySettingsController {
             return item
         }
 
-        let section = CPListSection(items: items, header: "SAVED PLACES")
+        let section = CPListSection(items: items, header: "SAVED PLACES", sectionIndexTitle: nil)
         let template = CPListTemplate(title: "Saved Places", sections: [section])
         template.emptyViewTitleVariants = ["No Saved Places"]
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
@@ -460,7 +465,7 @@ class CarPlaySettingsController {
         }
 
         let items: [CPListItem] = viewModel.savedOfflineRegions.map { region in
-            let sizeStr = String(format: "%.0f MB", region.estimatedSizeMB)
+            let sizeStr = String(format: "%.0f MB", region.estimatedSizeMB ?? 0)
             let item = CPListItem(
                 text: region.label,
                 detailText: sizeStr
@@ -469,7 +474,7 @@ class CarPlaySettingsController {
             return item
         }
 
-        let section = CPListSection(items: items, header: "OFFLINE REGIONS")
+        let section = CPListSection(items: items, header: "OFFLINE REGIONS", sectionIndexTitle: nil)
         let template = CPListTemplate(title: "Offline Regions", sections: [section])
         template.emptyViewTitleVariants = ["No Offline Regions"]
         interfaceController?.pushTemplate(template, animated: true, completion: nil)

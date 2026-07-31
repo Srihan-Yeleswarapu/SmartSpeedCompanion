@@ -78,7 +78,8 @@ class CarPlayVehicleProfileController {
 
         let section = CPListSection(
             items: items,
-            header: "VEHICLE PROFILES"
+            header: "VEHICLE PROFILES",
+            sectionIndexTitle: nil
         )
 
         let template = CPListTemplate(

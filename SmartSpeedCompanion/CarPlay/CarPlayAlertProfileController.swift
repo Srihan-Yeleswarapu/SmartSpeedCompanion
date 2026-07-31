@@ -75,7 +75,8 @@ class CarPlayAlertProfileController {
 
         let section = CPListSection(
             items: items,
-            header: "ALERT PROFILES"
+            header: "ALERT PROFILES",
+            sectionIndexTitle: nil
         )
 
         let template = CPListTemplate(
@@ -135,7 +136,8 @@ class CarPlayAlertProfileController {
 
         let section = CPListSection(
             items: items,
-            header: "SELECT BUFFER"
+            header: "SELECT BUFFER",
+            sectionIndexTitle: nil
         )
 
         let template = CPListTemplate(

@@ -421,7 +421,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
             return item
         }
         
-        let listTemplate = CPListTemplate(title: "Route Overview", sections: [CPListSection(items: listItems)])
+        let listTemplate = CPListTemplate(title: "Route Overview", sections: [CPListSection(items: listItems, sectionIndexTitle: nil)])
         interfaceController?.pushTemplate(listTemplate, animated: true, completion: nil)
     }
     

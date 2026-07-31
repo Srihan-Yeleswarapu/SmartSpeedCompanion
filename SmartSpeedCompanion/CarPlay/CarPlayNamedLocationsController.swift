@@ -67,7 +67,8 @@ class CarPlayNamedLocationsController {
 
         let section = CPListSection(
             items: items,
-            header: "SAVED PLACES"
+            header: "SAVED PLACES",
+            sectionIndexTitle: nil
         )
 
         let template = CPListTemplate(
