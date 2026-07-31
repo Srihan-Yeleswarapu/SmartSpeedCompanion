@@ -149,15 +149,16 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
           UISceneConfigurations:
-            # Plan B: CarPlaySceneDelegateB uses list-only templates.
-            # Switch to CarPlaySceneDelegate when provisioning profile
-            # authorizes carplay-navigation.
+            # Plan A: CarPlaySceneDelegate uses the full map + navigation
+            # experience (CPMapTemplate). The provisioning profile now
+            # authorizes com.apple.developer.carplay-maps (CarPlay Navigation
+            # App approved 2026-07-30).
             CPTemplateApplicationSceneSessionRoleApplication:
               - UISceneConfigurationName: CarPlay Configuration
-                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegateB
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
             CPTemplateApplicationDashboardSceneSessionRoleApplication:
               - UISceneConfigurationName: CarPlay Configuration
-                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegateB
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
         # `audio` is required in UIBackgroundModes so the app can play speed-
         # limit alert tones while the phone is locked or the user is in another
         # app. Without this entitlement the system suspends audio playback
@@ -177,11 +178,15 @@ targets:
         NSSiriUsageDescription: "Use Siri to start and stop your drive sessions."
         # CPSupportedTemplates must mirror what the CarPlay folder actually
         # instantiates at runtime; ACS validates the declared set.
-        # CPSupportedTemplates for PLAN B (carplay-driving-task only).
-        # Restore CPMapTemplate / CPNavigationAlert / CPSearchTemplate
-        # when switching back to Plan A (CarPlaySceneDelegate) after the
-        # provisioning profile authorizes carplay-navigation.
+        # Plan A (CarPlaySceneDelegate) — the approved navigation experience.
+        # CPMapTemplate is the root; CPSearchTemplate + CPNavigationAlert are
+        # used for destination search and overspeed alerts. List/Alert/
+        # Information templates are still used by the settings, profile,
+        # saved-places, and route-stop sub-flows.
         CPSupportedTemplates:
+          - CPMapTemplate
+          - CPSearchTemplate
+          - CPNavigationAlert
           - CPListTemplate
           - CPAlertTemplate
           - CPInformationTemplate

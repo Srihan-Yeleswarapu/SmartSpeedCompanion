@@ -2,7 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!--
+      NOTE 2026-07-30 — CarPlay Navigation App APPROVED.
+      Apple's current provisioning profiles authorize CPMapTemplate +
+      CPNavigationSession via `com.apple.developer.carplay-maps`
+      (the consolidated key Apple now issues for approved CarPlay
+      navigation apps) together with `carplay-driving-task`.
+      The legacy `carplay-navigation` / `carplay-audio` keys are NOT
+      present in the approved "Speedio App Store" profile (UUID
+      fd2d8fb6-6497-4e92-9d8a-2087c876afa9) — declaring them here would
+      cause codesign to reject the entitlements as unauthorized.
+      If you see a crash at setRootTemplate → CPAssertAllowedClasses,
+      the installed provisioning profile is stale: re-download from
+      developer.apple.com → Certificates, Identifiers & Profiles →
+      Profiles → Speedio App Store and re-encode the
+      APPSTORE_PROVISIONING_PROFILE_BASE64 GitHub secret.
+    -->
     <key>com.apple.developer.carplay-driving-task</key>
+    <true/>
+    <key>com.apple.developer.carplay-maps</key>
     <true/>
     <key>keychain-access-groups</key>
     <array>
