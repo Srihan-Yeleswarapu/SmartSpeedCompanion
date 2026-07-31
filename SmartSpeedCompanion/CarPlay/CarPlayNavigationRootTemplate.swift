@@ -161,17 +161,12 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             }
             .store(in: &cancellables)
 
-        // Watch the snoozedUntil Date setter AND a 1-second timer so the
-        // snooze button reappears when the snooze window expires (the
-        // @Published `$snoozedUntil` only fires on explicit .set, not when
-        // time passes).
-        let snoozeWatcher = Timer.publish(every: 1.0, on: .main, in: .common)
+        // 1-second timer re-evaluates the snooze button visibility so the
+        // snooze button correctly reappears when the 15-second snooze window
+        // expires (the @Published `$snoozedUntil` only fires on explicit .set,
+        // not when time passes and the Date becomes stale).
+        Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
-            .map { [weak self] _ in self?.viewModel.alertEngine.snoozedUntil }
-
-        viewModel.alertEngine.$snoozedUntil
-            .merge(with: snoozeWatcher)
-            .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateMapButtons() }
             .store(in: &cancellables)
 
