@@ -355,7 +355,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             vs.handler = { [weak self] _, c in Task { @MainActor in self?.presentStopsList() }; c() }
             items.insert(vs, at: 0)
         }
-        interfaceController?.pushTemplate(CPListTemplate(title: "Add Stop", sections: [CPListSection(items: items, sectionIndexTitle: nil)]), animated: true, completion: nil)
+        interfaceController?.pushTemplate(CPListTemplate(title: "Add Stop", sections: [CPListSection(items: items, header: nil, sectionIndexTitle: nil)]), animated: true, completion: nil)
     }
 
     @MainActor
@@ -380,7 +380,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             }
             return item
         }
-        let t = CPListTemplate(title: "Route Stops (\(viewModel.routeStops.count))", sections: [CPListSection(items: items, sectionIndexTitle: nil)])
+        let t = CPListTemplate(title: "Route Stops (\(viewModel.routeStops.count))", sections: [CPListSection(items: items, header: nil, sectionIndexTitle: nil)])
         t.emptyViewTitleVariants = ["No Stops"]
         t.emptyViewSubtitleVariants = ["Add stops along your route"]
         interfaceController?.pushTemplate(t, animated: true, completion: nil)
