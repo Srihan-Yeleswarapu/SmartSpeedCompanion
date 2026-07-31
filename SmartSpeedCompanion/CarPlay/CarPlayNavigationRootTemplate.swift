@@ -421,7 +421,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             self.navigationManager.searchDestination(query: searchText) { results in
                 let items = results.map { mi in
                     let item = CPListItem(text: mi.name, detailText: mi.placemark.title)
-                    if let icon = self?.searchResultIcon(for: mi) { item.setImage(icon) }
+                    if let icon = self.searchResultIcon(for: mi) { item.setImage(icon) }
                     item.handler = { [weak self] _, c in
                         Task { @MainActor in
                             self?.interfaceController?.popTemplate(animated: true) { _, _ in self?.presentTripPreview(for: mi) }
