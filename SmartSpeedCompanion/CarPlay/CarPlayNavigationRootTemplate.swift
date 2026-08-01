@@ -45,6 +45,9 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     // Same guard for the live search box: each keystroke bumps this, and only
     // the newest query's results may be delivered to the CPSearchTemplate.
     @MainActor private var searchGeneration: UInt64 = 0
+    // Maps CPListItem → MKMapItem for the current CPSearchTemplate results
+    // so the selectedResult delegate can identify which item was tapped.
+    @MainActor private var searchItemMap: [ObjectIdentifier: MKMapItem] = [:]
 
     @MainActor
     init(interfaceController: CPInterfaceController, viewModel: DriveViewModel) {
@@ -315,7 +318,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         let template = CPInformationTemplate(title: "Drive Session", layout: .twoColumn, items: items,
             actions: [
                 CPTextButton(title: "End Session", textStyle: .normal, handler: { [weak self] _ in
-                    self?.interfaceController?.dismissTemplate(animated: true) { _, _ in
+                    self?.interfaceController?.popTemplate(animated: true) { _ in
                         Task { @MainActor in self?.viewModel.endSession() }
                     }
                 }),
@@ -469,16 +472,17 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     /// Brief confirmation after a stop is added, then back to the map.
     @MainActor
     private func showStopAddedConfirmation(name: String) {
-        let action = CPAlertAction(title: "OK", style: .default) { [weak self] _ in
-            self?.interfaceController?.dismissTemplate(animated: true) { _, _ in
-                self?.interfaceController?.popToRootTemplate(animated: true, completion: nil)
-            }
+        // Pop to root first to keep the hierarchy shallow, then present
+        // the confirmation alert on the clean root map template.
+        interfaceController?.popToRootTemplate(animated: false) { [weak self] success in
+            guard let self = self, success else { return }
+            let action = CPAlertAction(title: "OK", style: .default) { _ in }
+            let alert = CPAlertTemplate(
+                titleVariants: ["Stop added: \(name)", "Tap + again to add more stops."],
+                actions: [action]
+            )
+            self.interfaceController?.presentTemplate(alert, animated: true, completion: nil)
         }
-        let alert = CPAlertTemplate(
-            titleVariants: ["Stop added: \(name)", "Tap + again to add more stops."],
-            actions: [action]
-        )
-        interfaceController?.presentTemplate(alert, animated: true, completion: nil)
     }
 
     @MainActor
@@ -487,7 +491,19 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             let item = CPListItem(text: "\(i+1). \(stop.name)", detailText: stop.address ?? "")
             let sid = stop.id
             item.handler = { _, c in
-                Task { @MainActor in await self.viewModel.removeStopFromRoute(sid); self.presentStopsList() }
+                Task { @MainActor in
+                    await self.viewModel.removeStopFromRoute(sid)
+                    // Pop the current list instead of pushing a new one —
+                    // each push without a pop was causing the CarPlay
+                    // clientExceededHierarchyDepthLimit crash.
+                    if self.viewModel.routeStops.isEmpty {
+                        // No stops left — go all the way back to the map
+                        // so the user doesn't see a stale grid.
+                        self.interfaceController?.popToRootTemplate(animated: true, completion: nil)
+                    } else {
+                        self.interfaceController?.popTemplate(animated: true, completion: nil)
+                    }
+                }
                 c()
             }
             return item
@@ -509,12 +525,14 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
                 // Drop stale responses so a slow earlier query can't overwrite
                 // fresher results (or let the driver tap a wrong, stale row).
                 guard generation == self.searchGeneration else { return }
+                self.searchItemMap.removeAll()
                 let items = results.map { mi in
                     let item = CPListItem(text: mi.name, detailText: mi.placemark.title)
+                    self.searchItemMap[ObjectIdentifier(item)] = mi
                     if let icon = self.searchResultIcon(for: mi) { item.setImage(icon) }
                     item.handler = { [weak self] _, c in
                         Task { @MainActor in
-                            self?.interfaceController?.popTemplate(animated: true) { _, _ in self?.presentTripPreview(for: mi) }
+                            self?.interfaceController?.popTemplate(animated: true) { _ in self?.presentTripPreview(for: mi) }
                         }
                         c()
                     }
@@ -524,7 +542,19 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             }
         }
     }
-    func searchTemplate(_ searchTemplate: CPSearchTemplate, selectedResult item: CPListItem, completionHandler: @escaping () -> Void) { completionHandler() }
+    func searchTemplate(_ searchTemplate: CPSearchTemplate, selectedResult item: CPListItem, completionHandler: @escaping () -> Void) {
+        let id = ObjectIdentifier(item)
+        guard let mapItem = searchItemMap[id] else {
+            completionHandler()
+            return
+        }
+        // completionHandler() tells CarPlay to dismiss the search template,
+        // so we must NOT call popTemplate — the search is already gone.
+        completionHandler()
+        Task { @MainActor in
+            self.presentTripPreview(for: mapItem)
+        }
+    }
 
     // MARK: - Trip Preview
 

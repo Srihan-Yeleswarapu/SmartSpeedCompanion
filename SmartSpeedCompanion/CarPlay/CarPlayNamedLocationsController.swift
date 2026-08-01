@@ -107,20 +107,20 @@ class CarPlayNamedLocationsController {
 
     /// Show a brief confirmation alert that navigation has started.
     private func showNavigationStartedConfirmation(_ name: String) {
-        let action = CPAlertAction(title: "OK", style: .default) { [weak self] _ in
-            self?.interfaceController?.dismissTemplate(animated: true) { _, _ in
-                // Pop to root (the map) now that navigation is active
-                self?.interfaceController?.popToRootTemplate(animated: true, completion: nil)
-            }
+        // Pop to root first to keep the hierarchy shallow, then present
+        // the confirmation alert on the clean root map template.
+        interfaceController?.popToRootTemplate(animated: false) { [weak self] success in
+            guard let self = self, success else { return }
+            let action = CPAlertAction(title: "OK", style: .default) { _ in }
+            let alert = CPAlertTemplate(
+                titleVariants: [
+                    "Navigating to \(name)",
+                    "Route calculated. Follow the map for turn-by-turn directions."
+                ],
+                actions: [action]
+            )
+            self.interfaceController?.presentTemplate(alert, animated: true, completion: nil)
         }
-        let alert = CPAlertTemplate(
-            titleVariants: [
-                "Navigating to \(name)",
-                "Route calculated. Follow the map for turn-by-turn directions."
-            ],
-            actions: [action]
-        )
-        interfaceController?.presentTemplate(alert, animated: true, completion: nil)
     }
 
     // MARK: - Empty State
