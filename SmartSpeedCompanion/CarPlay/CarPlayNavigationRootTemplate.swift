@@ -529,10 +529,14 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     func searchTemplate(_ searchTemplate: CPSearchTemplate, updatedSearchText searchText: String, completionHandler: @escaping ([CPListItem]) -> Void) {
         // Blank query (e.g. when the template is dismissed or the field is
         // cleared): immediately hand back an empty list instead of firing a
-        // meaningless 50-km MKLocalSearch for "" — that wasted call could
-        // also race a real tap and wipe the item map before selection.
+        // meaningless 50-km MKLocalSearch for "". This also clears the
+        // result caches: keeping them would let a later tap on a stale row
+        // resolve through `latestSearchResults` to a destination from a
+        // PREVIOUS search session and present the wrong trip preview.
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
+            searchItemMap.removeAll()
+            latestSearchResults.removeAll()
             completionHandler([])
             return
         }
@@ -594,23 +598,33 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     /// Presents the trip preview at most once per search selection. CarPlay
     /// can deliver BOTH the row handler and the `selectedResult` delegate for
     /// a single tap; without this latch the preview would be presented twice
-    /// (harmless — `showTripPreviews` replaces — but wasteful and racy).
+    /// (harmless — `showTripPreviews` replaces — but wasteful and racy). The
+    /// latch is held for the FULL duration of the async route calculation +
+    /// presentation, so a second tap while the first preview is still being
+    /// computed is ignored rather than racing it.
     @MainActor
     private func presentTripPreviewOnce(for destination: MKMapItem) {
         guard !isPresentingTripPreview else { return }
         isPresentingTripPreview = true
-        defer { isPresentingTripPreview = false }
-        presentTripPreview(for: destination)
+        presentTripPreview(for: destination) { [weak self] in
+            Task { @MainActor in
+                self?.isPresentingTripPreview = false
+            }
+        }
     }
 
     // MARK: - Trip Preview
 
     @MainActor func showTurnByTurnList() { navigationManager.showManeuversList(interfaceController: interfaceController) }
 
+    /// Calculates routes and shows the trip preview. `completion` is invoked
+    /// once the preview has been handed to CPMapTemplate (or route
+    /// calculation failed), releasing the single-flight latch.
     @MainActor
-    private func presentTripPreview(for destination: MKMapItem) {
+    private func presentTripPreview(for destination: MKMapItem, completion: (@MainActor () -> Void)? = nil) {
         navigationManager.calculateRoutes(to: destination) { [weak self] routes in
             Task { @MainActor in
+                defer { completion?() }
                 guard let self = self else { return }
                 let choices: [CPRouteChoice]
                 if routes.isEmpty {

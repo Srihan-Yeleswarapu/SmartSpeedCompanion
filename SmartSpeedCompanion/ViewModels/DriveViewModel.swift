@@ -1164,10 +1164,17 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         DebugLogger.shared.log("DriveViewModel: interrupted session restored")
     }
     
-    /// User chose to discard the interrupted session. Clears all saved state.
+    /// User chose to discard the interrupted session. Clears all saved state
+    /// AND force-ends any lingering Live Activity so the Dynamic Island
+    /// doesn't keep showing a frozen card after the drive was discarded.
     public func discardInterruptedSession() {
         sessionRecorder.clearSavedSessionState()
         clearNavigationState()
+        #if !targetEnvironment(simulator)
+        if #available(iOS 16.1, *) {
+            LiveActivityManager.shared.endAllActivities()
+        }
+        #endif
         showInterruptedSessionPrompt = false
         interruptedSessionDestinationName = ""
         DebugLogger.shared.log("DriveViewModel: interrupted session discarded")
