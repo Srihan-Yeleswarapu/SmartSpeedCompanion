@@ -109,7 +109,7 @@ class CarPlayNamedLocationsController {
     private func showNavigationStartedConfirmation(_ name: String) {
         // Pop to root first to keep the hierarchy shallow, then present
         // the confirmation alert on the clean root map template.
-        interfaceController?.popToRootTemplate(animated: false) { [weak self] success in
+        interfaceController?.popToRootTemplate(animated: false) { [weak self] success, _ in
             guard let self = self, success else { return }
             let action = CPAlertAction(title: "OK", style: .default) { _ in }
             let alert = CPAlertTemplate(

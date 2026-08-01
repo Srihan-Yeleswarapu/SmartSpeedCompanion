@@ -318,7 +318,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         let template = CPInformationTemplate(title: "Drive Session", layout: .twoColumn, items: items,
             actions: [
                 CPTextButton(title: "End Session", textStyle: .normal, handler: { [weak self] _ in
-                    self?.interfaceController?.popTemplate(animated: true) { _ in
+                    self?.interfaceController?.popTemplate(animated: true) { _, _ in
                         Task { @MainActor in self?.viewModel.endSession() }
                     }
                 }),
@@ -474,7 +474,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     private func showStopAddedConfirmation(name: String) {
         // Pop to root first to keep the hierarchy shallow, then present
         // the confirmation alert on the clean root map template.
-        interfaceController?.popToRootTemplate(animated: false) { [weak self] success in
+        interfaceController?.popToRootTemplate(animated: false) { [weak self] success, _ in
             guard let self = self, success else { return }
             let action = CPAlertAction(title: "OK", style: .default) { _ in }
             let alert = CPAlertTemplate(
@@ -532,7 +532,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
                     if let icon = self.searchResultIcon(for: mi) { item.setImage(icon) }
                     item.handler = { [weak self] _, c in
                         Task { @MainActor in
-                            self?.interfaceController?.popTemplate(animated: true) { _ in self?.presentTripPreview(for: mi) }
+                            self?.interfaceController?.popTemplate(animated: true) { _, _ in self?.presentTripPreview(for: mi) }
                         }
                         c()
                     }
