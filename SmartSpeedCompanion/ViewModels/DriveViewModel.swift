@@ -691,6 +691,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // when the gate fires the underlying call is usually a cache hit.
     private var lastRoadNameRefreshAt: Date = .distantPast
     private let roadNameRefreshInterval: TimeInterval = 10.0
+    /// Guards the asynchronous reverse-geocode result so a slower request
+    /// for an older GPS fix cannot overwrite the road name for the current
+    /// fix (the Riggs/Cedarcest TestFlight failure mode).
+    private var roadNameRefreshGeneration: UInt64 = 0
+    private var currentRoadNameCoordinate: CLLocationCoordinate2D?
     /// Monotonic search id for `searchNearby(category:)`. When the user
     /// taps Gas then Coffee rapidly, only the last response updates the
     /// card so the label always matches the visible results.
@@ -845,9 +850,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 let now = Date()
                 if now.timeIntervalSince(self.lastRoadNameRefreshAt) >= self.roadNameRefreshInterval {
                     self.lastRoadNameRefreshAt = now
+                    self.roadNameRefreshGeneration &+= 1
+                    let generation = self.roadNameRefreshGeneration
                     let coord = location.coordinate
                     Task { [weak self] in
-                        await self?.refreshCurrentRoadName(at: coord)
+                        await self?.refreshCurrentRoadName(at: coord, generation: generation)
                     }
                 }
                 // Advance turn-by-turn guidance (delegated to NavigationCoordinator).
@@ -1432,6 +1439,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     /// Adds an intermediate stop to the current route. After adding,
     /// recalculates the multi-stop route and starts navigation.
     public func addStopToRoute(_ mapItem: MKMapItem, at index: Int? = nil) async {
+        let previousStops = routeStops
         let stop = RouteStop(
             name: mapItem.name ?? "Stop",
             address: mapItem.placemark.title,
@@ -1440,31 +1448,48 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         )
 
         navigationCoordinator.addStop(stop, at: index)
+        let editedStopIDs = routeStops.map(\.id)
         self.showRouteStopsSheet = true
         self.isAddingStopToRoute = false
         self.addStopSearchResults = []
 
         // Recalculate the route with the new stop, then refresh navigation
-        if isNavigating, let route = await navigationCoordinator.calculateMultiStopRoute() {
-            await startNavigation(with: route, isReroute: true)
+        if isNavigating {
+            if let route = await navigationCoordinator.calculateMultiStopRoute() {
+                await startNavigation(with: route, isReroute: true)
+            } else {
+                _ = navigationCoordinator.restoreRouteStops(previousStops, ifCurrentIDsMatch: editedStopIDs)
+            }
         }
     }
 
     /// Removes a stop from the route by its ID.
     public func removeStopFromRoute(_ id: UUID) async {
+        let previousStops = routeStops
         navigationCoordinator.removeStop(id: id)
+        let editedStopIDs = routeStops.map(\.id)
 
-        if isNavigating, let route = await navigationCoordinator.calculateMultiStopRoute() {
-            await startNavigation(with: route, isReroute: true)
+        if isNavigating {
+            if let route = await navigationCoordinator.calculateMultiStopRoute() {
+                await startNavigation(with: route, isReroute: true)
+            } else {
+                _ = navigationCoordinator.restoreRouteStops(previousStops, ifCurrentIDsMatch: editedStopIDs)
+            }
         }
     }
 
     /// Reorders a stop from one index to another (drag-to-reorder).
     public func moveStopInRoute(from sourceIndex: Int, to destinationIndex: Int) async {
+        let previousStops = routeStops
         navigationCoordinator.moveStop(from: sourceIndex, to: destinationIndex)
+        let editedStopIDs = routeStops.map(\.id)
 
-        if isNavigating, let route = await navigationCoordinator.calculateMultiStopRoute() {
-            await startNavigation(with: route, isReroute: true)
+        if isNavigating {
+            if let route = await navigationCoordinator.calculateMultiStopRoute() {
+                await startNavigation(with: route, isReroute: true)
+            } else {
+                _ = navigationCoordinator.restoreRouteStops(previousStops, ifCurrentIDsMatch: editedStopIDs)
+            }
         }
     }
 
@@ -1567,10 +1592,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
     /// Applies the best ordering found by the ordering comparison.
     public func applyBestStopOrdering() async {
+        let previousStops = routeStops
         let changed = navigationCoordinator.applyBestOrdering()
-        if changed {
-            if isNavigating, let route = await navigationCoordinator.calculateMultiStopRoute() {
+        let editedStopIDs = routeStops.map(\.id)
+        if changed, isNavigating {
+            if let route = await navigationCoordinator.calculateMultiStopRoute() {
                 await startNavigation(with: route, isReroute: true)
+            } else {
+                _ = navigationCoordinator.restoreRouteStops(previousStops, ifCurrentIDsMatch: editedStopIDs)
             }
         }
     }
@@ -2169,11 +2198,15 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         let mps = locationManager.latestLocation?.speed ?? 0
         let currentSpeedMph = mps * 2.23694
 
+        // Resolve the road for the same coordinate used by this heading
+        // fetch. Passing nil here forced the resolver into spatial-only mode
+        // exactly at turns, which could select a nearby 25 mph cross-street.
+        let roadName = await RoadGeocoder.shared.resolveRoadContext(at: coord)?.roadName
         _ = await SmartSpeedLimitService.shared.updateSpeedLimit(
             at: coord,
             heading: heading,
             currentSpeedMph: currentSpeedMph,
-            roadName: nil,
+            roadName: roadName,
             forceRefresh: false
         )
         lastSpeedLimitFetchHeading = heading
@@ -2207,17 +2240,36 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
     /// Throttled reverse-geocode that populates `currentRoadName`. Called
     /// from the 500 ms GPS sink; typically fires once per 10 sec while
-    /// driving. We intentionally do NOT clear `currentRoadName` when the
-    /// geocode returns no thoroughfare (e.g. parking-lot churn after a
-    /// destination arrival) — keeping the last known road name prevents
-    /// the HUD chip from flickering off when the user briefly drives through
-    /// an unnamed lot before re-entering a named street.
-    func refreshCurrentRoadName(at coordinate: CLLocationCoordinate2D) async {
-        if let context = await RoadGeocoder.shared.resolveRoadContext(at: coordinate),
-           let name = context.roadName,
-           !name.isEmpty,
-           name != currentRoadName {
-            currentRoadName = name
+    /// driving. A failed lookup keeps the last known name through brief
+    /// unnamed-lot churn, but clears it once the latest fix is materially
+    /// beyond the coordinate where that name was resolved.
+    func refreshCurrentRoadName(at coordinate: CLLocationCoordinate2D, generation: UInt64) async {
+        guard generation == roadNameRefreshGeneration else { return }
+        let context = await RoadGeocoder.shared.resolveRoadContext(at: coordinate)
+        // The request may have awaited a network fallback. Re-check both the
+        // generation and the live fix before publishing, otherwise a delayed
+        // result from the previous road can label the current road incorrectly.
+        guard generation == roadNameRefreshGeneration,
+              let latest = locationManager.latestLocation,
+              latest.distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)) <= 100 else { return }
+
+        if let name = context?.roadName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty {
+            if name != currentRoadName {
+                currentRoadName = name
+            }
+            // Keep the anchor fresh even when the road name itself is
+            // unchanged; otherwise a long drive on one road can make a later
+            // failed lookup look like it belongs to the old road forever.
+            currentRoadNameCoordinate = coordinate
+        } else if let previousCoordinate = currentRoadNameCoordinate,
+                  latest.distance(from: CLLocation(latitude: previousCoordinate.latitude, longitude: previousCoordinate.longitude)) > 150 {
+            // A failed lookup on a new road must not leave the old road label
+            // pinned forever. Keep the chip through brief unnamed-lot churn,
+            // but clear it once the latest fix is materially beyond the road
+            // where that name was resolved.
+            currentRoadName = nil
+            currentRoadNameCoordinate = nil
         }
     }
 
@@ -2306,6 +2358,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         self.nextManeuverCoordinate = nil
         self.distanceToDestination = 0
         self.currentRoadName = nil
+        self.currentRoadNameCoordinate = nil
+        self.roadNameRefreshGeneration &+= 1
     }
 
     /// Triggers speech synthesis for a given string.

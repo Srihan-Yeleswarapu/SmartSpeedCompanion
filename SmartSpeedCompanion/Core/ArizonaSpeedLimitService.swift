@@ -33,6 +33,10 @@ public actor ArizonaSpeedLimitService {
     // Versus the old O(n) scan of ALL 400+ segments for every GPS tick.
     private let bucketSizeDegrees: Double = 0.002
     private var circularCacheBuckets: [String: [RoadSegment]] = [:]
+    /// Changes whenever a lookup may populate or replace the spatial cache.
+    /// SpeedLimitService uses this token to prevent an older miss from clearing
+    /// cache data produced by a newer lookup while the actor hop is suspended.
+    private var cacheRevision: UInt64 = 0
 
     /// Build a bucketing key for a coordinate.
     private func bucketKey(for coordinate: CLLocationCoordinate2D) -> String {
@@ -267,6 +271,7 @@ public actor ArizonaSpeedLimitService {
     /// candidate, so the user-on-West-Frye-Road case no longer snares the
     /// nearest big-bbox freeway segment. Pass `nil` to disable.
     public func updateSpeedLimit(at coordinate: CLLocationCoordinate2D, heading: Double? = nil, currentSpeedMph: Double? = nil, roadName: String? = nil, expandedSearch: Bool = false) async throws -> Int {
+        cacheRevision &+= 1
         if !isLoaded {
             loadDataIfNeeded()
         }
@@ -482,15 +487,13 @@ public actor ArizonaSpeedLimitService {
                     // from a driver who reports a 90° off-axis heading
                     // (e.g. they're actually on a N-S cross-street).
                     guard normalizedDiff < 30 else { continue }
-                    var score = (distance + SCORE_BASE_OFFSET)
-                    // Reward the bearing match HARD so the residual
-                    // spatial sub-score has no chance of vaulting a
-                    // bigger-but-mismatched bbox over our candidate.
-                    if normalizedDiff < 10 {
-                        score += 100.0  // excellent alignment bonus
-                    } else {
-                        score += 30.0   // acceptable alignment
-                    }
+                    // Lower scores win. Convert the angular error into an
+                    // explicit meter-equivalent penalty instead of silently
+                    // mixing degrees and meters. A 30° gate maps to at most
+                    // 30 m, enough to prefer a clearly better alignment
+                    // without overpowering the spatial distance.
+                    let bearingPenalty = (normalizedDiff / 30.0) * 30.0
+                    var score = (distance + SCORE_BASE_OFFSET) + bearingPenalty
                     if score < salvageMinScore {
                         salvageMinScore = score
                         salvageLimit = segment.limit
@@ -746,8 +749,29 @@ public actor ArizonaSpeedLimitService {
     // parseWKBLineString is removed as Esri geodatabases use proprietary 
     // Compressed Geometry. We use spatial index bounding boxes instead natively.
 
-    /// Clears the spatial cache.
+    /// Returns the cache revision used to conditionally clear stale data.
+    public func currentCacheRevision() -> UInt64 {
+        cacheRevision
+    }
+
+    /// Clears the spatial cache unconditionally for explicit lifecycle resets.
     public func clearCache() {
+        clearCacheStorage()
+        cacheRevision &+= 1
+    }
+
+    /// Clears only if no newer lookup has started since `revision` was read.
+    /// This closes the race where an older miss reaches the actor after a
+    /// newer speed-limit lookup has already repopulated the cache.
+    @discardableResult
+    public func clearCache(ifRevision revision: UInt64) -> Bool {
+        guard cacheRevision == revision else { return false }
+        clearCacheStorage()
+        cacheRevision &+= 1
+        return true
+    }
+
+    private func clearCacheStorage() {
         spatialCache.removeAll()
         circularCache.removeAll()
         circularCacheBuckets.removeAll()
@@ -757,6 +781,7 @@ public actor ArizonaSpeedLimitService {
     
     /// Pre-caches speed limits along a planned route.
     public func preCacheRoute(coordinates: [CLLocationCoordinate2D]) async {
+        cacheRevision &+= 1
         for coord in coordinates {
             // We search in 3x3 grid around each point to ensure coverage
             let searchOffsets = [-gridPrecision, 0.0, gridPrecision]

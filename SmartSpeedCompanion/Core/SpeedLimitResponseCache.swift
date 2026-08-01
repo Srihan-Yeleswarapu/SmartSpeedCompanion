@@ -48,6 +48,18 @@ public actor SpeedLimitResponseCache {
     private let maxMemoryEntries: Int = 500
 
     private var memory: [String: Entry] = [:]
+    /// Revisions are kept separately from the persisted entry format so older
+    /// disk snapshots remain decodable.
+    private var memoryRevisionByKey: [String: UInt64] = [:]
+    /// Per-cell revisions prevent a slow prefetch/commit from overwriting a
+    /// newer response for the same spatial cell without blocking independent
+    /// cells. The global floor rejects stores that were already in flight when
+    /// a clear began.
+    private var latestStoreRevisionByKey: [String: UInt64] = [:]
+    private var minimumAcceptedRevision: UInt64 = 0
+    /// Prevents an asynchronous startup load from overwriting a live store or
+    /// resurrecting entries after an explicit clear.
+    private var didLoadFromDisk = false
     private let diskURL: URL
 
     /// Memory cache TTL: 30 minutes (Phase 2 polish). Long enough to absorb a typical
@@ -69,105 +81,192 @@ public actor SpeedLimitResponseCache {
 
     /// Compute the spatial grid key for a coord (cheap; no network roundtrip).
     /// `roadName` is folded into the key hash so a cross-street snap within the
-    /// same 50m cell properly invalidates the cache (the West Frye → 07 PECOS
-    /// case: both cells cover the same lat/lon, but different roadName means
-    /// a different speed limit and the cache MUST miss).
+    /// same 50m cell properly invalidates the cache.
     public func gridKey(for coordinate: CLLocationCoordinate2D, roadName: String? = nil) -> String {
-        let latKey = (coordinate.latitude / gridPrecision).rounded() * gridPrecision
-        let lonKey = (coordinate.longitude / gridPrecision).rounded() * gridPrecision
-        let nameHash = roadName?.hashValue ?? 0
-        return String(format: "g:%.4f,%.4f_%d", latKey, lonKey, nameHash)
+        guard isValidCoordinate(coordinate) else { return "invalid" }
+        // `String.hashValue` is intentionally randomized per process. Integer
+        // bucket coordinates and FNV-1a keep the key deterministic without
+        // locale-sensitive formatting.
+        let latBucket = Int64((coordinate.latitude / gridPrecision).rounded())
+        let lonBucket = Int64((coordinate.longitude / gridPrecision).rounded())
+        let nameHash = stableNameHash(roadName)
+        return "g:\(latBucket),\(lonBucket)_\(nameHash)"
     }
 
     /// Look up a cached entry. Returns nil if missing, expired, or recorded coord is
-    /// > 50m from the requested coord (Phase 2 dedupe tightening, was 80m).
-    /// On hit, touches `entry.cachedAt` to `Date()` so the eviction policy retains
-    /// recently-looked-up entries. This is an O(1) dictionary lookup plus a cache
-    /// bump — much faster than the old O(n) `lruOrder.firstIndex(of:)` scan.
+    /// > 50m from the requested coord.
     public func lookup(at coordinate: CLLocationCoordinate2D, roadName: String? = nil) -> SpeedLimitResponse? {
-        let key = gridKey(for: coordinate, roadName: roadName)
-        guard var entry = memory[key], isFresh(entry), entry.roadName == roadName else { return nil }
+        guard isValidCoordinate(coordinate) else { return nil }
+        let canonicalName = canonicalRoadName(roadName)
+        let key = gridKey(for: coordinate, roadName: canonicalName)
+        guard var entry = memory[key], isFresh(entry), entry.roadName == canonicalName else { return nil }
         let recordedLoc = CLLocation(latitude: entry.lat, longitude: entry.lon)
         let queriedLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        // Phase 2 -- tighten from 80m to 50m so adjacent grid cells with mildly
-        // different speeds don't flicker the answer under typical driving.
         if recordedLoc.distance(from: queriedLoc) > 50 { return nil }
 
-        // Touch cachedAt to mark as recently used (no O(n) LRU list to update).
+        // Touch cachedAt to mark as recently used.
         entry.cachedAt = Date()
         memory[key] = entry
         return entry.response
     }
 
-    /// Persist a response. Updates in-memory cache + writes the whole memory table to disk.
-    /// Disk write is debounced: we collapse rapid stores via an async task.
-    /// Eviction uses a timestamp scan (O(n) on evict only) instead of the old
-    /// O(n) LRU list on EVERY lookup/store.
-    public func store(_ response: SpeedLimitResponse, at coordinate: CLLocationCoordinate2D, roadName: String? = nil) async {
-        let key = gridKey(for: coordinate, roadName: roadName)
-        let entry = Entry(
+    /// Persist a response. Revisions are optional for compatibility with existing callers.
+    public func store(
+        _ response: SpeedLimitResponse,
+        at coordinate: CLLocationCoordinate2D,
+        roadName: String? = nil,
+        revision: UInt64? = nil
+    ) async {
+        // Initialization starts disk loading in a separate Task. Complete that
+        // merge before accepting the first live store so an older snapshot
+        // cannot overwrite a fresh response.
+        if !didLoadFromDisk {
+            await loadFromDisk()
+        }
+        guard isValidCoordinate(coordinate) else { return }
+
+        let canonicalName = canonicalRoadName(roadName)
+        let key = gridKey(for: coordinate, roadName: canonicalName)
+        if let revision {
+            guard revision > minimumAcceptedRevision,
+                  revision > (latestStoreRevisionByKey[key] ?? 0) else { return }
+            latestStoreRevisionByKey[key] = revision
+        }
+        memory[key] = Entry(
             response: response,
             gridKey: key,
             lat: coordinate.latitude,
             lon: coordinate.longitude,
             cachedAt: Date(),
-            roadName: roadName
+            roadName: canonicalName
         )
-        memory[key] = entry
-
-        // Evict oldest entries when over capacity.
-        // O(n) scan of ~500 entries, but only runs when cache exceeds limit
-        // (~once per 500 stores, or ~every 8 minutes of driving).
-        if memory.count > maxMemoryEntries {
-            // Find the oldest entry by cachedAt and remove it.
-            // `min(by:)` is O(n) but we only call it when over capacity.
-            if let oldestKey = memory.min(by: { $0.value.cachedAt < $1.value.cachedAt })?.key {
-                memory.removeValue(forKey: oldestKey)
-            }
+        if let revision {
+            memoryRevisionByKey[key] = revision
+        } else {
+            memoryRevisionByKey.removeValue(forKey: key)
         }
 
-        await persistToDisk()
+        if memory.count > maxMemoryEntries,
+           let oldestKey = memory.min(by: { $0.value.cachedAt < $1.value.cachedAt })?.key {
+            memory.removeValue(forKey: oldestKey)
+            memoryRevisionByKey.removeValue(forKey: oldestKey)
+        }
+        persistToDisk()
     }
 
-    /// Drop everything in memory + on disk. Used by SmartSpeedLimitService after 20
-    /// consecutive misses.
-    public func clear() async {
-        memory.removeAll()
-        try? FileManager.default.removeItem(at: diskURL)
+    /// Drop everything in memory + on disk. When a caller supplies the latest
+    /// revision it has issued, stores already queued before this clear are
+    /// rejected even if they have not reached this actor yet.
+    public func clear(rejectingRevisionsThrough revision: UInt64? = nil) async {
+        // A clear is an explicit lifecycle decision; a queued startup load must
+        // not repopulate the cache after it completes.
+        didLoadFromDisk = true
+        if let revision {
+            let keysToRemove = memory.keys.filter {
+                (memoryRevisionByKey[$0] ?? 0) <= revision
+            }
+            for key in keysToRemove {
+                memory.removeValue(forKey: key)
+                memoryRevisionByKey.removeValue(forKey: key)
+            }
+            latestStoreRevisionByKey = latestStoreRevisionByKey.filter { $0.value > revision }
+            minimumAcceptedRevision = max(minimumAcceptedRevision, revision)
+            // Persist the preserved newer entries so a stale clear cannot
+            // resurrect old disk data on the next launch.
+            persistToDisk()
+        } else {
+            memory.removeAll()
+            memoryRevisionByKey.removeAll()
+            latestStoreRevisionByKey.removeAll()
+            try? FileManager.default.removeItem(at: diskURL)
+        }
     }
 
-    /// Load persisted entries from disk (called once on startup by SmartSpeedLimitService.init).
+    /// Load persisted entries from disk (called once on startup).
+    ///
+    /// This method intentionally performs the small bounded disk read without
+    /// an internal suspension point. Actor reentrancy would otherwise let a
+    /// live `store()` run after `didLoadFromDisk` was set but before the disk
+    /// merge completed, allowing the older snapshot to overwrite fresh data.
     public func loadFromDisk() async {
+        guard !didLoadFromDisk else { return }
+        didLoadFromDisk = true
         guard let data = try? Data(contentsOf: diskURL) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let entries = try? decoder.decode([Entry].self, from: data) else { return }
         let cutoff = Date().addingTimeInterval(-diskTtl)
+
         for entry in entries where entry.cachedAt > cutoff {
-            memory[entry.gridKey] = entry
+            let coordinate = CLLocationCoordinate2D(latitude: entry.lat, longitude: entry.lon)
+            guard isValidCoordinate(coordinate) else { continue }
+            let canonicalName = canonicalRoadName(entry.roadName)
+            let migrated = Entry(
+                response: entry.response,
+                gridKey: gridKey(for: coordinate, roadName: canonicalName),
+                lat: entry.lat,
+                lon: entry.lon,
+                cachedAt: entry.cachedAt,
+                roadName: canonicalName
+            )
+            // A live store can race startup loading; never replace newer memory.
+            if let existing = memory[migrated.gridKey], existing.cachedAt >= migrated.cachedAt {
+                continue
+            }
+            memory[migrated.gridKey] = migrated
+            memoryRevisionByKey[migrated.gridKey] = 0
+        }
+
+        if memory.count > maxMemoryEntries {
+            let newest = memory.values.sorted { $0.cachedAt > $1.cachedAt }.prefix(maxMemoryEntries)
+            memory = Dictionary(uniqueKeysWithValues: newest.map { ($0.gridKey, $0) })
+            memoryRevisionByKey = memoryRevisionByKey.filter { memory[$0.key] != nil }
         }
         DebugLogger.shared.log("SpeedLimitResponseCache: loaded \(entries.count) entries from disk")
     }
 
     // MARK: - Private
 
+    private func isValidCoordinate(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        coordinate.latitude.isFinite && coordinate.longitude.isFinite &&
+        (-90.0...90.0).contains(coordinate.latitude) &&
+        (-180.0...180.0).contains(coordinate.longitude)
+    }
+
+    private func canonicalRoadName(_ roadName: String?) -> String? {
+        guard let roadName else { return nil }
+        let canonical = roadName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+            .uppercased()
+        return canonical.isEmpty ? nil : canonical
+    }
+
+    private func stableNameHash(_ roadName: String?) -> UInt64 {
+        guard let roadName = canonicalRoadName(roadName) else { return 0 }
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in roadName.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return hash
+    }
+
     private func isFresh(_ entry: Entry) -> Bool {
         Date().timeIntervalSince(entry.cachedAt) < memoryTtl
     }
 
-    private func persistToDisk() async {
-        let snapshot = Array(memory.values)
-        let url = self.diskURL
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        // Hop off the actor so the disk write can't deadlock any awaits on `shared`.
-        await Task.detached(priority: .utility) {
-            do {
-                let data = try encoder.encode(snapshot)
-                try data.write(to: url, options: [.atomic])
-            } catch {
-                DebugLogger.shared.log("SpeedLimitResponseCache: disk write failed: \(error)")
-            }
-        }.value
+    private func persistToDisk() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            // Keep writes serialized with actor mutations. Detached writes could
+            // finish out of order and put an older snapshot back on disk.
+            let data = try encoder.encode(Array(memory.values))
+            try data.write(to: diskURL, options: [.atomic])
+        } catch {
+            DebugLogger.shared.log("SpeedLimitResponseCache: disk write failed: \(error)")
+        }
     }
 }

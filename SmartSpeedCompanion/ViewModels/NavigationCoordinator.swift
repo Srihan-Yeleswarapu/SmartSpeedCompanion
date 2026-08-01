@@ -197,7 +197,19 @@ public final class NavigationCoordinator: ObservableObject {
     /// The MapKit route object being followed.
     @Published public var currentRoute: MKRoute? = nil
     /// The destination selected by the user.
-    @Published public var destination: MKMapItem? = nil
+    @Published public var destination: MKMapItem? = nil {
+        didSet {
+            guard !mapItemsMatch(oldValue, destination) else { return }
+            // Direct callers (including CarPlay restoration) can set the
+            // destination without going through selectDestination... . Keep
+            // the multi-stop snapshot and its invalidation token in sync.
+            finalDestinationMapItem = destination
+            routeLegs.removeAll()
+            multiStopLegDestinations.removeAll()
+            activeMultiStopLegIndex = 0
+            multiStopStateGeneration &+= 1
+        }
+    }
     /// The destination as a MapItem mirror of `destination` for reroute paths
     /// (e.g. `checkForFasterRoute` and the 35m off-route detector).
     @Published public var destinationItem: MKMapItem? = nil
@@ -226,6 +238,15 @@ public final class NavigationCoordinator: ObservableObject {
     /// The list of stops for the FINAL destination — this doesn't change when
     /// reordering, it's always the last item passed in `calculateMultiStopRoute`.
     private var finalDestinationMapItem: MKMapItem?
+    /// Invalidates in-flight multi-stop calculations when stops or the
+    /// destination changes while MapKit is awaiting a leg response.
+    private var multiStopStateGeneration: UInt64 = 0
+    /// Map items for each calculated leg, parallel to `routeLegs`. The
+    /// coordinator follows one leg at a time; CarPlay uses this to present the
+    /// current stop rather than claiming the final destination is the active
+    /// leg's endpoint.
+    private var multiStopLegDestinations: [MKMapItem] = []
+    private var activeMultiStopLegIndex: Int = 0
 
     // MARK: - Internal nav scratch
 
@@ -355,13 +376,20 @@ public final class NavigationCoordinator: ObservableObject {
     public func addStop(_ stop: RouteStop, at index: Int? = nil) {
         let idx = index.map { min(max($0, 0), routeStops.count) } ?? routeStops.count
         routeStops.insert(stop, at: idx)
+        // Keep the last complete route snapshot until the replacement
+        // calculation succeeds. This prevents routeStops changing while the
+        // active route/legs are cleared and then calculation fails.
+        orderingComparison = nil
+        multiStopStateGeneration &+= 1
     }
 
     /// Removes a stop by its ID.
     public func removeStop(id: UUID) {
+        let before = routeStops.count
         routeStops.removeAll { $0.id == id }
-        routeLegs.removeAll()
+        guard routeStops.count != before else { return }
         orderingComparison = nil
+        multiStopStateGeneration &+= 1
     }
 
     /// Moves a stop from one position to another (drag-to-reorder).
@@ -370,34 +398,56 @@ public final class NavigationCoordinator: ObservableObject {
               destinationIndex >= 0, destinationIndex < routeStops.count else { return }
         let stop = routeStops.remove(at: sourceIndex)
         routeStops.insert(stop, at: destinationIndex)
+        // Preserve the currently-followed route while the reordered snapshot
+        // is recalculated; a failed request must not strand navigation.
+        orderingComparison = nil
+        multiStopStateGeneration &+= 1
+    }
+
+    /// Restores the last coherent stop list after a replacement route fails.
+    /// The caller uses this only for the same user edit that initiated the
+    /// failed calculation, so the active route and its legs remain aligned.
+    @discardableResult
+    public func restoreRouteStops(_ stops: [RouteStop], ifCurrentIDsMatch expectedIDs: [UUID]) -> Bool {
+        guard routeStops.map(\.id) == expectedIDs else { return false }
+        routeStops = stops
+        multiStopStateGeneration &+= 1
+        return true
     }
 
     /// Calculates the full multi-stop route from the current location through
     /// all intermediate stops to the final destination. Each leg is calculated
     /// separately so we capture per-leg ETA/distance data.
     ///
-    /// Returns the overall best route for the final leg (origin→destination
-    /// through all waypoints) and populates per-leg estimates on each stop.
+    /// Returns the route for the first active leg. The remaining legs stay in
+    /// `routeLegs` and are activated automatically as each stop is reached.
     public func calculateMultiStopRoute() async -> MKRoute? {
         guard let finalDest = finalDestinationMapItem ?? destination else { return nil }
         isCalculatingMultiStop = true
         defer { isCalculatingMultiStop = false }
 
+        let calculationGeneration = multiStopStateGeneration
         let source = MKMapItem.forCurrentLocation()
-        let allLegs = buildLegs(from: source, through: routeStops, to: finalDest)
-
+        let stopsSnapshot = routeStops
+        let stopIDsSnapshot = stopsSnapshot.map(\.id)
+        let allLegs = buildLegs(from: source, through: stopsSnapshot, to: finalDest)
         var computedLegs: [RouteLeg] = []
-        var overallRoute: MKRoute? = nil
+        var computedStopEstimates: [(index: Int, travelTime: TimeInterval, distance: CLLocationDistance, cumulativeTime: TimeInterval)] = []
         var cumulativeTime: TimeInterval = 0
 
         // Calculate each leg sequentially so we can accumulate times.
         // Using a task group would be faster but MKDirections has a concurrency
-        // limit; serial is more reliable.
+        // limit; serial is more reliable. Treat the result transactionally:
+        // publishing a partial set of legs leaves the phone and CarPlay with
+        // incompatible route state and was a direct path to missing directions
+        // after a stop was added.
         for (idx, leg) in allLegs.enumerated() {
             guard let legRoute = await calculateRouteBetween(
                 source: leg.source,
                 destination: leg.destination
-            ) else { continue }
+            ) else {
+                return nil
+            }
 
             let routeLeg = RouteLeg(
                 sourceName: leg.sourceName,
@@ -409,27 +459,40 @@ public final class NavigationCoordinator: ObservableObject {
             computedLegs.append(routeLeg)
             cumulativeTime += legRoute.expectedTravelTime
 
-            // Populate the corresponding stop's per-leg data
-            if idx < routeStops.count {
-                routeStops[idx].travelTimeFromPrevious = legRoute.expectedTravelTime
-                routeStops[idx].distanceFromPrevious = legRoute.distance
-                routeStops[idx].cumulativeTravelTime = cumulativeTime
-            }
-
-            // Keep the first (overall) route for the nav engine
-            if idx == 0 {
-                overallRoute = legRoute
+            // Hold stop estimates locally until every leg succeeds.
+            if idx < stopsSnapshot.count {
+                computedStopEstimates.append((
+                    index: idx,
+                    travelTime: legRoute.expectedTravelTime,
+                    distance: legRoute.distance,
+                    cumulativeTime: cumulativeTime
+                ))
             }
         }
 
+        // Actor reentrancy lets a stop edit or destination replacement happen
+        // while MapKit is awaiting a leg. Never publish a mixed snapshot.
+        guard calculationGeneration == multiStopStateGeneration,
+              routeStops.map(\.id) == stopIDsSnapshot,
+              mapItemsMatch(finalDest, finalDestinationMapItem ?? destination),
+              computedLegs.count == allLegs.count,
+              let overallRoute = computedLegs.first?.route else {
+            return nil
+        }
+
+        self.multiStopLegDestinations = allLegs.map { $0.destination }
+        self.activeMultiStopLegIndex = 0
+        for estimate in computedStopEstimates {
+            routeStops[estimate.index].travelTimeFromPrevious = estimate.travelTime
+            routeStops[estimate.index].distanceFromPrevious = estimate.distance
+            routeStops[estimate.index].cumulativeTravelTime = estimate.cumulativeTime
+        }
         self.routeLegs = computedLegs
 
-        // Update ETA to reflect the total multi-stop journey
-        if let overall = overallRoute {
-            let totalTime = computedLegs.reduce(0) { $0 + $1.travelTime }
-            self.eta = Date().addingTimeInterval(totalTime)
-            self.distanceToDestination = computedLegs.reduce(0) { $0 + $1.distance }
-        }
+        // Update ETA to reflect the total multi-stop journey.
+        let totalTime = computedLegs.reduce(0) { $0 + $1.travelTime }
+        self.eta = Date().addingTimeInterval(totalTime)
+        self.distanceToDestination = computedLegs.reduce(0) { $0 + $1.distance }
 
         return overallRoute
     }
@@ -446,13 +509,15 @@ public final class NavigationCoordinator: ObservableObject {
               !routeStops.isEmpty else { return nil }
 
         let source = MKMapItem.forCurrentLocation()
-        let currentIDs = routeStops.map(\.id)
+        let stopsSnapshot = routeStops
+        let currentIDs = stopsSnapshot.map(\.id)
+        let comparisonGeneration = multiStopStateGeneration
 
         // 1. Calculate the current order's total using REAL directions (one
         //    call per leg, needed for accurate current-ETA display).
         let currentTime = await totalTravelTimeForOrder(
             source: source,
-            stops: routeStops,
+            stops: stopsSnapshot,
             destination: finalDest
         )
         guard currentTime > 0 else { return nil }
@@ -462,12 +527,12 @@ public final class NavigationCoordinator: ObservableObject {
         var bestTime = currentTime
         var bestOrderIDs = currentIDs
 
-        if routeStops.count <= 4 {
+        if stopsSnapshot.count <= 4 {
             // Exhaustive search using straight-line distance approximation.
             // This is extremely fast because it doesn't hit the network.
             let bestHaversineOrder = await findBestOrderHaversine(
                 source: source,
-                stops: routeStops,
+                stops: stopsSnapshot,
                 destination: finalDest
             )
             if let best = bestHaversineOrder {
@@ -486,7 +551,7 @@ public final class NavigationCoordinator: ObservableObject {
             // Greedy nearest-neighbor using Haversine distance
             let bestNNOrder = await greedyNearestNeighborHaversine(
                 source: source,
-                stops: routeStops,
+                stops: stopsSnapshot,
                 destination: finalDest
             )
             if let best = bestNNOrder {
@@ -500,6 +565,12 @@ public final class NavigationCoordinator: ObservableObject {
                     bestOrderIDs = best.map(\.id)
                 }
             }
+        }
+
+        guard comparisonGeneration == multiStopStateGeneration,
+              routeStops.map(\.id) == currentIDs,
+              mapItemsMatch(finalDest, finalDestinationMapItem ?? destination) else {
+            return nil
         }
 
         let comparison = OrderingComparison(
@@ -528,6 +599,10 @@ public final class NavigationCoordinator: ObservableObject {
         }
         if reordered.count == routeStops.count {
             routeStops = reordered
+            // The old route remains coherent until the caller successfully
+            // recalculates it for the new ordering.
+            multiStopStateGeneration &+= 1
+            orderingComparison = nil
             return true
         }
         return false
@@ -540,11 +615,86 @@ public final class NavigationCoordinator: ObservableObject {
         orderingComparison = nil
         isCalculatingMultiStop = false
         finalDestinationMapItem = nil
+        multiStopLegDestinations.removeAll()
+        activeMultiStopLegIndex = 0
+        multiStopStateGeneration &+= 1
     }
 
     // MARK: - Multi-Stop Helpers
 
     /// Builds the list of (source, destination) pairs for each leg of the journey.
+    /// The endpoint of the leg currently being shown to CarPlay.
+    /// `nil` means this is a normal single-destination route.
+    public var activeMultiStopDestination: MKMapItem? {
+        guard !routeStops.isEmpty,
+              multiStopLegDestinations.indices.contains(activeMultiStopLegIndex) else { return nil }
+        return multiStopLegDestinations[activeMultiStopLegIndex]
+    }
+
+    /// Advances guidance from an intermediate stop to the next precomputed
+    /// leg. Returns nil when the final leg is already active.
+    @discardableResult
+    public func advanceToNextMultiStopLeg() -> (route: MKRoute, destination: MKMapItem)? {
+        // Stop edits preserve the previous complete route until recalculation
+        // succeeds. Do not advance that stale snapshot after the last stop was
+        // removed while its replacement route is still pending.
+        guard !routeStops.isEmpty,
+              activeMultiStopLegIndex + 1 < routeLegs.count,
+              let nextRoute = routeLegs[activeMultiStopLegIndex + 1].route,
+              multiStopLegDestinations.indices.contains(activeMultiStopLegIndex + 1) else {
+            return nil
+        }
+
+        let nextDestination = multiStopLegDestinations[activeMultiStopLegIndex + 1]
+        // Stop CarPlay's old monitor/session before publishing the new route.
+        // Otherwise one location tick can evaluate the new coordinator route
+        // against the old CarPlay step array and finish the wrong trip.
+        navigationDelegate?.prepareForRouteTransition()
+        activeMultiStopLegIndex += 1
+        currentRoute = nextRoute
+        currentStepIndex = 0
+        multiStopStateGeneration &+= 1
+        let transitionGeneration = multiStopStateGeneration
+        // CarPlay owns its own CPNavigationSession and step array. Ask it to
+        // replace that session immediately; otherwise its monitor would keep
+        // evaluating the completed leg while the coordinator follows the next.
+        // Capture immutable route data and reject the task if a later edit,
+        // clear, or transition supersedes this leg before it runs.
+        Task { @MainActor [weak self] in
+            guard let self,
+                  self.multiStopStateGeneration == transitionGeneration,
+                  self.activeMultiStopLegIndex < self.multiStopLegDestinations.count,
+                  self.multiStopLegDestinations[self.activeMultiStopLegIndex].placemark.coordinate.latitude == nextDestination.placemark.coordinate.latitude,
+                  self.multiStopLegDestinations[self.activeMultiStopLegIndex].placemark.coordinate.longitude == nextDestination.placemark.coordinate.longitude else { return }
+            await self.navigationDelegate?.startNavigationTrigger(
+                to: nextDestination,
+                route: nextRoute
+            )
+        }
+        stepStageFlags.removeAll()
+        lastDistanceToTurn = nil
+        let remainingLegs = routeLegs[activeMultiStopLegIndex...]
+        let remainingTime = remainingLegs.reduce(0) { $0 + $1.travelTime }
+        let remainingDistance = remainingLegs.reduce(0) { $0 + $1.distance }
+        eta = Date().addingTimeInterval(remainingTime)
+        distanceToDestination = remainingDistance
+        return (nextRoute, nextDestination)
+    }
+
+    private func mapItemsMatch(_ lhs: MKMapItem?, _ rhs: MKMapItem?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (lhs?, rhs?):
+            let a = lhs.placemark.coordinate
+            let b = rhs.placemark.coordinate
+            return CLLocation(latitude: a.latitude, longitude: a.longitude)
+                .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude)) < 1
+        default:
+            return false
+        }
+    }
+
     private func buildLegs(
         from source: MKMapItem,
         through stops: [RouteStop],
@@ -743,6 +893,7 @@ public final class NavigationCoordinator: ObservableObject {
     public func selectDestinationAndCalculateRoutes(to destination: MKMapItem, isRerouting: Bool = false) async {
         self.destination = destination
         self.finalDestinationMapItem = destination
+        multiStopStateGeneration &+= 1
 
         let request = MKDirections.Request()
         request.source = MKMapItem.forCurrentLocation()
@@ -778,6 +929,9 @@ public final class NavigationCoordinator: ObservableObject {
     /// on the navigation-tick-readable state.
     public func startNavigation(with route: MKRoute, isReroute: Bool = false) async {
         DebugLogger.shared.log("Navigation \(isReroute ? "REROUTED" : "STARTED") using Route (\(Int(route.distance))m)")
+        // Invalidate any queued intermediate-leg CarPlay handoff before
+        // replacing the active route (normal starts and reroutes included).
+        multiStopStateGeneration &+= 1
         self.currentRoute = route
         self.currentStepIndex = 0
 
@@ -1013,12 +1167,17 @@ public final class NavigationCoordinator: ObservableObject {
             // At speed (>20 m/s) use 40m; otherwise 25m.
             let advanceThreshold = location.speed > 20 ? 40.0 : 25.0
 
+            var advancedToNextLeg = false
             if distanceToTurn < advanceThreshold && isMoving {
-                advanceToNextStep(steps, at: location)
+                advancedToNextLeg = advanceToNextStep(steps, at: location)
             } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 20 && distanceToTurn < 80 && isMoving {
                 // Distance increasing significantly after being very close: we passed the turn
-                advanceToNextStep(steps, at: location)
+                advancedToNextLeg = advanceToNextStep(steps, at: location)
             }
+
+            // The transition publishes a new route and total remaining ETA.
+            // Do not continue this tick with the completed leg's local route.
+            if advancedToNextLeg { return }
 
             lastDistanceToTurn = distanceToTurn
         }
@@ -1043,7 +1202,20 @@ public final class NavigationCoordinator: ObservableObject {
         //    position, compute remaining distance along the geometry, and
         //    use location.speed with an exponential moving average for a
         //    smooth live speed-based estimate that converges within seconds.
-        let remainingDist = actualRemainingDistance(route: route, location: location)
+        let activeRemainingDist = actualRemainingDistance(route: route, location: location)
+        var remainingDist = activeRemainingDist
+        var expectedRemainingTime = route.expectedTravelTime *
+            (activeRemainingDist / max(route.distance, 1))
+
+        // `currentRoute` is only the active leg. Include every later leg in
+        // the published ETA/distance so a multi-stop route does not appear
+        // to finish when the driver reaches the next stop.
+        if !routeStops.isEmpty,
+           activeMultiStopLegIndex + 1 < routeLegs.count {
+            let laterLegs = routeLegs[(activeMultiStopLegIndex + 1)...]
+            remainingDist += laterLegs.reduce(0) { $0 + $1.distance }
+            expectedRemainingTime += laterLegs.reduce(0) { $0 + $1.travelTime }
+        }
 
         // Exponential moving average (alpha = 0.3) to dampen GPS speed
         // noise and prevent the ETA from visibly bouncing between values.
@@ -1064,8 +1236,7 @@ public final class NavigationCoordinator: ObservableObject {
         // proportional remaining time so stop-and-go traffic doesn't
         // produce absurdly pessimistic ETAs (e.g. 83 min for 10 km at
         // 2 m/s when Apple expected 20 min).
-        let proportion = remainingDist / route.distance
-        let proportionalEstimate = route.expectedTravelTime * proportion
+        let proportionalEstimate = max(0, expectedRemainingTime)
         let timeRemaining = min(liveEstimate, 3.0 * proportionalEstimate)
 
         self.eta = Date().addingTimeInterval(max(30, timeRemaining))
@@ -1218,11 +1389,20 @@ public final class NavigationCoordinator: ObservableObject {
     /// `at location` is optional and only used by the final-step arrival
     /// detector so the arrival distance check has a `CLLocation` to use;
     /// callers passing nil (e.g. tests) will skip the arrival cue.
-    private func advanceToNextStep(_ steps: [MKRoute.Step], at location: CLLocation? = nil) {
+    private func advanceToNextStep(_ steps: [MKRoute.Step], at location: CLLocation? = nil) -> Bool {
         if self.currentStepIndex < steps.count - 1 {
             self.currentStepIndex += 1
             self.lastDistanceToTurn = nil
+            return false
         } else {
+            // An intermediate stop is an arrival boundary too. Switch to the
+            // next precomputed leg before comparing against the final trip
+            // destination, which remains stored in `destination`.
+            if let nextLeg = advanceToNextMultiStopLeg() {
+                announce("Arriving at \(nextLeg.destination.name ?? "stop"), continuing the route.")
+                return true
+            }
+
             // We are on the final step — announce arrival when within 50m
             let dist = location.flatMap { loc in
                 destination?.placemark.location.map { loc.distance(from: $0) }
@@ -1234,6 +1414,7 @@ public final class NavigationCoordinator: ObservableObject {
                 Task { await self.endNavigation() }
             }
         }
+        return false
     }
 
     // MARK: - Navigation Math
@@ -1566,7 +1747,11 @@ public final class NavigationCoordinator: ObservableObject {
 // the contract. The protocol is identical to the original definition
 // in DriveViewModel.swift — moved verbatim to keep call-site behavior
 // 1:1 and to encourage future testing without DriveViewModel.
+@MainActor
 public protocol NavigationActionDelegate: AnyObject {
+    /// Stops progress callbacks before the coordinator publishes a replacement
+    /// route, preventing a mixed old-session/new-route tick.
+    func prepareForRouteTransition()
     func startNavigationTrigger(to destination: MKMapItem, route: MKRoute?) async
     func endNavigationTrigger() async
     func searchDestinationTrigger(_ query: String) async -> [MKMapItem]

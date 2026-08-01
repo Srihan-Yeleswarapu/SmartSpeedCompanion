@@ -27,6 +27,8 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     /// Exponential moving average of `location.speed` used by the ETA
     /// estimator to prevent flickering from noisy GPS speed readings.
     private var smoothedSpeed: Double = 0
+    /// Invalidates progress callbacks from a replaced CarPlay session.
+    private var navigationGeneration: UInt64 = 0
     
     public init(viewModel: DriveViewModel, mapTemplate: CPMapTemplate) {
         self.viewModel = viewModel
@@ -41,6 +43,19 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     
     public func getMuted() -> Bool {
         return self.isMuted
+    }
+
+    /// Stops the old progress stream before NavigationCoordinator publishes a
+    /// replacement leg. This closes the mixed-route window during a stop
+    /// transition; `startNavigation(route:destination:)` installs the new
+    /// session immediately afterward.
+    public func prepareForRouteTransition() {
+        navigationGeneration &+= 1
+        locationCancellable?.cancel()
+        locationCancellable = nil
+        navigationSession?.finishTrip()
+        navigationSession = nil
+        currentManeuver = nil
     }
     
     public func searchDestination(query: String, completion: @escaping ([MKMapItem]) -> Void) {
@@ -157,23 +172,46 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     
     // MARK: - Navigation Control
     public func startNavigation(route: MKRoute, destination: MKMapItem) {
+        navigationGeneration &+= 1
+        // Reroutes and multi-stop leg transitions replace the active CarPlay
+        // session. Finish the old session before installing the new one so
+        // CarPlay does not retain two progress streams and stale maneuvers.
+        locationCancellable?.cancel()
+        navigationSession?.finishTrip()
+        navigationSession = nil
+        currentManeuver = nil
+
         viewModel.isNavigating = true
         viewModel.navigationCoordinator.currentRoute = route
-        viewModel.navigationCoordinator.destination = destination
+        // Only intermediate stops make this a multi-stop session. A normal
+        // route calculation may still leave a single RouteLeg snapshot behind.
+        let hasMultiStopState = !viewModel.routeStops.isEmpty
+        if !hasMultiStopState {
+            // For a normal route this is the final destination. During a
+            // multi-stop route the coordinator keeps `destination` as the
+            // final endpoint while this call receives the active stop.
+            viewModel.navigationCoordinator.destination = destination
+        }
 
-        let estimatedTime = route.expectedTravelTime
-        viewModel.navigationCoordinator.eta = Date().addingTimeInterval(estimatedTime)
-        // Mirror CarPlay's remaining-route distance onto the ViewModel right
-        // away so Siri `GetDistanceToDestinationIntent` can answer before the
-        // next `evaluateNavigationProgress` tick fires.
-        viewModel.navigationCoordinator.distanceToDestination = route.distance
+        // For a normal route this is the complete trip. For a multi-stop
+        // route, NavigationCoordinator has already published the remaining
+        // total (and updates it at each stop); do not shrink Siri/HUD values
+        // back to the current leg while replacing the CarPlay session.
+        if !hasMultiStopState {
+            let estimatedTime = route.expectedTravelTime
+            viewModel.navigationCoordinator.eta = Date().addingTimeInterval(estimatedTime)
+            // Mirror CarPlay's remaining-route distance onto the ViewModel
+            // right away so Siri can answer before the next progress tick.
+            viewModel.navigationCoordinator.distanceToDestination = route.distance
+        }
         
         let routeChoice = CPRouteChoice(
             summaryVariants: ["Fastest Route"],
             additionalInformationVariants: [],
             selectionSummaryVariants: ["Fastest"]
         )
-        let trip = CPTrip(origin: MKMapItem.forCurrentLocation(), destination: destination, routeChoices: [routeChoice])
+        let activeDestination = viewModel.navigationCoordinator.activeMultiStopDestination ?? destination
+        let trip = CPTrip(origin: MKMapItem.forCurrentLocation(), destination: activeDestination, routeChoices: [routeChoice])
         self.currentTrip = trip
         
         navigationSession = mapTemplate.startNavigationSession(for: trip)
@@ -248,14 +286,16 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     }
     
     private func monitorProgress() {
+        let generation = navigationGeneration
         locationCancellable = viewModel.locationManager.$latestLocation
             .compactMap { $0 }
             .sink { [weak self] location in
-                self?.evaluateNavigationProgress(at: location)
+                self?.evaluateNavigationProgress(at: location, generation: generation)
             }
     }
     
-    private func evaluateNavigationProgress(at location: CLLocation) {
+    private func evaluateNavigationProgress(at location: CLLocation, generation: UInt64) {
+        guard generation == navigationGeneration else { return }
         guard let currentRoute = viewModel.navigationCoordinator.currentRoute, let session = navigationSession else { return }
 
         // 1. Check distance to next turn (step)

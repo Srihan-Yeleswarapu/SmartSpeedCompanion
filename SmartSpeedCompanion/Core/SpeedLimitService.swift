@@ -51,16 +51,9 @@
 // does NOT poison the speedLimitResponseCache for the next fetch in the same
 // 50 m cell.
 //
-// KNOWN LIMITATION (documented for future readers): `@MainActor` only serializes
-// *between* awaits. If `SpeedEngine` fires two `updateSpeedLimit` calls in
-// parallel (rare due to 80 m / 250 m throttle, but possible at highway speeds),
-// whichever task completes first wins `lastStable`. In a flyover flicker the
-// "wrong" candidate (e.g. 75 mph US-60) racing ahead of the SQLite 45 mph
-// answer can invert the hold direction -- the user sees 75 for up to 5 fetches
-// before sink-in. The throttle + cache.write delay bound this to ~3-5 sec at
-// most; if it ever becomes visible in telemetry, the fix is to tag responses
-// with a monotonic fetch id and have `finalizeWithContinuity` only consider
-// the candidate whose fetch is strictly newer.
+// Concurrency note: `@MainActor` serializes state transitions between awaits,
+// while `latestUpdateGeneration` below makes the newest overlapping GPS/manual
+// request authoritative before continuity state or HUD values are committed.
 
 import Foundation
 import CoreLocation
@@ -110,6 +103,13 @@ public class SmartSpeedLimitService: ObservableObject {
     private var lastStable: ContinuitySnapshot?
     private var pendingSuspect: ContinuitySnapshot?
     private var consecutiveSuspectCount: Int = 0
+    /// Monotonic token for published GPS-driven fetches. Provider requests
+    /// await network/database work, so an older location can finish after a
+    /// newer one unless stale completions are explicitly discarded.
+    private var latestUpdateGeneration: UInt64 = 0
+    /// Unique process-local revision for every cache write, including
+    /// concurrent route-prefetch requests that share one GPS generation.
+    private var nextCacheStoreRevision: UInt64 = 0
 
     /// `45 -> 65` (arterial->highway) stays below this bar; the user's reported
     /// `45 -> 25` Bush Rd cross-street snap (20 mph delta) exceeds it.
@@ -191,17 +191,28 @@ public class SmartSpeedLimitService: ObservableObject {
         roadName: String? = nil,
         forceRefresh: Bool = false
     ) async -> Int {
+        latestUpdateGeneration &+= 1
+        let generation = latestUpdateGeneration
         let outcome = await resolveCandidate(
             at: coordinate, heading: heading,
             currentSpeedMph: currentSpeedMph, roadName: roadName,
             forceRefresh: forceRefresh
         )
-        return await finalizeWithContinuity(
+        // A newer GPS/manual request is authoritative. Do not let a slow
+        // provider response from the previous road overwrite the current HUD.
+        guard generation == latestUpdateGeneration else { return currentLimit }
+        let result = await finalizeWithContinuity(
             outcome: outcome,
             currentSpeedMph: currentSpeedMph,
             coordinate: coordinate,
-            roadName: roadName
+            roadName: roadName,
+            generation: generation
         )
+        // `finalizeWithContinuity` may await cache-clearing work for a miss;
+        // do not return a stale result if another request became authoritative
+        // during that await.
+        guard generation == latestUpdateGeneration else { return currentLimit }
+        return result
     }
 
     /// Pre-warm the response cache for a coordinate WITHOUT touching the
@@ -221,6 +232,12 @@ public class SmartSpeedLimitService: ObservableObject {
         at coordinate: CLLocationCoordinate2D,
         roadName: String? = nil
     ) async {
+        // A route prefetch can overlap a live GPS fetch. Do not let an older
+        // prefetch response write after the live request and poison the same
+        // spatial cache cell with stale provider data.
+        let prefetchGeneration = latestUpdateGeneration
+        nextCacheStoreRevision &+= 1
+        let cacheRevision = nextCacheStoreRevision
         let outcome = await resolveCandidate(
             at: coordinate,
             heading: nil,
@@ -228,14 +245,15 @@ public class SmartSpeedLimitService: ObservableObject {
             roadName: roadName,
             forceRefresh: false
         )
-        guard !outcome.isMiss, outcome.limit > 0 else { return }
+        guard prefetchGeneration == latestUpdateGeneration,
+              !outcome.isMiss, outcome.limit > 0 else { return }
         let resp = SpeedLimitResponse(
             speedLimitMph: outcome.limit,
             roadKey: outcome.roadKey,
             providerName: outcome.providerName,
             detail: outcome.detail
         )
-        Task { await cache.store(resp, at: coordinate, roadName: roadName) }
+        await cache.store(resp, at: coordinate, roadName: roadName, revision: cacheRevision)
     }
 
     // MARK: - Candidate resolution (decision-tree)
@@ -362,8 +380,6 @@ public class SmartSpeedLimitService: ObservableObject {
                 isMiss: false
             )
         } catch {
-            consecutiveMissCount += 1
-
             if let recoveryLimit = try? await ArizonaSpeedLimitService.shared.updateSpeedLimit(
                 at: coordinate, heading: heading,
                 currentSpeedMph: currentSpeedMph, roadName: roadName,
@@ -393,10 +409,25 @@ public class SmartSpeedLimitService: ObservableObject {
         outcome: Candidate,
         currentSpeedMph: Double,
         coordinate: CLLocationCoordinate2D,
-        roadName: String?
+        roadName: String?,
+        generation: UInt64
     ) async -> Int {
+        guard generation == latestUpdateGeneration else { return currentLimit }
         if outcome.isMiss {
-            return await handleMiss(coordinate: coordinate, roadName: roadName)
+            // Keep the proposed count local until every awaited cache-clear
+            // operation completes. An older request may enter this branch,
+            // then become stale while the next request starts; publishing its
+            // count early would contaminate the newer request's grace window.
+            let proposedMissCount = consecutiveMissCount + 1
+            let result = await handleMiss(
+                coordinate: coordinate,
+                roadName: roadName,
+                generation: generation,
+                missCount: proposedMissCount
+            )
+            guard generation == latestUpdateGeneration else { return currentLimit }
+            consecutiveMissCount = result.missCount
+            return result.limit
         }
 
         let snapshot = ContinuitySnapshot(
@@ -410,7 +441,7 @@ public class SmartSpeedLimitService: ObservableObject {
             lastStable = snapshot
             pendingSuspect = nil
             consecutiveSuspectCount = 0
-            return commit(candidate: outcome, coordinate: coordinate, roadName: roadName)
+            return commit(candidate: outcome, coordinate: coordinate, roadName: roadName, generation: generation)
         }
 
         let speedDelta = abs(outcome.limit - prior.limit)
@@ -440,7 +471,7 @@ public class SmartSpeedLimitService: ObservableObject {
                 lastStable = snapshot
                 pendingSuspect = nil
                 consecutiveSuspectCount = 0
-                return commit(candidate: outcome, coordinate: coordinate, roadName: roadName)
+                return commit(candidate: outcome, coordinate: coordinate, roadName: roadName, generation: generation)
             }
         }
 
@@ -452,7 +483,7 @@ public class SmartSpeedLimitService: ObservableObject {
             lastStable = snapshot
             pendingSuspect = nil
             consecutiveSuspectCount = 0
-            return commit(candidate: outcome, coordinate: coordinate, roadName: roadName)
+            return commit(candidate: outcome, coordinate: coordinate, roadName: roadName, generation: generation)
         }
 
         // Rule 3 -- suspect hold. Dampen the flyover-resolve flicker WITHOUT
@@ -467,13 +498,13 @@ public class SmartSpeedLimitService: ObservableObject {
         }
 
         if consecutiveSuspectCount >= Self.SUSPICIOUS_FETCH_HOLD {
-            // 5 consecutive suspect fetches with the same identity -- the
+            // 3 consecutive suspect fetches with the same identity -- the
             // road has changed and the geocode just hasn't caught up.
             // Sink in to avoid pinning the driver to the OLD limit forever.
             lastStable = snapshot
             pendingSuspect = nil
             consecutiveSuspectCount = 0
-            return commit(candidate: outcome, coordinate: coordinate, roadName: roadName)
+            return commit(candidate: outcome, coordinate: coordinate, roadName: roadName, generation: generation)
         }
 
         // Hold prior -- returns the previously committed limit to the caller
@@ -487,7 +518,8 @@ public class SmartSpeedLimitService: ObservableObject {
     private func commit(
         candidate: Candidate,
         coordinate: CLLocationCoordinate2D,
-        roadName: String?
+        roadName: String?,
+        generation: UInt64
     ) -> Int {
         if candidate.limit > 0 {
             self.lastValidLimit = candidate.limit
@@ -504,7 +536,9 @@ public class SmartSpeedLimitService: ObservableObject {
         )
         // Persist the response off the main actor -- the cache writes to disk
         // and would otherwise block the orchestrator's next fetch.
-        Task { await cache.store(resp, at: coordinate, roadName: roadName) }
+        nextCacheStoreRevision &+= 1
+        let cacheRevision = nextCacheStoreRevision
+        Task { await cache.store(resp, at: coordinate, roadName: roadName, revision: cacheRevision) }
         return candidate.limit
     }
 
@@ -523,9 +557,12 @@ public class SmartSpeedLimitService: ObservableObject {
     /// immediately instead of continuing to return the stale `lastValidLimit`.
     private func handleMiss(
         coordinate: CLLocationCoordinate2D,
-        roadName: String?
-    ) async -> Int {
-        if consecutiveMissCount < missThresholdBeforeClear, lastValidLimit > 0 {
+        roadName: String?,
+        generation: UInt64,
+        missCount: Int
+    ) async -> (limit: Int, missCount: Int) {
+        guard generation == latestUpdateGeneration else { return (currentLimit, consecutiveMissCount) }
+        if missCount < missThresholdBeforeClear, lastValidLimit > 0 {
             // Detect road change: geocoder now says a different road than
             // when the committed limit was last established.
             let roadChanged: Bool = {
@@ -538,30 +575,41 @@ public class SmartSpeedLimitService: ObservableObject {
 
             let effectiveThreshold = roadChanged ? min(3, missThresholdBeforeClear) : missThresholdBeforeClear
 
-            if consecutiveMissCount < effectiveThreshold {
+            if missCount < effectiveThreshold {
                 // Grace window: keep the previous limit visible for a short
                 // window before dropping to "No Data". Shorter when the road
                 // name changed.
                 self.currentLimit = lastValidLimit
-                return lastValidLimit
+                return (lastValidLimit, missCount)
             } else if roadChanged {
                 // Road changed AND we've exceeded the road-change threshold.
                 // Drop to "--" immediately instead of holding the stale
                 // limit from the previous road.
                 self.currentLimit = 0
                 self.dataSource = .noData
-                return 0
+                return (0, 0)
             }
         }
-        if consecutiveMissCount >= missThresholdBeforeClear {
-            await ArizonaSpeedLimitService.shared.clearCache()
-            await cache.clear()
+        if missCount >= missThresholdBeforeClear {
+            guard generation == latestUpdateGeneration else { return (currentLimit, consecutiveMissCount) }
+            // Capture the revision boundary before either clear can suspend.
+            // Responses issued after this point receive a higher revision and
+            // are preserved by the cache even if this miss becomes stale.
+            let clearThroughRevision = nextCacheStoreRevision
+            let arizonaRevision = await ArizonaSpeedLimitService.shared.currentCacheRevision()
+            await ArizonaSpeedLimitService.shared.clearCache(ifRevision: arizonaRevision)
+            // A newer request may have committed while the SQLite cache clear
+            // suspended. Do not let this stale miss erase its cache entry.
+            guard generation == latestUpdateGeneration else { return (currentLimit, consecutiveMissCount) }
+            await cache.clear(rejectingRevisionsThrough: clearThroughRevision)
+            guard generation == latestUpdateGeneration else { return (currentLimit, consecutiveMissCount) }
             lastValidLimit = 0
             currentLimit = 0
             dataSource = .noData
             consecutiveMissCount = 0
+            return (0, 0)
         }
-        return self.currentLimit
+        return (self.currentLimit, missCount)
     }
 
     // MARK: - Helpers
