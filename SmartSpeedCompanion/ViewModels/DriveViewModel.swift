@@ -1083,10 +1083,22 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         return (try? JSONDecoder().decode([RouteStop].self, from: data)) ?? []
     }
     
-    /// Checks for an interrupted session on launch. Looks for:
-    ///   1. A saved session state in UserDefaults (set by didEnterBackground)
-    ///   2. An active Live Activity (Dynamic Island still showing)
-    /// Returns true if an interrupted session was detected and the UI should prompt.
+    /// Checks for an interrupted session on launch.
+    ///
+    /// The ONLY authoritative source of "a drive was in progress when the app
+    /// died" is the persisted SessionRecorder state (written by
+    /// `saveSessionState()` on every backgrounding while a session was
+    /// recording). An active Live Activity alone is NOT proof of a session:
+    /// ActivityKit instances are owned by the system and survive app
+    /// termination, so a stale Dynamic Island card from a discarded drive (or
+    /// a force-quit) can linger and keep displaying a frozen "REC / 0 MPH".
+    /// Treating it as evidence previously made the app relaunch into a fake
+    /// "Interrupted Drive Found" prompt that also kept the stale card alive.
+    ///
+    /// Returns true (and shows the recovery prompt) ONLY when the recorder
+    /// actually saved interrupted-session state. Otherwise any leftover
+    /// activity is ended immediately so the Dynamic Island / Lock Screen
+    /// never shows a frozen card when no real session is running.
     @MainActor
     public func checkForInterruptedSession() -> Bool {
         // Check 1: Did the session save state before termination?
@@ -1101,20 +1113,14 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
             return true
         }
         
-        // Check 2: Is there an active Live Activity with no in-memory session?
-        // This catches the case where iOS killed the app but the Dynamic Island
-        // is still displaying speed data, meaning the system knows a session is active.
-        // Filter to only .active activities to avoid false positives from recently-ended
-        // but not-yet-dismissed activities (which LiveActivityManager.init() also does).
+        // Check 2: No persisted session state — so any activity the system
+        // still shows is stale (a previous process's drive that was never
+        // cleanly ended). Dismiss it so the user never sees a frozen card.
         #if !targetEnvironment(simulator)
         if #available(iOS 16.1, *) {
-            let hasActiveActivity = Activity<SpeedActivityAttributes>.activities
-                .contains(where: { $0.activityState == .active })
-            if hasActiveActivity {
-                interruptedSessionDestinationName = "a drive"
-                showInterruptedSessionPrompt = true
-                DebugLogger.shared.log("DriveViewModel: active Live Activity detected on launch")
-                return true
+            if LiveActivityManager.shared.hasActiveActivity() {
+                DebugLogger.shared.log("DriveViewModel: ending stale Live Activity (no session state)")
+                LiveActivityManager.shared.endAllActivities()
             }
         }
         #endif

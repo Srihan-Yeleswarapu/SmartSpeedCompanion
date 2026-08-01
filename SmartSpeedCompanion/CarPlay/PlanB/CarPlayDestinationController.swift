@@ -307,43 +307,80 @@ class CarPlayDestinationController {
 
     // MARK: - Set Destination
 
+    /// True while a destination-set flow is in flight. Prevents a second tap
+    /// on the same result (or a tap during the route calculation) from
+    /// spawning a duplicate alert/stack dance.
+    private var isSettingDestination = false
+
     /// Set the selected destination on DriveViewModel, show a brief confirmation,
     /// then dismiss the alert and pop back to root.
+    ///
+    /// The destination is written to the view model SYNCHRONOUSLY (so the
+    /// CarPlay list UI updates immediately and the tap visibly "lands"),
+    /// and route calculation runs afterwards with a "Calculating…" alert as
+    /// feedback. Previously the whole flow waited on the network route
+    /// calculation before doing anything visible — when that call was slow
+    /// or failed, the result tap appeared to do nothing at all.
     private func setDestination(_ item: MKMapItem) {
+        guard !isSettingDestination else { return }
+        isSettingDestination = true
+        defer { isSettingDestination = false }
+
         let destName = item.name ?? "Destination"
+
+        // 1. Synchronously set the destination + notify the list controller
+        //    so the UI reflects the selection immediately.
+        viewModel.destination = item
+        viewModel.destinationItem = item
+        onDestinationSet()
+
+        // 2. Give immediate visual feedback while the network route
+        //    calculation runs.
+        let loadingItem = CPListItem(text: "Calculating…", detailText: destName)
+        loadingItem.isEnabled = false
+        let loadingTemplate = CPListTemplate(
+            title: destName,
+            sections: [CPListSection(items: [loadingItem], header: nil, sectionIndexTitle: nil)]
+        )
+        interfaceController?.pushTemplate(loadingTemplate, animated: true, completion: nil)
 
         Task { @MainActor in
             await viewModel.selectDestinationAndCalculateRoutes(to: item)
-            onDestinationSet()
 
-            // ── Show confirmation alert ───────────────────────────────
-            // CPAlertTemplate is presented modally via presentTemplate.
-            // The action handler MUST dismiss the alert first, then pop
-            // the navigation stack — calling popToRootTemplate while the
-            // alert is still presented would leave the alert visible on
-            // top of whatever the stack unwound to.
-            let confirmAction = CPAlertAction(
-                title: "OK",
-                style: .default
-            ) { [weak self] _ in
-                self?.interfaceController?.dismissTemplate(
-                    animated: true
-                ) { _, _ in
-                    self?.interfaceController?.popToRootTemplate(
-                        animated: true,
-                        completion: nil
-                    )
+            // Replace the loading template with the confirmation. Pop first,
+            // then present the alert on the now-clean stack.
+            self.interfaceController?.popTemplate(animated: false) { [weak self] _, _ in
+                guard let self = self else { return }
+
+                // ── Show confirmation alert ───────────────────────────
+                // CPAlertTemplate is presented modally via presentTemplate.
+                // The action handler MUST dismiss the alert first, then pop
+                // the navigation stack — calling popToRootTemplate while the
+                // alert is still presented would leave the alert visible on
+                // top of whatever the stack unwound to.
+                let confirmAction = CPAlertAction(
+                    title: "OK",
+                    style: .default
+                ) { [weak self] _ in
+                    self?.interfaceController?.dismissTemplate(
+                        animated: true
+                    ) { _, _ in
+                        self?.interfaceController?.popToRootTemplate(
+                            animated: true,
+                            completion: nil
+                        )
+                    }
                 }
+                let confirmAlert = CPAlertTemplate(
+                    titleVariants: ["Destination set to \(destName)"],
+                    actions: [confirmAction]
+                )
+                self.interfaceController?.presentTemplate(
+                    confirmAlert,
+                    animated: true,
+                    completion: nil
+                )
             }
-            let confirmAlert = CPAlertTemplate(
-                titleVariants: ["Destination set to \(destName)"],
-                actions: [confirmAction]
-            )
-            self.interfaceController?.presentTemplate(
-                confirmAlert,
-                animated: true,
-                completion: nil
-            )
         }
     }
 

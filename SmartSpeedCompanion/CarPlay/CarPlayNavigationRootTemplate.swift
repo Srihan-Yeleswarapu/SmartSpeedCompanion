@@ -48,6 +48,16 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     // Maps CPListItem → MKMapItem for the current CPSearchTemplate results
     // so the selectedResult delegate can identify which item was tapped.
     @MainActor private var searchItemMap: [ObjectIdentifier: MKMapItem] = [:]
+    // The most recent search results (in list order). Used as a fallback in
+    // `selectedResult` when the item-identity map is empty — the system may
+    // call `updatedSearchText` (clearing the map) right before/after a tap,
+    // which previously made result selection silently do nothing.
+    @MainActor private var latestSearchResults: [MKMapItem] = []
+    // Single-flight latch so a result tap presents the trip preview at most
+    // once, even when CarPlay fires BOTH the row handler and the
+    // `selectedResult` delegate for the same tap. Cleared once the preview
+    // has been handed to CPMapTemplate.
+    @MainActor private var isPresentingTripPreview = false
 
     @MainActor
     init(interfaceController: CPInterfaceController, viewModel: DriveViewModel) {
@@ -517,22 +527,32 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     // MARK: - CPSearchTemplateDelegate
 
     func searchTemplate(_ searchTemplate: CPSearchTemplate, updatedSearchText searchText: String, completionHandler: @escaping ([CPListItem]) -> Void) {
+        // Blank query (e.g. when the template is dismissed or the field is
+        // cleared): immediately hand back an empty list instead of firing a
+        // meaningless 50-km MKLocalSearch for "" — that wasted call could
+        // also race a real tap and wipe the item map before selection.
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            completionHandler([])
+            return
+        }
         searchGeneration += 1
         let generation = searchGeneration
-        navigationManager.searchDestination(query: searchText) { [weak self] results in
+        navigationManager.searchDestination(query: trimmed) { [weak self] results in
             guard let self = self else { return }
             Task { @MainActor in
                 // Drop stale responses so a slow earlier query can't overwrite
                 // fresher results (or let the driver tap a wrong, stale row).
                 guard generation == self.searchGeneration else { return }
                 self.searchItemMap.removeAll()
+                self.latestSearchResults = results
                 let items = results.map { mi in
                     let item = CPListItem(text: mi.name, detailText: mi.placemark.title)
                     self.searchItemMap[ObjectIdentifier(item)] = mi
                     if let icon = self.searchResultIcon(for: mi) { item.setImage(icon) }
                     item.handler = { [weak self] _, c in
                         Task { @MainActor in
-                            self?.interfaceController?.popTemplate(animated: true) { _, _ in self?.presentTripPreview(for: mi) }
+                            self?.presentTripPreviewAfterSearchDismissal(for: mi)
                         }
                         c()
                     }
@@ -543,17 +563,44 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         }
     }
     func searchTemplate(_ searchTemplate: CPSearchTemplate, selectedResult item: CPListItem, completionHandler: @escaping () -> Void) {
-        let id = ObjectIdentifier(item)
-        guard let mapItem = searchItemMap[id] else {
-            completionHandler()
-            return
-        }
         // completionHandler() tells CarPlay to dismiss the search template,
         // so we must NOT call popTemplate — the search is already gone.
+        let mapItem: MKMapItem? = {
+            let id = ObjectIdentifier(item)
+            if let direct = searchItemMap[id] { return direct }
+            // Identity fallback: match by visible text. The system can
+            // invalidate the map between keystrokes and the tap, so never
+            // rely on identity alone — otherwise taps silently do nothing.
+            let text = item.text
+            return latestSearchResults.first { $0.name == text }
+        }()
         completionHandler()
+        guard let mapItem else { return }
         Task { @MainActor in
-            self.presentTripPreview(for: mapItem)
+            self.presentTripPreviewOnce(for: mapItem)
         }
+    }
+
+    /// Pops the search template (if it is still on the stack) and only then
+    /// presents the trip preview. Used by the row-tap handler so the preview
+    /// is shown on the clean map template instead of mid-dismissal.
+    @MainActor
+    private func presentTripPreviewAfterSearchDismissal(for destination: MKMapItem) {
+        interfaceController?.popTemplate(animated: true) { [weak self] _, _ in
+            Task { @MainActor in self?.presentTripPreviewOnce(for: destination) }
+        }
+    }
+
+    /// Presents the trip preview at most once per search selection. CarPlay
+    /// can deliver BOTH the row handler and the `selectedResult` delegate for
+    /// a single tap; without this latch the preview would be presented twice
+    /// (harmless — `showTripPreviews` replaces — but wasteful and racy).
+    @MainActor
+    private func presentTripPreviewOnce(for destination: MKMapItem) {
+        guard !isPresentingTripPreview else { return }
+        isPresentingTripPreview = true
+        defer { isPresentingTripPreview = false }
+        presentTripPreview(for: destination)
     }
 
     // MARK: - Trip Preview
