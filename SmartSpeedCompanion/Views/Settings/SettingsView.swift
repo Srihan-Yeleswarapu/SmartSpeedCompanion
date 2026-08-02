@@ -419,7 +419,7 @@ fileprivate struct NetworkHelpSheet: View {
                     .font(.system(size: 17, weight: .bold))
                     .foregroundColor(.white)
             }
-            Text("Speedio grabs fresh speed-limit data from Apple/ArcGIS and OpenStreetMap. If Wi-Fi and Cellular Data are both off — or if Speedio's per-app toggle is off — the app will fall back to a small local Arizona database and you may see stale or missing limits.")
+            Text("Speedio grabs fresh speed-limit data from Apple/ArcGIS, HERE, and OpenStreetMap. If Wi-Fi and Cellular Data are both off — or if Speedio's per-app toggle is off — live speed limits can't update, and you may see stale or missing limits.")
                 .font(.system(size: 14))
                 .foregroundColor(.white.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)
