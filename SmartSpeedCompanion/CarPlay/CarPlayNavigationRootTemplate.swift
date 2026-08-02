@@ -434,12 +434,17 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         ]
         let template = CPInformationTemplate(title: "Drive Session", layout: .twoColumn, items: items,
             actions: [
-                CPTextButton(title: "End Session", textStyle: .normal, handler: { [weak self] _ in
+                // CarPlay renders `.cancel` as the destructive/red action
+                // and `.normal` as the neutral/white action. Keep the
+                // irreversible session-ending action visually prominent and
+                // the safe dismiss action neutral, matching TestFlight
+                // feedback from build 2.3.0.
+                CPTextButton(title: "End Session", textStyle: .cancel, handler: { [weak self] _ in
                     self?.interfaceController?.popTemplate(animated: true) { _, _ in
                         Task { @MainActor in self?.viewModel.endSession() }
                     }
                 }),
-                CPTextButton(title: "Dismiss", textStyle: .cancel, handler: { [weak self] _ in
+                CPTextButton(title: "Dismiss", textStyle: .normal, handler: { [weak self] _ in
                     self?.interfaceController?.popTemplate(animated: true, completion: nil)
                 })
             ]
