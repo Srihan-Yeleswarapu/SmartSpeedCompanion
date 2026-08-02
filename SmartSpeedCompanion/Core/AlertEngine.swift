@@ -301,10 +301,6 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     }
     
     // MARK: - Audio Session Interruption Handling
-    /// Set when an audio interruption (e.g. YouTube starting playback)
-    /// begins, so we know to re-activate the session before the next beep.
-    private var wasInterrupted: Bool = false
-    
     /// Registers for audio interruption notifications so we can re-activate
     /// our session when the interrupting app (YouTube, Music, etc.) finishes
     /// or when we need to play a beep while interrupted.
@@ -325,13 +321,13 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         switch type {
         case .began:
             // Another app (YouTube, Music) started playing — our session
-            // was deactivated. Set the flag so we re-activate before next beep.
-            wasInterrupted = true
+            // was deactivated. The coordinator's `ensureActive()` on the
+            // next beep (and on `.ended`) re-activates it, so no flag is
+            // needed.
             DebugLogger.shared.log("AlertEngine: audio interrupted by another app")
         case .ended:
             // The interruption ended. Re-activate the shared session and
             // restart the audio engine so the next beep plays correctly.
-            wasInterrupted = false
             AudioSessionCoordinator.shared.ensureActive()
             restartAudioEngine()
             DebugLogger.shared.log("AlertEngine: audio session resumed after interruption")
@@ -375,7 +371,6 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// ongoing navigation speech (glitchy-audio bug, TestFlight 71).
     private func ensureAudioSessionActive() {
         AudioSessionCoordinator.shared.ensureActive()
-        wasInterrupted = false
     }
     
     /// Restarts the AVAudioEngine after it was stopped by an interruption.
