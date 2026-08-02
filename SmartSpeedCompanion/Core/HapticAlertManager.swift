@@ -203,11 +203,20 @@ public final class HapticAlertManager: ObservableObject {
         }
         do {
             let engine = try CHHapticEngine()
-            engine.stoppedHandler = { reason in
+            engine.stoppedHandler = { [weak self] reason in
                 DebugLogger.shared.log("HapticAlertManager stopped: \(reason.rawValue)")
+                // A stop (backgrounding, audio interruption) invalidates
+                // every player the engine owned — including the speeding
+                // pulse — so drop it; the next monitor tick rebuilds it.
+                self?.speedingPlayer = nil
             }
             engine.resetHandler = { [weak self] in
                 guard let self else { return }
+                // A reset invalidates the players too. `CHHapticEngine` has
+                // no `isRunning` API to probe liveness, so invalidating the
+                // pulse here is how `startSpeedingPulse()` learns a rebuild
+                // is needed on the next tick.
+                self.speedingPlayer = nil
                 do {
                     try self.engine?.start()
                 } catch {
@@ -301,14 +310,13 @@ public final class HapticAlertManager: ObservableObject {
         // mid-vibration on every small severity drift (acceleration) and
         // break the steady 3s-on / 0.5s-off cadence the user asked for.
         // Intensity is fixed at the onset severity for the whole episode.
+        //
+        // If the engine dies mid-episode (backgrounding, audio interruption,
+        // hardware reset), the engine's `stoppedHandler`/`resetHandler` nil
+        // `speedingPlayer`, so this guard naturally falls through and a
+        // fresh player is built on the next monitor tick.
         if speedingPlayer != nil {
-            // If the engine itself died mid-episode (backgrounding, audio
-            // interruption, hardware reset), the old player is dead too —
-            // tear it down so this call rebuilds a fresh one next time.
-            if engine.isRunning {
-                return
-            }
-            speedingPlayer = nil
+            return
         }
 
         do {
