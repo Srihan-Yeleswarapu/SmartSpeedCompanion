@@ -831,30 +831,29 @@ public final class CameraAnimator {
     private var displayPitch: Double = 0
     private var lastUpdateTime: Date = .now
 
-    // ── Deadband ───────────────────────────────────────────────────────
-    // 50 m (was 25 m) wide enough to absorb the per-tick altitude deltas
-    // produced by 1-2 mph GPS noise on a mid-range road — at 45-55 mph
-    // the LUT slope is ~35 m/mph, so a noisy single GPS sample previously
-    // punched past the 25 m deadband and produced a visible zoom glitch.
-    // Real altitude transitions (entering/exiting a highway etc.) easily
-    // exceed 50 m, so responsiveness on actual speed changes is unchanged.
-    private let altitudeDeadband: Double = 50.0
-    private let pitchDeadband: Double = 5.0
+    // ── Deadband ───────────────────────────────────────────────────────        // 75 m (was 50 m) wide enough to absorb per-tick altitude deltas
+        // produced by 1-3 mph GPS noise on a mid-range road — at 45-55 mph
+        // the LUT slope is ~35 m/mph, so ±2 mph noise previously punched
+        // past the 50 m deadband and produced visible zoom jitter.
+        // Real altitude transitions (entering/exiting a highway etc.) easily
+        // exceed 75 m, so responsiveness on actual speed changes is unchanged.
+    private let altitudeDeadband: Double = 75.0
+    private let pitchDeadband: Double = 7.5
 
     // ── Cooldown ───────────────────────────────────────────────────────
-    private let minInterval: TimeInterval = 0.4
+    private let minInterval: TimeInterval = 0.5
     private var lastApplyTime: Date = .distantPast
 
     // ── Speed smoothing ────────────────────────────────────────────────
-    // 1.5 s (was 0.5 s). SpeedEngine already EMA-smooths with factor 0.15,
+    // 2.0 s (was 1.5 s). SpeedEngine already EMA-smooths with factor 0.15,
     // but its deadband only triggers under 3 mph — above that, mid-range
     // GPS noise (±2 mph) feeds straight into viewModel.speed. The two
-    // cascaded EMAs now drop noise amplitude by ~80 % before it reaches
-    // the LUT smoother, so altitude moves smoothly in 0.5-2 s windows
-    // instead of jittering 1-3 times per second. Real speed transitions
-    // still converge inside ~3 s, well below human-perceived sluggishness.
+    // cascaded EMAs now drop noise amplitude by ~85 % before it reaches
+    // the LUT smoother, so altitude moves smoothly without jittering.
+    // Real speed transitions still converge inside ~4 s, well below
+    // human-perceived sluggishness.
     private var smoothedSpeed: Double = 0
-    private let speedTau: TimeInterval = 1.5
+    private let speedTau: TimeInterval = 2.0
 
     // ── Debug ──────────────────────────────────────────────────────────
     private var lastLoggedTarget: TargetCameraState?
@@ -890,8 +889,8 @@ public final class CameraAnimator {
     // ═══════════════════════════════════════════════════════════════════
     private var routeStartTime: Date = .distantPast
     private var wasNavigating: Bool = false
-    private let routeInitSettleDuration: TimeInterval = 3.0
-    private var routeInitAltitudeBoost: Double = 1.0 // decays from 2.5 → 1.0
+    private let routeInitSettleDuration: TimeInterval = 3.5
+    private var routeInitAltitudeBoost: Double = 1.0 // decays from 2.0 → 1.0
 
     // ═══════════════════════════════════════════════════════════════════
     // NEW BEHAVIOR #13 — Merge/Ramp Recovery Hold
@@ -936,8 +935,8 @@ public final class CameraAnimator {
     // but its absence is what makes other navigation cameras feel "dead."
     // ═══════════════════════════════════════════════════════════════════
     private var stableSince: Date = .now
-    private let ambientOscillationAmplitude: Double = 1.5 // ±1.5°
-    private let ambientOscillationPeriod: TimeInterval = 12.0
+    private let ambientOscillationAmplitude: Double = 0.75 // ±0.75°
+    private let ambientOscillationPeriod: TimeInterval = 16.0
     // ── Free-Drive Exploration Horizon (NEW BEHAVIOR #10 tie-in) ──────
     // Applied here in the animator since it has a time component
     private var freeDriveSustainedSpeedSince: Date = .distantPast
@@ -997,7 +996,7 @@ public final class CameraAnimator {
                 let t = elapsed / routeInitSettleDuration
                 // Smoothstep decay: 2.5 → 1.0 over 3 seconds
                 let s = t * t * (3.0 - 2.0 * t) // smoothstep
-                routeInitAltitudeBoost = 1.0 + (2.5 - 1.0) * (1.0 - s)
+                routeInitAltitudeBoost = 1.0 + (2.0 - 1.0) * (1.0 - s)
                 target.altitude *= routeInitAltitudeBoost
                 target.priority = max(target.priority, 2)
                 target.requestedAnimationTau = 0.3 // snappier for the fly-out
@@ -1190,9 +1189,9 @@ public final class CameraAnimator {
         // ── Route initiation detection (#12) ───────────────────────────
         if context.isNavigating && !wasNavigating {
             routeStartTime = now
-            routeInitAltitudeBoost = 2.5
+            routeInitAltitudeBoost = 2.0
             #if DEBUG
-            DebugLogger.shared.log("CAM route initiated → fly-out 2.5×")
+            DebugLogger.shared.log("CAM route initiated → fly-out 2.0×")
             #endif
         }
         wasNavigating = context.isNavigating
