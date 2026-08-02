@@ -63,7 +63,7 @@ final class CarPlayNowPlayingController {
             MPMediaItemPropertyTitle: speedText,
             MPMediaItemPropertyArtist: road,
             MPMediaItemPropertyAlbumTitle: vm.status.rawValue.uppercased(),
-            MPMediaItemPropertyPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: vm.sessionDuration,
             MPMediaItemPropertyPlaybackDuration: max(vm.sessionDuration + 1, 1)
         ]
@@ -71,7 +71,7 @@ final class CarPlayNowPlayingController {
             info[MPMediaItemPropertyArtwork] = artwork
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        CPNowPlayingTemplate.shared.isPlaying = audioAlertsEnabled
+        MPNowPlayingInfoCenter.default().playbackState = audioAlertsEnabled ? .playing : .paused
     }
 
     // MARK: - Audio-alert toggle (the app's "playback")
