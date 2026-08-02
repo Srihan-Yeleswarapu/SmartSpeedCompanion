@@ -68,6 +68,17 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     /// malformed rows were removed. Returning no batch data is safer than
     /// serving a stale road/limit answer.
     private var cacheDisabled = false
+    /// Non-blocking readiness latch. Written `true` by
+    /// `performOpenAndMigration()` on the `queue` thread once the SQLite open
+    /// + migration has finished, and never reset. Read on any thread WITHOUT
+    /// `queue.sync` deliberately: a stale `false` read only makes an early
+    /// caller treat the cache as not-yet-open (return nil / 0) instead of
+    /// blocking the calling thread while the open block (which may run a
+    /// one-time VACUUM on the legacy-migration path) is still in flight —
+    /// exactly the first-use stall this launch fix eliminates. Once visible as
+    /// `true` the open work has completed, so the `queue.sync` bodies that
+    /// follow are fast.
+    private var isOpen = false
     private let dbURL: URL
     private let queue = DispatchQueue(label: "com.speedsense.hereBatchCache", qos: .utility)
     /// Bump whenever the persisted row interpretation changes. Version 2
@@ -84,16 +95,61 @@ public final class HERELocalBatchCache: @unchecked Sendable {
         let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         self.dbURL = cachesDir.appendingPathComponent("hereBatchCache.sqlite")
+        // ═══ LAUNCH-HANG FIX (2026-08-02 UIKit-runloop reports) ═════════════
+        // SQLite open, schema creation, and the legacy-cache migration
+        // (including a VACUUM) previously ran synchronously inside this
+        // initializer. `HERELocalBatchCache.shared` is first touched from
+        // `SmartSpeedLimitService` during `DriveViewModel` construction at
+        // app launch, so that disk + VACUUM work blocked the main thread for
+        // hundreds of ms — the three back-to-back launch hangs seen in
+        // TestFlight build 549.
+        //
+        // All of it now runs on the serial cache queue. Every public method
+        // serializes through the same queue, so a lookup/store issued before
+        // the DB is open simply executes AFTER the open block completes —
+        // callers never observe a half-initialized store.
+        queue.async { [weak self] in
+            self?.performOpenAndMigration()
+        }
+    }
+
+    /// Thread-safe read of `cacheDisabled`. The flag is now written on the
+    /// `queue` thread (by `performOpenAndMigration`), so callers on the main
+    /// thread must not read the raw `Bool` directly (a cross-thread
+    /// read/write data race under Swift 6 strict concurrency). Every read
+    /// goes through the serial queue — cheap, and the flag is only ever
+    /// mutated during the one-time open/migration block.
+    private var isCacheDisabled: Bool {
+        queue.sync { cacheDisabled }
+    }
+
+    /// Non-blocking readiness gate used at the top of every public method.
+    /// The `isOpen` latch is read directly (no `queue.sync`) so callers
+    /// issued before the async open completes return nil/0 immediately
+    /// instead of blocking; once open, the serialized `isCacheDisabled`
+    /// check below it is a fast queue round-trip.
+    private var isReady: Bool {
+        guard isOpen else { return false }
+        return !isCacheDisabled
+    }
+
+    /// Open the SQLite store and run the legacy-cache migration. Runs once on
+    /// the serial `queue` (never on the main thread), so app launch never
+    /// blocks on disk I/O or `VACUUM`.
+    private func performOpenAndMigration() {
         let migrationCompleted = resetPersistedStoreIfNeeded()
         openOrCreateDB()
         if !migrationCompleted {
             // If a locked file prevented deletion, clear its rows after the
             // connection opens. Do not mark the migration complete until the
             // malformed legacy data has actually been removed.
-            let cleared = queue.sync { () -> Bool in
-                guard db != nil else { return false }
-                return exec("DELETE FROM cached_roads") && exec("VACUUM")
+            guard db != nil else {
+                cacheDisabled = true
+                DebugLogger.shared.log("HERELocalBatchCache: disabling cache after failed legacy-data migration")
+                isOpen = true
+                return
             }
+            let cleared = exec("DELETE FROM cached_roads") && exec("VACUUM")
             if cleared {
                 UserDefaults.standard.set(2, forKey: "hereBatchCacheSchemaVersion")
             } else {
@@ -101,6 +157,10 @@ public final class HERELocalBatchCache: @unchecked Sendable {
                 DebugLogger.shared.log("HERELocalBatchCache: disabling cache after failed legacy-data migration")
             }
         }
+        // Mark the one-time open phase complete (also on the disabled path so
+        // the latch semantics stay "the open phase has run"; `isReady` still
+        // gates on `!isCacheDisabled`).
+        isOpen = true
     }
 
     deinit {
@@ -140,6 +200,10 @@ public final class HERELocalBatchCache: @unchecked Sendable {
         let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
         guard sqlite3_open_v2(path, &db, flags, nil) == SQLITE_OK, db != nil else {
             DebugLogger.shared.log("HERELocalBatchCache: failed to open DB at \(path)")
+            // Mark the cache disabled so `isReady` short-circuits every
+            // lookup instead of paying a queue.sync round-trip per call
+            // that then no-ops on `db == nil` (code-review hardening).
+            cacheDisabled = true
             return
         }
 
@@ -194,7 +258,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     ///   - bearing: User's bearing in degrees. If non-nil, filters by direction.
     /// - Returns: The closest matching cached road, or nil if not found.
     public func lookup(roadName: String, bearing: Double? = nil) -> CachedRoad? {
-        guard !cacheDisabled else { return nil }
+        guard isReady else { return nil }
         let dir = directionFromBearing(bearing)
         var result: CachedRoad?
 
@@ -246,7 +310,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     ///   - radiusMeters: Search radius in meters. Default 50m.
     /// - Returns: The nearest cached road within the radius, or nil.
     public func lookupNearest(to coordinate: CLLocationCoordinate2D, radiusMeters: Double = 50) -> CachedRoad? {
-        guard !cacheDisabled else { return nil }
+        guard isReady else { return nil }
         var result: CachedRoad?
 
         queue.sync {
@@ -315,7 +379,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     ///   but completely different road.
     /// - Returns the best match, or nil if nothing is cached nearby.
     public func lookup(coordinate: CLLocationCoordinate2D, roadName: String?, bearing: Double?) -> CachedRoad? {
-        guard !cacheDisabled else { return nil }
+        guard isReady else { return nil }
         // Primary path: name-first. A road name can span many miles, so the
         // name-only result still needs a coordinate-distance check. This also
         // rejects legacy rows written by the old HERE GeoJSON parser, which
@@ -352,7 +416,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     /// Store multiple road segments from a batch API response.
     /// Each row occupies ~80 bytes; 5000 rows ≈ 400KB (trivially small).
     public func store(roads: [CachedRoad]) {
-        guard !cacheDisabled, !roads.isEmpty else { return }
+        guard isReady, !roads.isEmpty else { return }
 
         queue.sync {
             guard let db = self.db else { return }
@@ -393,14 +457,14 @@ public final class HERELocalBatchCache: @unchecked Sendable {
 
     /// Check whether any cached road data exists within radius of a coordinate.
     public func isAreaCached(coordinate: CLLocationCoordinate2D, radiusMeters: Double = 100) -> Bool {
-        guard !cacheDisabled else { return false }
+        guard isReady else { return false }
         return lookupNearest(to: coordinate, radiusMeters: radiusMeters) != nil
     }
 
     /// Estimate coverage as a fraction (0.0–1.0) by checking 4 concentric
     /// radii around the coordinate.
     public func estimatedCoverage(at coordinate: CLLocationCoordinate2D, radiusMeters: Double = 1500) -> Double {
-        guard !cacheDisabled else { return 0 }
+        guard isReady else { return 0 }
         let checkRadiuses: [Double] = [50, 100, 200, 500]
         var hits = 0
         for r in checkRadiuses {
@@ -413,7 +477,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
 
     /// Total number of cached road entries.
     public var count: Int {
-        guard !cacheDisabled else { return 0 }
+        guard isReady else { return 0 }
         var result = 0
         queue.sync {
             guard let db = self.db else { return }

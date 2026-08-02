@@ -83,12 +83,16 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // cause of the glitchy CarPlay audio. The coordinator configures
         // lazily on first use and ref-counts activations.
         //
-        // Warm up the single haptic engine now so the first speeding
-        // alert doesn't pay CHHapticEngine() creation on the alert path
-        // (the engine would otherwise be lazily built on the first
-        // `triggerAlert()` -> `fireIfEnabled()` call).
-        _ = HapticAlertManager.shared
-        setupToneEngine()
+        // LAUNCH-HANG FIX (2026-08-02 UIKit-runloop reports): the tone
+        // engine (AVAudioEngine) and the haptic engine (CHHapticEngine)
+        // are NO LONGER created here. `setupToneEngine()` started the
+        // AVAudioEngine and `HapticAlertManager.shared` created/started
+        // the CHHapticEngine synchronously on the main thread during app
+        // launch — two of the three back-to-back launch hangs seen in
+        // TestFlight build 549. Both are now built lazily on first actual
+        // alert use (see `ensureToneEngine()` and
+        // `HapticAlertManager.ensureEngine()`), keeping the launch path
+        // free of synchronous audio/haptic hardware bring-up.
         observeAudioInterruptions()
         
         statusCancellable = speedEngine.$status
@@ -401,6 +405,11 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     /// Restarts the AVAudioEngine after it was stopped by an interruption.
     private func restartAudioEngine() {
+        // LAUNCH-HANG FIX: if no beep has fired yet the tone engine may
+        // never have been built (it is lazily created on first alert).
+        // Build it before probing `isRunning` so a mid-session interruption
+        // can't hit an un-initialized engine.
+        ensureToneEngine()
         guard !audioEngine.isRunning else { return }
         do {
             try audioEngine.start()
@@ -420,7 +429,18 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     // policy instead of fighting over category/mode/activation.
     
     // MARK: - Tone Engine
-    private func setupToneEngine() {
+    /// True once `ensureToneEngine()` has been attempted. Guards the lazy
+    /// one-shot build so the AVAudioEngine hardware is only started on the
+    /// first actual alert (LAUNCH-HANG FIX — see `init` note).
+    private var toneEngineReady = false
+
+    /// Builds the tone engine on first use. Deliberately NOT called from
+    /// `init`: starting AVAudioEngine synchronously during app launch was
+    /// one of the main-thread launch hangs in TestFlight build 549.
+    private func ensureToneEngine() {
+        guard !toneEngineReady else { return }
+        toneEngineReady = true
+
         let sampleRate: Double = 44100
         let duration: Double = 0.25
         let frequency: Double = 1052.0
@@ -459,6 +479,9 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     ///   3. Schedules the buffer WITHOUT stopping the player node first
     ///   4. Falls back to system sound if AVAudioEngine fails entirely
     private func playTone() {
+        // LAUNCH-HANG FIX: build the tone engine on the first actual beep
+        // (see `ensureToneEngine` / `init` note) instead of at launch.
+        ensureToneEngine()
         guard let buffer = toneBuffer else { return }
         
         // Step 1: Ensure the audio session is active (re-activate if

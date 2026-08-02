@@ -193,13 +193,26 @@ public final class HapticAlertManager: ObservableObject {
     private init() {
         self.deviceSupportsHaptics =
             CHHapticEngine.capabilitiesForHardware().supportsHaptics
-        setupEngine()
+        // LAUNCH-HANG FIX (2026-08-02 UIKit-runloop reports): the
+        // CHHapticEngine is NO LONGER created/started here. `AlertEngine.init`
+        // used to touch `HapticAlertManager.shared` at app launch, and
+        // `CHHapticEngine()` + `start()` blocked the main thread for hundreds
+        // of ms — one of the three back-to-back launch hangs in TestFlight
+        // build 549. The engine is now built lazily on first haptic use via
+        // `ensureEngine()`.
     }
 
-    private func setupEngine() {
+    /// Lazily creates and starts the CHHapticEngine on first haptic use.
+    /// Returns the shared engine, or nil on simulator / non-taptic hardware /
+    /// engine failure (callers already have a system-vibrate fallback).
+    ///
+    /// Idempotent: once `engine` is non-nil it is returned directly, so a
+    /// monitor tick or alert path never pays the creation cost twice.
+    private func ensureEngine() -> CHHapticEngine? {
+        if let engine = engine { return engine }
         guard deviceSupportsHaptics else {
             DebugLogger.shared.log("HapticAlertManager: no hardware support; will fall back to system vibrate")
-            return
+            return nil
         }
         do {
             let engine = try CHHapticEngine()
@@ -223,11 +236,16 @@ public final class HapticAlertManager: ObservableObject {
                     DebugLogger.shared.log("HapticAlertManager restart failed: \(error.localizedDescription)")
                 }
             }
-            try engine.start()
+            // Assign BEFORE `start()`: if the hardware triggers a reset
+            // during the initial start, the resetHandler's `self.engine?.start()`
+            // must already see the engine to restart it (code-review fix).
             self.engine = engine
+            try engine.start()
+            return engine
         } catch {
             DebugLogger.shared.log("HapticAlertManager setup error: \(error.localizedDescription)")
             self.engine = nil
+            return nil
         }
     }
 
@@ -300,7 +318,10 @@ public final class HapticAlertManager: ObservableObject {
     public func startSpeedingPulse(severity: Double = 0.5) {
         guard isEnabled else { return }
         guard style != .off else { return }
-        guard deviceSupportsHaptics, let engine = engine else { return }
+        // LAUNCH-HANG FIX: lazily build the engine on first haptic use
+        // (see `ensureEngine`); `ensureEngine()` itself gates on
+        // `deviceSupportsHaptics`.
+        guard let engine = ensureEngine() else { return }
 
         let clampedSeverity = min(1.0, max(0.1, severity))
         let intensity = Float(0.6 + 0.4 * clampedSeverity)
@@ -822,7 +843,8 @@ public final class HapticAlertManager: ObservableObject {
     /// can offer a "Preview" button.
     public func previewCandidate(_ taps: [HapticTapEvent]) {
         guard !taps.isEmpty else { return }
-        guard deviceSupportsHaptics, let engine = engine else {
+        // LAUNCH-HANG FIX: lazy engine creation on first use.
+        guard let engine = ensureEngine() else {
             AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
             return
         }
@@ -858,7 +880,8 @@ public final class HapticAlertManager: ObservableObject {
     }
 
     fileprivate func playPattern(_ pattern: CHHapticPattern) {
-        guard let engine = engine else {
+        // LAUNCH-HANG FIX: lazy engine creation on first use.
+        guard let engine = ensureEngine() else {
             AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
             return
         }
