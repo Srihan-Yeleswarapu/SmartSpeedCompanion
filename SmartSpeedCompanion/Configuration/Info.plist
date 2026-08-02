@@ -34,18 +34,25 @@
         <string>remote-notification</string>
     </array>
         <!--
-      CPSupportedTemplates for PLAN B (carplay-driving-task only).
-      CPMapTemplate / CPNavigationAlert / CPSearchTemplate are removed
-      because they require the carplay-navigation entitlement which is
-      not yet available in the provisioning profile. Once the profile is
-      regenerated, switch back to CarPlaySceneDelegate (Plan A) and
-      restore the full template set.
+      CPSupportedTemplates (Plan A — CarPlaySceneDelegate, the approved
+      navigation experience). The provisioning profile now authorizes
+      com.apple.developer.carplay-maps + com.apple.developer.carplay-audio,
+      so the full map/search/alert template set is back. CPNowPlayingTemplate
+      is required by the CarPlay Audio App category
+      (com.apple.developer.carplay-audio — granted 2026-08-02) and is pushed
+      by CarPlayNowPlayingController from the map root.
+      NOTE: project.yml's `info.properties` block re-declares this set and
+      wins at `xcodegen generate` time — keep both in sync.
     -->
     <key>CPSupportedTemplates</key>
     <array>
+        <string>CPMapTemplate</string>
+        <string>CPSearchTemplate</string>
+        <string>CPNavigationAlert</string>
         <string>CPListTemplate</string>
         <string>CPAlertTemplate</string>
         <string>CPInformationTemplate</string>
+        <string>CPGridTemplate</string>
         <string>CPNowPlayingTemplate</string>
     </array>
     <key>NSMotionUsageDescription</key>
@@ -63,11 +70,10 @@
                 <dict>
                     <key>UISceneClassName</key>
                     <string>CPTemplateApplicationScene</string>
-                                        <!-- Plan B: CarPlaySceneDelegateB uses list-only templates.
-                         Switch to CarPlaySceneDelegate when provisioning profile
-                         authorizes carplay-navigation. -->
+                    <!-- Plan A: CarPlaySceneDelegate (full map + navigation).
+                         Profile authorizes carplay-maps + carplay-audio. -->
                     <key>UISceneDelegateClassName</key>
-                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegateB</string>
+                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
                 </dict>
             </array>
             <key>CPTemplateApplicationDashboardSceneSessionRoleApplication</key>
@@ -75,9 +81,9 @@
                 <dict>
                     <key>UISceneClassName</key>
                     <string>CPTemplateApplicationDashboardScene</string>
-                    <!-- Plan B: same delegate handles dashboard with list-safe APIs -->
+                    <!-- Plan A: same delegate handles the dashboard scene. -->
                     <key>UISceneDelegateClassName</key>
-                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegateB</string>
+                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
                 </dict>
             </array>
             <key>UIWindowSceneSessionRoleApplication</key>
