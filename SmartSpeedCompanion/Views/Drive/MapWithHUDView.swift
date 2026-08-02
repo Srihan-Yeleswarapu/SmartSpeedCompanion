@@ -334,7 +334,34 @@ fileprivate struct SearchBarView: View {
     /// Keeps the results overlay visible after the keyboard is dismissed.
     /// Focus controls the keyboard; this state controls search-mode visibility.
     @State private var isSearchActive = false
+    @State private var searchSelectionGeneration = 0
     @FocusState private var isFocused: Bool
+
+    /// Ends the search interaction immediately when the user chooses a
+    /// destination. The route calculation can take a moment; leaving the
+    /// local-search lock set until it finishes makes the tap look ignored and
+    /// hides the route picker during that wait.
+    private func finishSearchSelection() -> Int {
+        searchSelectionGeneration &+= 1
+        searchText = ""
+        isSearchActive = false
+        isFocused = false
+        driveViewModel.isSearchingLocally = false
+        return searchSelectionGeneration
+    }
+
+    /// Reopens search if MapKit cannot resolve a tapped completion. The user
+    /// should never be left with an empty, hidden search bar after a failed
+    /// destination lookup. Ignore an obsolete failure if the user cancelled
+    /// or started another selection while this lookup was suspended.
+    private func restoreSearchAfterSelectionFailure(query: String, generation: Int) {
+        guard generation == searchSelectionGeneration else { return }
+        searchText = query
+        isSearchActive = true
+        driveViewModel.isSearchingLocally = true
+        driveViewModel.updateSearchQuery(query)
+        isFocused = true
+    }
     
     var body: some View {
         VStack(spacing: 6) {
@@ -377,6 +404,7 @@ fileprivate struct SearchBarView: View {
                 
                 if isSearchActive || !searchText.isEmpty {
                     Button(action: {
+                        searchSelectionGeneration &+= 1
                         searchText = ""
                         driveViewModel.updateSearchQuery("")
                         isSearchActive = false
@@ -446,15 +474,13 @@ fileprivate struct SearchBarView: View {
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(filteredNamed.prefix(5)) { namedLoc in
                                     Button(action: {
+                                        let coord = CLLocationCoordinate2D(latitude: namedLoc.latitude, longitude: namedLoc.longitude)
+                                        let placemark = MKPlacemark(coordinate: coord)
+                                        let item = MKMapItem(placemark: placemark)
+                                        item.name = namedLoc.name
+                                        _ = finishSearchSelection()
                                         Task {
-                                            let coord = CLLocationCoordinate2D(latitude: namedLoc.latitude, longitude: namedLoc.longitude)
-                                            let placemark = MKPlacemark(coordinate: coord)
-                                            let item = MKMapItem(placemark: placemark)
-                                            item.name = namedLoc.name
                                             await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
-                                            searchText = ""
-                                            isSearchActive = false
-                                            isFocused = false
                                         }
                                     }) {
                                         HStack(spacing: 12) {
@@ -525,12 +551,14 @@ fileprivate struct SearchBarView: View {
                                     HStack(spacing: 0) {
                                         Button(action: {
                                             searchText = search
+                                            let generation = finishSearchSelection()
                                             Task {
                                                 await driveViewModel.searchDestination(query: search)
+                                                guard generation == searchSelectionGeneration else { return }
                                                 if let item = driveViewModel.searchResults.first {
                                                     await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
-                                                    searchText = ""
-                                                    isFocused = false
+                                                } else {
+                                                    restoreSearchAfterSelectionFailure(query: search, generation: generation)
                                                 }
                                             }
                                         }) {
@@ -584,14 +612,16 @@ fileprivate struct SearchBarView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(driveViewModel.searchCompletions, id: \.self) { completion in
                                 Button(action: {
+                                    let query = [completion.title, completion.subtitle]
+                                        .filter { !$0.isEmpty }
+                                        .joined(separator: ", ")
+                                    let generation = finishSearchSelection()
                                     Task {
                                         guard let item = await driveViewModel.selectCompletion(completion) else {
+                                            restoreSearchAfterSelectionFailure(query: query, generation: generation)
                                             return
                                         }
                                         await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
-                                        searchText = ""
-                                        isSearchActive = false
-                                        isFocused = false
                                     }
                                 }) {
                                     HStack(alignment: .firstTextBaseline) {
@@ -641,11 +671,9 @@ fileprivate struct SearchBarView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(driveViewModel.searchResults.enumerated()), id: \.offset) { index, item in
                                 Button {
+                                    _ = finishSearchSelection()
                                     Task {
                                         await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
-                                        searchText = ""
-                                        isSearchActive = false
-                                        isFocused = false
                                     }
                                 } label: {
                                     HStack(spacing: 12) {

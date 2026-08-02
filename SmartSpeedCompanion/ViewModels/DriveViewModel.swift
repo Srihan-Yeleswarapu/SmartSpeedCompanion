@@ -1255,10 +1255,30 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// Requests route options from MapKit and triggers the selection view.
     public func selectDestinationAndCalculateRoutes(to destination: MKMapItem, isRerouting: Bool = false) async {
         saveRecentSearch(destination.name ?? "Unknown Location")
-        await navigationCoordinator.selectDestinationAndCalculateRoutes(to: destination, isRerouting: isRerouting)
         if !isRerouting {
-            self.isSelectingRoute = true
+            // Do not let routes from the previous search make a new request
+            // look successful while MapKit is still calculating.
+            self.availableRoutes = []
+            self.isSelectingRoute = false
         }
+        await navigationCoordinator.selectDestinationAndCalculateRoutes(to: destination, isRerouting: isRerouting)
+        guard !isRerouting,
+              !self.availableRoutes.isEmpty,
+              let currentDestination = self.destination,
+              CLLocation(
+                  latitude: currentDestination.placemark.coordinate.latitude,
+                  longitude: currentDestination.placemark.coordinate.longitude
+              ).distance(from: CLLocation(
+                  latitude: destination.placemark.coordinate.latitude,
+                  longitude: destination.placemark.coordinate.longitude
+              )) < 1 else {
+            // The user may have cancelled or replaced this search while
+            // MapKit was calculating, or MapKit may have returned no routes.
+            // Never resurrect an empty/stale route picker.
+            self.isSelectingRoute = false
+            return
+        }
+        self.isSelectingRoute = true
     }
     
     // MARK: - Navigation Control
