@@ -401,12 +401,18 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         let displayLimit = SpeedFormatting.displayLimit(forMph: limit, measurementSystem: system)
         let diff = Int(speed) - displayLimit
         let ok = CPAlertAction(title: "OK", style: .default) { [weak self] _ in
-            Task { @MainActor in self?.isAlertPresented = false }
+            Task { @MainActor in
+                guard let self else { return }
+                self.isAlertPresented = false
+                self.mapTemplate.dismissNavigationAlert(animated: true, completion: nil)
+            }
         }
         let snooze = CPAlertAction(title: "I Know (15s)", style: .default) { [weak self] _ in
             Task { @MainActor in
-                self?.viewModel.alertEngine.snoozeFor(15)
-                self?.isAlertPresented = false
+                guard let self else { return }
+                self.viewModel.alertEngine.snoozeFor(15)
+                self.isAlertPresented = false
+                self.mapTemplate.dismissNavigationAlert(animated: true, completion: nil)
             }
         }
         let alert = CPNavigationAlert(
