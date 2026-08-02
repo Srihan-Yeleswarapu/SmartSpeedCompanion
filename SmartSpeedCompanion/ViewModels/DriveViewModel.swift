@@ -1427,17 +1427,44 @@ public final class DriveViewModel: NSObject, ObservableObject {
     }
     
     /// Resolves a text-based completion from the dropdown into a real MKMapItem.
-    public func selectCompletion(_ completion: MKLocalSearchCompletion) async {
+    ///
+    /// Return the resolved item to the caller instead of requiring it to read
+    /// `searchResults` immediately after this async operation. That shared
+    /// published array can still contain an older result when a completion
+    /// tap races with the completer's next update, which made a visible result
+    /// appear to do nothing on device.
+    @discardableResult
+    public func selectCompletion(_ completion: MKLocalSearchCompletion) async -> MKMapItem? {
+        // Never let a failed/slow resolution fall through to a previous result.
+        searchResults = []
+
         let searchRequest = MKLocalSearch.Request(completion: completion)
         let search = MKLocalSearch(request: searchRequest)
         do {
             let response = try await search.start()
             if let first = response.mapItems.first {
                 searchResults = [first]
+                return first
             }
         } catch {
-            print("Failed to resolve completion: \(error)")
+            DebugLogger.shared.log("Completion resolution failed for '\(completion.title)': \(error.localizedDescription)")
         }
+
+        // MapKit can occasionally return no item for a completion that is
+        // already visible in the dropdown (especially while the completer is
+        // refreshing). Retry through the normal text search instead of
+        // silently making a destination tap appear to do nothing.
+        let fallbackQuery = [completion.title, completion.subtitle]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        guard !fallbackQuery.isEmpty else { return nil }
+
+        guard let first = await searchDestinationItem(query: fallbackQuery) else {
+            DebugLogger.shared.log("Completion fallback returned no map item: \(fallbackQuery)")
+            return nil
+        }
+        searchResults = [first]
+        return first
     }
     
     // MARK: - Multi-Stop Route Management
@@ -1630,11 +1657,21 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// Full manual search for points of interest or addresses.
     public func searchDestination(query: String) async {
         guard !query.isEmpty else { searchResults = []; return }
+        searchResults = await searchDestinationItems(query: query)
+    }
+
+    /// Performs a text search and returns the exact response items to the
+    /// caller. Keeping this separate from the published `searchResults` array
+    /// prevents an overlapping search from changing which destination is
+    /// selected after a completion tap.
+    private func searchDestinationItems(query: String) async -> [MKMapItem] {
         if locationManager.authorizationStatus == .notDetermined {
             locationManager.requestAuthorization()
         }
-        
+
         isSearching = true
+        defer { isSearching = false }
+
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = query
         if let userLocation = locationManager.latestLocation {
@@ -1647,11 +1684,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
         let search = MKLocalSearch(request: request)
         do {
             let response = try await search.start()
-            searchResults = Array(response.mapItems.prefix(5))
+            return Array(response.mapItems.prefix(5))
         } catch {
-            searchResults = []
+            DebugLogger.shared.log("Text search failed for '\(query)': \(error.localizedDescription)")
+            return []
         }
-        isSearching = false
     }
     
     public func searchDestinationTrigger(_ query: String) async -> [MKMapItem] {

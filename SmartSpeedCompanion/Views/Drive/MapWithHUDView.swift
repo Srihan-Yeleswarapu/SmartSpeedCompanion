@@ -563,12 +563,12 @@ fileprivate struct SearchBarView: View {
                             ForEach(driveViewModel.searchCompletions, id: \.self) { completion in
                                 Button(action: {
                                     Task {
-                                        await driveViewModel.selectCompletion(completion)
-                                        if let item = driveViewModel.searchResults.first {
-                                            await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
-                                            searchText = ""
-                                            isFocused = false
+                                        guard let item = await driveViewModel.selectCompletion(completion) else {
+                                            return
                                         }
+                                        await driveViewModel.selectDestinationAndCalculateRoutes(to: item)
+                                        searchText = ""
+                                        isFocused = false
                                     }
                                 }) {
                                     HStack(alignment: .firstTextBaseline) {
@@ -611,16 +611,22 @@ fileprivate struct SearchBarView: View {
     private func executeSubmitSearch() {
         Task {
             // If completions are available, take the first one
+            let selectedItem: MKMapItem?
             if let firstCompletion = driveViewModel.searchCompletions.first {
-                await driveViewModel.selectCompletion(firstCompletion)
+                selectedItem = await driveViewModel.selectCompletion(firstCompletion)
             } else if !searchText.isEmpty {
                 // Otherwise do a natural language search
                 await driveViewModel.searchDestination(query: searchText)
+                selectedItem = driveViewModel.searchResults.first
+            } else {
+                selectedItem = nil
             }
-            
-            // Show route options for the first finding
-            if let firstItem = driveViewModel.searchResults.first {
-                await driveViewModel.selectDestinationAndCalculateRoutes(to: firstItem)
+
+            // Show route options for the selected finding. Use the item
+            // returned by the exact search operation so a stale published
+            // result cannot win a race with the user's submit.
+            if let selectedItem {
+                await driveViewModel.selectDestinationAndCalculateRoutes(to: selectedItem)
                 searchText = ""
                 isFocused = false
             }
