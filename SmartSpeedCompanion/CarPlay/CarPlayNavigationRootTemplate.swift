@@ -404,7 +404,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             Task { @MainActor in
                 guard let self else { return }
                 self.isAlertPresented = false
-                self.mapTemplate.dismissNavigationAlert(animated: true, completion: nil)
+                self.mapTemplate.dismissNavigationAlert(animated: true, completion: { _ in })
             }
         }
         let snooze = CPAlertAction(title: "I Know (15s)", style: .default) { [weak self] _ in
@@ -412,7 +412,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
                 guard let self else { return }
                 self.viewModel.alertEngine.snoozeFor(15)
                 self.isAlertPresented = false
-                self.mapTemplate.dismissNavigationAlert(animated: true, completion: nil)
+                self.mapTemplate.dismissNavigationAlert(animated: true, completion: { _ in })
             }
         }
         let alert = CPNavigationAlert(
