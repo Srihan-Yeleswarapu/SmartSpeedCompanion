@@ -167,6 +167,18 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         tearDownNavigation()
     }
 
+    /// Some iOS 26 CarPlay configurations still use the legacy disconnect
+    /// selector paired with the no-window connect callback above. Route it
+    /// through the same idempotent navigation cleanup so a legacy disconnect
+    /// cannot leave an orphaned CPNavigationSession behind.
+    func templateApplicationScene(
+        _ templateApplicationScene: CPTemplateApplicationScene,
+        didDisconnectInterfaceController interfaceController: CPInterfaceController
+    ) {
+        tearDownMapView()
+        tearDownNavigation()
+    }
+
     /// Remove the CarPlay-window MKMapView from its superview and drop
     /// our reference so the view controller holding the CPWindow
     /// releases promptly.

@@ -61,6 +61,78 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     // Prevents duplicate CarPlay result taps while an add-stop route
     // recalculation is in flight.
     @MainActor private var isAddingStopInProgress = false
+    // CarPlay enforces a small maximum template hierarchy. Keep references
+    // to the active add-stop templates so repeated taps and late search
+    // completions cannot push duplicate screens onto the stack.
+    @MainActor private weak var activeAddStopTemplate: CPGridTemplate?
+    @MainActor private weak var activeStopOptionsTemplate: CPListTemplate?
+    @MainActor private weak var activeStopsListTemplate: CPListTemplate?
+    @MainActor private weak var activeSearchTemplate: CPSearchTemplate?
+    @MainActor private var isTemplatePushInFlight = false
+    @MainActor private var isRemovingStopInProgress = false
+
+    @MainActor
+    private func isTemplateOnStack(_ template: CPTemplate?) -> Bool {
+        guard let template else { return false }
+        return interfaceController?.templates.contains { $0 === template } == true
+    }
+
+    @MainActor
+    private func clearInactiveAddStopTemplates() {
+        // `templates` can lag while a push animation is in flight. Do not
+        // clear weak references during that window or a second tap could
+        // create another template before CarPlay finishes the first push.
+        guard !isTemplatePushInFlight else { return }
+        if !isTemplateOnStack(activeAddStopTemplate) { activeAddStopTemplate = nil }
+        if !isTemplateOnStack(activeStopOptionsTemplate) { activeStopOptionsTemplate = nil }
+        if !isTemplateOnStack(activeStopsListTemplate) { activeStopsListTemplate = nil }
+        if !isTemplateOnStack(activeSearchTemplate) { activeSearchTemplate = nil }
+    }
+
+    @MainActor
+    private func invalidateAddStopSearch() {
+        stopSearchGeneration &+= 1
+        clearInactiveAddStopTemplates()
+    }
+
+    @MainActor
+    private func pushAddStopTemplate(_ template: CPGridTemplate) {
+        clearInactiveAddStopTemplates()
+        guard !isTemplatePushInFlight,
+              !isTemplateOnStack(activeAddStopTemplate),
+              let interfaceController else { return }
+        activeAddStopTemplate = template
+        isTemplatePushInFlight = true
+        interfaceController.pushTemplate(template, animated: true) { [weak self] _, _ in
+            Task { @MainActor in self?.isTemplatePushInFlight = false }
+        }
+    }
+
+    @MainActor
+    private func pushStopOptionsTemplate(_ template: CPListTemplate) {
+        clearInactiveAddStopTemplates()
+        guard !isTemplatePushInFlight,
+              !isTemplateOnStack(activeStopOptionsTemplate),
+              let interfaceController else { return }
+        activeStopOptionsTemplate = template
+        isTemplatePushInFlight = true
+        interfaceController.pushTemplate(template, animated: true) { [weak self] _, _ in
+            Task { @MainActor in self?.isTemplatePushInFlight = false }
+        }
+    }
+
+    @MainActor
+    private func pushStopsListTemplate(_ template: CPListTemplate) {
+        clearInactiveAddStopTemplates()
+        guard !isTemplatePushInFlight,
+              !isTemplateOnStack(activeStopsListTemplate),
+              let interfaceController else { return }
+        activeStopsListTemplate = template
+        isTemplatePushInFlight = true
+        interfaceController.pushTemplate(template, animated: true) { [weak self] _, _ in
+            Task { @MainActor in self?.isTemplatePushInFlight = false }
+        }
+    }
 
     @MainActor
     init(interfaceController: CPInterfaceController, viewModel: DriveViewModel) {
@@ -395,12 +467,32 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
 
     @MainActor
     private func presentSearch() {
-        let t = CPSearchTemplate(); t.delegate = self
-        interfaceController?.pushTemplate(t, animated: true, completion: nil)
+        // Search can be opened from both the map and the Add Stop grid. Do
+        // not queue another CPSearchTemplate while CarPlay is still pushing
+        // or dismissing the current one; duplicate pushes are a direct path
+        // to the framework's hierarchy-depth exception.
+        clearInactiveAddStopTemplates()
+        guard !isTemplatePushInFlight,
+              !isTemplateOnStack(activeSearchTemplate),
+              let interfaceController else { return }
+        let template = CPSearchTemplate()
+        template.delegate = self
+        activeSearchTemplate = template
+        isTemplatePushInFlight = true
+        interfaceController.pushTemplate(template, animated: true) { [weak self] _, _ in
+            Task { @MainActor in self?.isTemplatePushInFlight = false }
+        }
     }
 
     @MainActor
     private func presentAddStopSearch() {
+        // The map button can deliver more than one callback while CarPlay is
+        // animating a push. Reuse the existing grid instead of stacking a
+        // second add-stop flow.
+        clearInactiveAddStopTemplates()
+        guard !isTemplatePushInFlight,
+              !isTemplateOnStack(activeAddStopTemplate) else { return }
+
         // Grid of big, colorful quick actions — safe to scan while driving.
         let gas = CPGridButton(titleVariants: ["Gas Station"],
                                image: CarPlayUI.iconTile(systemName: "fuelpump.fill", color: CarPlayUI.orange, size: 56)) { [weak self] _ in
@@ -430,20 +522,21 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             }
             buttons.insert(vs, at: 0)
         }
-        interfaceController?.pushTemplate(CPGridTemplate(title: "Add Stop", gridButtons: buttons), animated: true, completion: nil)
+        pushAddStopTemplate(CPGridTemplate(title: "Add Stop", gridButtons: buttons))
     }
 
     @MainActor
     private func searchAndAddStop(query: String) {
-        stopSearchGeneration += 1
+        stopSearchGeneration &+= 1
         let generation = stopSearchGeneration
         navigationManager.searchDestination(query: query) { [weak self] results in
             guard let self = self else { return }
             Task { @MainActor in
                 // Ignore stale responses: if the driver tapped a different
-                // category (or left the + flow) while this search was in
-                // flight, a newer request is authoritative.
-                guard generation == self.stopSearchGeneration else { return }
+                // category or backed out of the + flow while this search was
+                // in flight, a newer request is authoritative.
+                guard generation == self.stopSearchGeneration,
+                      self.isTemplateOnStack(self.activeAddStopTemplate) else { return }
                 self.presentStopOptions(title: query, results: results)
             }
         }
@@ -460,7 +553,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             let template = CPListTemplate(title: title, sections: [
                 CPListSection(items: [noResults], header: nil, sectionIndexTitle: nil)
             ])
-            interfaceController?.pushTemplate(template, animated: true, completion: nil)
+            pushStopOptionsTemplate(template)
             return
         }
 
@@ -513,7 +606,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
 
         let section = CPListSection(items: items, header: "\(results.count) found", sectionIndexTitle: nil)
         let template = CPListTemplate(title: title, sections: [section])
-        interfaceController?.pushTemplate(template, animated: true, completion: nil)
+        pushStopOptionsTemplate(template)
     }
 
     /// Distance (meters) from the user's current location to a result.
@@ -541,6 +634,10 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     /// Brief confirmation after a stop is added, then back to the map.
     @MainActor
     private func showStopAddedConfirmation(name: String) {
+        // Invalidate any late category-search callback before unwinding the
+        // flow. This guarantees a completed add cannot be followed by a stale
+        // result list being pushed back onto the stack.
+        invalidateAddStopSearch()
         // Pop to root first to keep the hierarchy shallow, then present
         // the confirmation alert on the clean root map template.
         guard let interfaceController else {
@@ -551,6 +648,9 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             guard let self else { return }
             self.isAddingStopInProgress = false
             guard success else { return }
+            self.activeAddStopTemplate = nil
+            self.activeStopOptionsTemplate = nil
+            self.activeStopsListTemplate = nil
             let action = CPAlertAction(title: "OK", style: .default) { _ in }
             let alert = CPAlertTemplate(
                 titleVariants: ["Stop added: \(name)", "Tap + again to add more stops."],
@@ -564,6 +664,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     /// was accepted. The ViewModel restores the previous coherent route.
     @MainActor
     private func showStopAddFailure() {
+        invalidateAddStopSearch()
         guard let interfaceController else {
             isAddingStopInProgress = false
             return
@@ -572,6 +673,9 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             guard let self else { return }
             self.isAddingStopInProgress = false
             guard success else { return }
+            self.activeAddStopTemplate = nil
+            self.activeStopOptionsTemplate = nil
+            self.activeStopsListTemplate = nil
             let action = CPAlertAction(title: "OK", style: .default) { _ in }
             let alert = CPAlertTemplate(
                 titleVariants: ["Stop not added", "Route recalculation failed. Try again when connected."],
@@ -583,31 +687,58 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
 
     @MainActor
     private func presentStopsList() {
+        clearInactiveAddStopTemplates()
+        guard !isTemplateOnStack(activeStopsListTemplate),
+              !isRemovingStopInProgress else { return }
+
         let items: [CPListItem] = viewModel.routeStops.enumerated().map { i, stop in
             let item = CPListItem(text: "\(i+1). \(stop.name)", detailText: stop.address ?? "")
             let sid = stop.id
-            item.handler = { _, c in
+            item.handler = { [weak self] _, c in
+                guard let self else {
+                    c()
+                    return
+                }
+                guard !self.isRemovingStopInProgress else {
+                    c()
+                    return
+                }
+                self.isRemovingStopInProgress = true
+                // Complete the row selection once, then serialize the route
+                // mutation and stack reset. Previously a second tap could
+                // start another async removal while the first pop was still
+                // in flight, leaving CarPlay with an inconsistent hierarchy.
+                c()
                 Task { @MainActor in
                     await self.viewModel.removeStopFromRoute(sid)
-                    // Pop the current list instead of pushing a new one —
-                    // each push without a pop was causing the CarPlay
-                    // clientExceededHierarchyDepthLimit crash.
-                    if self.viewModel.routeStops.isEmpty {
-                        // No stops left — go all the way back to the map
-                        // so the user doesn't see a stale grid.
-                        self.interfaceController?.popToRootTemplate(animated: true, completion: nil)
-                    } else {
-                        self.interfaceController?.popTemplate(animated: true, completion: nil)
+                    self.invalidateAddStopSearch()
+                    guard let interfaceController = self.interfaceController else {
+                        self.activeAddStopTemplate = nil
+                        self.activeStopOptionsTemplate = nil
+                        self.activeStopsListTemplate = nil
+                        self.isRemovingStopInProgress = false
+                        return
+                    }
+                    interfaceController.popToRootTemplate(animated: true) { [weak self] success, _ in
+                        guard let self else { return }
+                        if success {
+                            self.activeAddStopTemplate = nil
+                            self.activeStopOptionsTemplate = nil
+                            self.activeStopsListTemplate = nil
+                        }
+                        // Always release the latch, including a failed or
+                        // interrupted CarPlay transition, so one bad pop
+                        // cannot permanently disable the Stops flow.
+                        self.isRemovingStopInProgress = false
                     }
                 }
-                c()
             }
             return item
         }
         let t = CPListTemplate(title: "Route Stops (\(viewModel.routeStops.count))", sections: [CPListSection(items: items, header: nil, sectionIndexTitle: nil)])
         t.emptyViewTitleVariants = ["No Stops"]
         t.emptyViewSubtitleVariants = ["Add stops along your route"]
-        interfaceController?.pushTemplate(t, animated: true, completion: nil)
+        pushStopsListTemplate(t)
     }
 
     // MARK: - CPSearchTemplateDelegate
