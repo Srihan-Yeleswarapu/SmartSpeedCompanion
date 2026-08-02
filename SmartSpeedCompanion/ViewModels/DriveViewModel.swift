@@ -1459,7 +1459,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
             .joined(separator: ", ")
         guard !fallbackQuery.isEmpty else { return nil }
 
-        guard let first = await searchDestinationItem(query: fallbackQuery) else {
+        guard let first = (await searchDestinationItems(query: fallbackQuery)).first else {
             DebugLogger.shared.log("Completion fallback returned no map item: \(fallbackQuery)")
             return nil
         }
