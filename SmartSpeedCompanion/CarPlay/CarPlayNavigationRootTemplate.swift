@@ -375,7 +375,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     @MainActor
     private func destinationPreviewKey(for destination: MKMapItem) -> String {
         let coordinate = destination.placemark.coordinate
-        return "\(coordinate.latitude),\(coordinate.longitude)|\(destination.name ?? \"\")"
+        return "\(coordinate.latitude),\(coordinate.longitude)|\(destination.name ?? "")"
     }
 
     @MainActor
