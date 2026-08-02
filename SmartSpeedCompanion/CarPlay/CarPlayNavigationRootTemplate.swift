@@ -73,6 +73,38 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         bindViewModel()
     }
 
+    // MARK: - iPhone → CarPlay Handoff
+
+    /// If navigation is already active on iPhone when CarPlay connects,
+    /// immediately start a CarPlay navigation session so the driver sees
+    /// turn-by-turn guidance without having to re-select the destination.
+    ///
+    /// The shared `DriveViewModel` / `NavigationCoordinator` already holds
+    /// the active route and destination — we just need to install a new
+    /// `CPNavigationSession` on the CarPlay map template so the system
+    /// UI (maneuver cards, ETA banner, next-turn icons) renders.
+    func resumeActiveNavigationIfAny() {
+        // Capture values in locals to prevent a TOCTOU race: if navigation
+        // ends on the phone between our guard checks and the startNavigation
+        // call, the coordinator state would be stale.
+        guard viewModel.isNavigating else { return }
+        let route = viewModel.navigationCoordinator.currentRoute
+        let destination = viewModel.navigationCoordinator.destination
+        guard let route, let destination else { return }
+        // Re-check after capture: if navigation ended between our
+        // isNavigating check and the locals capture, bail out rather
+        // than starting an orphaned CarPlay session.
+        guard viewModel.isNavigating else { return }
+        navigationManager.startNavigation(route: route, destination: destination)
+    }
+
+    /// Clean up the active CarPlay navigation session without ending
+    /// phone-side navigation. Called by CarPlaySceneDelegate when the
+    /// user disconnects so the system framework doesn't leak the session.
+    func finishActiveNavigationSession() {
+        navigationManager.finishCurrentSession()
+    }
+
     @MainActor
     private func setupTemplate() {
         mapTemplate.automaticallyHidesNavigationBar = false
@@ -724,6 +756,11 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     }
     nonisolated func mapTemplateDidStopNavigating(_ mapTemplate: CPMapTemplate) {
         Task { @MainActor in
+            // Guard: if CarPlay is disconnecting, do NOT end phone-side
+            // navigation. tearDownNavigation() already finishes the
+            // CarPlay session cleanly; this callback should only fire
+            // when the user explicitly stops navigation while connected.
+            guard interfaceController != nil else { return }
             if viewModel.isNavigating { await viewModel.navigationCoordinator.endNavigation() }
         }
     }

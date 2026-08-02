@@ -120,6 +120,12 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         guard let root = navigationRoot else { return }
         let speedMapTemplate = root.mapTemplate
         interfaceController.setRootTemplate(speedMapTemplate, animated: true, completion: nil)
+
+        // iPhone → CarPlay handoff: if navigation is already active on
+        // the phone when CarPlay connects, immediately start a CarPlay
+        // navigation session so the driver sees turn-by-turn guidance
+        // without having to re-select the destination.
+        root.resumeActiveNavigationIfAny()
     }
     
     // MARK: - Dashboard Support
@@ -169,21 +175,22 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         carPlayMapView = nil
     }
 
-    /// Stop any active drive recording and in-progress navigation, then
-    /// nil out the scene-shell references. Mirrors the single-flight
-    /// contract documented above — CarPlay runs this exact body once
-    /// per disconnect.
+    /// Clean up CarPlay-specific state when disconnected. Navigation and
+    /// recording continue seamlessly on iPhone — the user was mid-drive
+    /// when they unplugged, and the phone's UI picks up immediately.
+    ///
+    /// Previously this ended both session and navigation, which killed
+    /// the iPhone-side guidance the moment CarPlay was disconnected.
     private func tearDownNavigation() {
-        let vm = AppDelegate.sharedDriveViewModel
-        if vm.isRecording {
-            vm.endSession()
-        }
-        if vm.isNavigating {
-            Task {
-                await vm.endNavigation()
-            }
-        }
-
+        // Finish the CarPlay session FIRST while the map template is
+        // still alive (calling finishTrip() on a session whose map
+        // template was torn down is undefined on some iOS versions).
+        // Then nil interfaceController so any concurrent
+        // mapTemplateDidStopNavigating delegate callback is guarded.
+        // Phone-side navigation continues seamlessly — the shared
+        // NavigationCoordinator still holds the active route and
+        // destination.
+        navigationRoot?.finishActiveNavigationSession()
         self.interfaceController = nil
         self.navigationRoot = nil
     }

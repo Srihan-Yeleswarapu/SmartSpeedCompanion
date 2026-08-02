@@ -45,6 +45,23 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         return self.isMuted
     }
 
+    /// Clean up the active CPNavigationSession without ending phone-side
+    /// navigation. Called by CarPlaySceneDelegate when the user disconnects
+    /// from CarPlay so the system framework doesn't leak the session.
+    public func finishCurrentSession() {
+        locationCancellable?.cancel()
+        locationCancellable = nil
+        navigationSession?.finishTrip()
+        navigationSession = nil
+        currentManeuver = nil
+    }
+
+    /// Defensive cleanup in case `finishCurrentSession()` was not called
+    /// before deallocation (crash path, unexpected teardown order).
+    deinit {
+        navigationSession?.finishTrip()
+    }
+
     /// Stops the old progress stream before NavigationCoordinator publishes a
     /// replacement leg. This closes the mixed-route window during a stop
     /// transition; `startNavigation(route:destination:)` installs the new
