@@ -1644,6 +1644,11 @@ public final class NavigationCoordinator: ObservableObject {
     private func scheduleArrivalTeardown(announceArrivalWhenAvailable: Bool = false) {
         guard !isCompletingNavigation else { return }
         isCompletingNavigation = true
+        // Hide phone and CarPlay directions immediately at arrival. The actual
+        // teardown remains delayed so an in-progress navigation announcement
+        // can finish without being cut off, but the user must not see another
+        // maneuver after reaching the destination.
+        setNavigating(false)
         navigationLifecycleGeneration &+= 1
         let generation = navigationLifecycleGeneration
         arrivalTeardownTask?.cancel()
