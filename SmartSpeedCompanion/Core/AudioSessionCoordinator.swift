@@ -39,18 +39,25 @@ public final class AudioSessionCoordinator {
     ///
     /// • `.playback` + `.spokenAudio` routes audio through CarPlay's
     ///   dedicated navigation-voice channel (separate volume control,
-    ///   lower latency) instead of the media A2DP channel.
+    ///   lower latency) instead of the media A2DP channel — the same
+    ///   configuration Apple Maps uses for turn-by-turn voice.
     /// • `.duckOthers` lowers music volume while our alerts are active.
-    /// • `.interruptSpokenAudioAndMixWithOthers` lets prompts cut through
-    ///   podcasts without pulling the route away.
-    /// • NO `.mixWithOthers` — it contradicts `.duckOthers` and made the
-    ///   CarPlay DSP oscillate between mixing and ducking.
-    /// `.interruptSpokenAudioAndMixWithOthers` requires iOS 17+; the
-    /// deployment target is 18.4, so no `@available` guard is needed.
+    /// • NO `.mixWithOthers`, `.interruptSpokenAudioAndMixWithOthers`, or
+    ///   `.defaultToSpeaker`:
+    ///     - `.mixWithOthers` contradicts `.duckOthers`.
+    ///     - `.interruptSpokenAudioAndMixWithOthers` tells the head unit to
+    ///       treat our audio as mixable spoken audio (podcast-style) instead
+    ///       of ducking-and-cutting-through. Combined with `.duckOthers` the
+    ///       CarPlay DSP oscillated and chopped AVSpeechSynthesizer output
+    ///       into syllable fragments over the car speakers (TestFlight
+    ///       report: nav voice "breaks apart" on the car while the phone is
+    ///       clean; Apple Maps is unaffected, so the car and phone are fine
+    ///       and the defect is this session policy).
+    ///     - `.defaultToSpeaker` is inert on CarPlay (a route always
+    ///       exists); pure `.playback` already defaults to the speaker on
+    ///       iPhone with no route.
     private static let sessionOptions: AVAudioSession.CategoryOptions = [
-        .duckOthers,
-        .defaultToSpeaker,
-        .interruptSpokenAudioAndMixWithOthers
+        .duckOthers
     ]
 
     private var isConfigured = false

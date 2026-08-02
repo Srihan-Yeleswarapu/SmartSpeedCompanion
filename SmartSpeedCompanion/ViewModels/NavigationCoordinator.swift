@@ -119,7 +119,14 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
         let utterance = AVSpeechUtterance(string: expandedMessage)
         utterance.preUtteranceDelay = 0.05
         utterance.postUtteranceDelay = 0.1
-        if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
+        // CARPLAY-AUDIO FIX: the `.enhanced`-quality voice is a documented
+        // AVSpeechSynthesizer stutter source on some CarPlay head units
+        // (speech breaks into syllable fragments over the car speakers while
+        // the phone stays clean). When routed to a car, prefer the reliable
+        // default-quality en-US voice; keep `.enhanced` on the phone where
+        // it sounds better.
+        if !isCarPlayRouted,
+           let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
         } else {
             utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
@@ -129,6 +136,13 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
 
         synthesizer.speak(utterance)
         DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage) (Voice enabled: \(voiceEnabled))")
+    }
+
+    /// True when audio is routed to a CarPlay head unit. Used to select a
+    /// more reliable TTS voice over the car — enhanced-quality voices are a
+    /// known CarPlay stutter source (see `announce`).
+    private var isCarPlayRouted: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .carAudio }
     }
 
     /// Release the shared audio session. Called when navigation ends so the

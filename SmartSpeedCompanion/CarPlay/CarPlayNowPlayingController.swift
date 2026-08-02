@@ -33,6 +33,12 @@ final class CarPlayNowPlayingController {
     // values the artwork shows) actually change.
     private var cachedArtworkKey: String?
     private var cachedArtwork: MPMediaItemArtwork?
+    // Last snapshot pushed to MPNowPlayingInfoCenter. `refresh()` is called
+    // on every HUD tick (~1/sec); rewriting nowPlayingInfo every tick made
+    // some CarPlay head units re-evaluate the audio session mid-speech,
+    // which chopped in-flight AVSpeechSynthesizer output into fragments.
+    // Only push when a displayed value actually changed.
+    private var lastPushedKey: String?
 
     private init() {}
 
@@ -52,17 +58,36 @@ final class CarPlayNowPlayingController {
     /// Called from the HUD update sink whenever speed/limit/status/road
     /// change, so the Now Playing screen (if on screen) always mirrors the
     /// live drive. Cheap when the template isn't visible.
+    ///
+    /// CARPLAY-AUDIO FIX: the sink fires ~1/sec, and rewriting
+    /// `MPNowPlayingInfoCenter.default().nowPlayingInfo` on every tick made
+    /// the head unit re-evaluate the audio session while speech was in
+    /// flight, chopping AVSpeechSynthesizer into syllables over the car
+    /// speakers (phone clean, Apple Maps clean — the metadata churn was the
+    /// difference). Pushes are now deduplicated by the displayed snapshot so
+    /// metadata only changes when speed/road/status actually change.
     func refresh() {
         guard let vm = viewModel else { return }
         let system = SpeedFormatting.measurementSystem()
         let unit = SpeedFormatting.unitLabelShort(measurementSystem: system)
         let speedText = "\(Int(vm.speed)) \(unit)"
         let road = (vm.currentRoadName?.isEmpty == false) ? vm.currentRoadName! : "Speedio Drive"
+        let statusText = vm.status.rawValue.uppercased()
+        let alertsOn = audioAlertsEnabled
+
+        // Deduplicate: don't rewrite identical snapshots on every tick.
+        // `sessionDuration` is intentionally excluded from the key — it
+        // changes every second and would defeat dedup; the head unit
+        // auto-advances elapsed time from playbackState .playing + rate 1.0,
+        // so the Now Playing progress stays live without per-tick pushes.
+        let key = "\(speedText)|\(road)|\(statusText)|\(alertsOn)"
+        if key == lastPushedKey { return }
+        lastPushedKey = key
 
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: speedText,
             MPMediaItemPropertyArtist: road,
-            MPMediaItemPropertyAlbumTitle: vm.status.rawValue.uppercased(),
+            MPMediaItemPropertyAlbumTitle: statusText,
             MPNowPlayingInfoPropertyPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: vm.sessionDuration,
             MPMediaItemPropertyPlaybackDuration: max(vm.sessionDuration + 1, 1)
@@ -71,7 +96,7 @@ final class CarPlayNowPlayingController {
             info[MPMediaItemPropertyArtwork] = artwork
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        MPNowPlayingInfoCenter.default().playbackState = audioAlertsEnabled ? .playing : .paused
+        MPNowPlayingInfoCenter.default().playbackState = alertsOn ? .playing : .paused
     }
 
     // MARK: - Audio-alert toggle (the app's "playback")
