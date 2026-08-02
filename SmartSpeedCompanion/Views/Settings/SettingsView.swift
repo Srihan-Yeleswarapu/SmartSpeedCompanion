@@ -258,11 +258,10 @@ public struct SettingsView: View {
                 //  feature under the ad-gated-or-IAP model.)
                 
                 // MARK: - NETWORK & DATA section (always visible)
-                // Driving the speed-limit pipeline requires EITHER live
-                // network (ArcGIS HPMS + OSM Overpass) OR local coverage
-                // in the Arizona SQLite. Help the user unblock cellular
-                // so live providers can come back online when they do
-                // return to service.
+                // Driving the speed-limit pipeline requires live
+                // network (HERE batch cache + ArcGIS HPMS + OSM Overpass).
+                // Help the user unblock cellular so live providers can
+                // come back online when they return to service.
                 // (TestFlight 2.1.4: "put a how to button… detailed
                 //  instructions on how to toggle an app to use cellular".)
                 Section(header: Text("NETWORK & DATA").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {

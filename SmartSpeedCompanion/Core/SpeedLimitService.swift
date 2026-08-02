@@ -1,7 +1,7 @@
 // SpeedLimitService.swift
 // Orchestrator that picks the best speed-limit answer for the user's current coord.
 //
-// Decision tree (live-first; no Arizona SQLite fallback):
+// Decision tree (live-first; no local SQLite fallback):
 //   1. Spatial-grid cache lookup -> hit short-circuits everything below.
 //   2. HERE Batch cache lookup -> cached HERE road data wins without a network call.
 //   3. If NetworkReachability.isConnected, walk liveProviders in order (HERE REST ->
@@ -9,10 +9,6 @@
 //      failure for a provider, drop and try the next.
 //   4. If every active provider misses, return No Data and let the continuity guard
 //      apply its normal miss-grace window.
-//
-// The Arizona SQLite implementation and bundled file remain in the repository as a
-// dormant, intentionally uncalled option for a future all-states replacement. The
-// app must never use that Arizona-only dataset in the current provider pipeline.
 //
 // Trade-off note: live-first + cache-first means a recently-installed sign change
 // will be picked up on the very next fetch after the 30-min memory cache TTL expires.
@@ -84,7 +80,6 @@ public class SmartSpeedLimitService: ObservableObject {
     private let batchCache = HERELocalBatchCache.shared
 
     /// Live network providers — the only non-cache providers used by the app.
-    /// The dormant Arizona SQLite service is deliberately not part of this chain.
     private let liveProviders: [SpeedLimitProvider]
 
     private let reachability = NetworkReachability.shared
@@ -189,7 +184,6 @@ public class SmartSpeedLimitService: ObservableObject {
     ///
     /// `roadName` is the reverse-geocoded road name from RoadGeocoder. It is
     /// passed to live providers and cache lookups for road-aware matching.
-    /// The dormant Arizona SQLite scorer is not invoked by this API.
     public func updateSpeedLimit(
         at coordinate: CLLocationCoordinate2D,
         heading: Double?,
@@ -280,8 +274,6 @@ public class SmartSpeedLimitService: ObservableObject {
     /// Resolve the speed limit from the active chain: response cache -> HERE batch
     /// cache -> live providers. NEVER writes to the response cache here -- cache
     /// writes happen only on commit, after the continuity guard clears the
-    /// candidate. The Arizona-only SQLite service is intentionally dormant and is
-    /// not consulted when offline or when live providers miss.
     private func resolveCandidate(
         at coordinate: CLLocationCoordinate2D,
         heading: Double?,
@@ -355,9 +347,7 @@ public class SmartSpeedLimitService: ObservableObject {
             }
         }
 
-        // 4. No active provider has data. Do not consult the Arizona-only SQLite
-        // implementation: its bundled coverage is not representative of the
-        // other 49 states. Returning a miss keeps all regions on the same path.
+        // 4. No active provider has data. Returning a miss keeps all regions on the same path.
         return Candidate(
             limit: 0, source: .noData,
             roadKey: "", providerName: "", detail: "",
@@ -560,7 +550,6 @@ public class SmartSpeedLimitService: ObservableObject {
             // suspend. Responses issued after this point receive a higher revision
             // and are preserved even if this miss becomes stale.
             let clearThroughRevision = nextCacheStoreRevision
-            // The dormant Arizona SQLite cache is deliberately not touched here.
             // Only the active response cache is cleared after sustained misses.
             await cache.clear(rejectingRevisionsThrough: clearThroughRevision)
             guard generation == latestUpdateGeneration else { return (currentLimit, consecutiveMissCount) }
@@ -581,10 +570,6 @@ public class SmartSpeedLimitService: ObservableObject {
         case "HERE REST":  return .liveHERE
         case "ArcGIS":     return .liveArcGIS
         case "Overpass":   return .liveOverpass
-        // Keep the legacy mapping for decoding old persisted responses, although
-        // SpeedLimitResponseCache rejects these entries and the live pipeline never
-        // creates them anymore.
-        case "AZ SQLite":  return .localDB
         default:           return .noData
         }
     }

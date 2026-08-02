@@ -1,9 +1,7 @@
 // SpeedLimitProvider.swift
 // Shared types for all active speed-limit providers (live network + HERE batch cache).
 //
-// HERE REST, ArcGIS HPMS, and Overpass conform to SpeedLimitProvider. The dormant
-// Arizona SQLite service intentionally does not conform to or participate in this
-// active provider protocol.
+// HERE REST, ArcGIS HPMS, and Overpass conform to SpeedLimitProvider.
 
 import Foundation
 import CoreLocation

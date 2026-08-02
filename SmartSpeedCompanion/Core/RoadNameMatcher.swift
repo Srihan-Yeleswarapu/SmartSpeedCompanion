@@ -1,7 +1,7 @@
 // RoadNameMatcher.swift
 // Shared road-name matcher used to bridge an Apple Maps / CLGeocoder geocoded road
-// name (e.g. "West Frye Road") and the Esri HPMS `RouteId` strings we pull out of
-// ArizonaSpeedLimits.sqlite (e.g. "07 FRYE RD", "  S 202                       0 ").
+// name (e.g. "West Frye Road") and Esri HPMS `RouteId` strings (e.g. "07 FRYE RD",
+// "  S 202                       0 ").
 //
 // Replaces the previous "spatial-proximity-only" lookup that hit the bug shown in
 // https://github.com/.../issues/... where driving on West Frye Rd produced a 65 mph

@@ -2002,9 +2002,7 @@ public final class NavigationCoordinator: ObservableObject {
         }
         if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
 
-        // Warm the active live-provider response cache ahead of the route. The
-        // Arizona-only SQLite route pre-cache remains available in its dormant
-        // implementation but is intentionally not called by production code.
+        // Warm the active live-provider response cache ahead of the route.
         // Live providers are the same HERE/ArcGIS/Overpass chain used on GPS ticks.
         // Fires
         // `SmartSpeedLimitService.prefetchAheadOfRoute(...)` for every
