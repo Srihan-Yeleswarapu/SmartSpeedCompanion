@@ -473,6 +473,7 @@ public struct LiveMapView: UIViewRepresentable {
         /// lines on screen, which looked like random trailing geometry.
         private var lastRouteFingerprint: Int? = nil
         private var lastSessionReadingCount: Int = 0
+        private var lastHistorySessionID: UUID?
         private var hasAutoFramedRoute: Bool = false
         private var lastStopFingerprint: Int = 0
 
@@ -560,14 +561,16 @@ public struct LiveMapView: UIViewRepresentable {
             let vm = viewModel
             let currentRouteDistance = vm.currentRoute?.distance ?? 0
             let currentRouteFingerprint = vm.currentRoute.map(Self.routeFingerprint(for:))
-            let currentReadingCount = vm.sessionRecorder.currentSession?.readings.count ?? 0
+            let currentSession = vm.sessionRecorder.currentSession
+            let currentSessionID = currentSession?.id
+            let currentReadingCount = currentSession?.readings.count ?? 0
             let isNavigating = vm.isNavigating
             let currentStopFP = Self.stopFingerprint(for: vm.routeStops)
 
             let routeChanged = isNavigating != lastIsNavigating
                 || abs(currentRouteDistance - lastRouteDistance) > 1.0
                 || currentRouteFingerprint != lastRouteFingerprint
-            // Throttling: only rebuild history every 5 points to save battery
+            // Throttling: only rebuild history every 5 points to save battery.
             // SAFETY: never trigger a history-based rebuild while navigating
             // or selecting a route. During these states we draw route
             // polylines (not history), so rebuilding overlays every 5 GPS
@@ -575,10 +578,17 @@ public struct LiveMapView: UIViewRepresentable {
             // at the top of rebuildOverlays creates a brief flicker where
             // stale history polylines from the pre-navigation recording
             // phase flash on-screen before the route polyline is redrawn.
-            // This is the root cause of the "trailing lines" reported in
-            // TestFlight FB (yrk.kaushik@gmail.com). We keep the raw count
-            // so the NEXT non-navigating rebuild sees the full delta.
-            let historyChanged = !isNavigating && !vm.isSelectingRoute && currentReadingCount >= lastHistoryCounts.safeCount + lastHistoryCounts.overCount + 5
+            //
+            // A session identity change is also a rebuild trigger. Count-only
+            // tracking misses a reset to zero, and it cannot distinguish a
+            // newly-created session with the same number of readings. Both
+            // cases previously left the old session's lines on the map.
+            let previousReadingCount = lastHistoryCounts.safeCount + lastHistoryCounts.overCount
+            let historyChanged = !isNavigating && !vm.isSelectingRoute && (
+                currentSessionID != lastHistorySessionID
+                || currentReadingCount < previousReadingCount
+                || currentReadingCount >= previousReadingCount + 5
+            )
             let stopsChanged = currentStopFP != lastStopFingerprint
 
             // Detect when the user dismissed the route picker (isSelectingRoute
@@ -621,6 +631,7 @@ public struct LiveMapView: UIViewRepresentable {
             let safeCount = readings.filter { !$0.overLimit }.count
             let overCount = readings.filter { $0.overLimit }.count
             lastHistoryCounts = (safeCount, overCount)
+            lastHistorySessionID = currentSessionID
         }
 
         private func rebuildOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
@@ -928,36 +939,62 @@ public struct LiveMapView: UIViewRepresentable {
             var safeCoords: [CLLocationCoordinate2D] = []
             var overCoords: [CLLocationCoordinate2D] = []
 
+            // Never draw a fabricated straight line across a GPS outage or
+            // location jump. A 250 m cap is above normal one-second highway
+            // travel while still rejecting a snapped fix on a distant road.
+            let maximumHistoryGap: CLLocationDistance = 250
+
+            func addHistoryPolyline(_ coordinates: [CLLocationCoordinate2D], color: UIColor) {
+                guard coordinates.count >= 2 else { return }
+                let polyline = NavPolyline(coordinates: coordinates, count: coordinates.count)
+                polyline.statusColor = color
+                mapView.addOverlay(polyline, level: .aboveRoads)
+            }
+
+            func flushHistorySegments() {
+                addHistoryPolyline(safeCoords, color: UIColor(white: 0.5, alpha: 0.5))
+                addHistoryPolyline(overCoords, color: UIColor(DesignSystem.alertRed))
+                safeCoords.removeAll(keepingCapacity: true)
+                overCoords.removeAll(keepingCapacity: true)
+            }
+
+            var previousReading: SpeedReading?
             for reading in session.readings {
-                let coord = CLLocationCoordinate2D(latitude: reading.latitude, longitude: reading.longitude)
+                let coordinate = CLLocationCoordinate2D(latitude: reading.latitude, longitude: reading.longitude)
+                let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+
+                if let previousReading {
+                    let previousCoordinate = CLLocationCoordinate2D(
+                        latitude: previousReading.latitude,
+                        longitude: previousReading.longitude
+                    )
+                    let previousLocation = CLLocation(
+                        latitude: previousCoordinate.latitude,
+                        longitude: previousCoordinate.longitude
+                    )
+                    let elapsed = reading.timestamp.timeIntervalSince(previousReading.timestamp)
+                    if elapsed < 0 || elapsed > 10 || location.distance(from: previousLocation) > maximumHistoryGap {
+                        flushHistorySegments()
+                    }
+                }
+
                 if reading.overLimit {
                     if !safeCoords.isEmpty {
-                        let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                        polyline.statusColor = UIColor(white: 0.5, alpha: 0.5) // Light gray for safe path
-                        mapView.addOverlay(polyline, level: .aboveRoads)
-                        safeCoords.removeAll()
+                        addHistoryPolyline(safeCoords, color: UIColor(white: 0.5, alpha: 0.5))
+                        safeCoords.removeAll(keepingCapacity: true)
                     }
-                    overCoords.append(coord)
+                    overCoords.append(coordinate)
                 } else {
                     if !overCoords.isEmpty {
-                        let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
-                        polyline.statusColor = UIColor(DesignSystem.alertRed)
-                        mapView.addOverlay(polyline, level: .aboveRoads)
-                        overCoords.removeAll()
+                        addHistoryPolyline(overCoords, color: UIColor(DesignSystem.alertRed))
+                        overCoords.removeAll(keepingCapacity: true)
                     }
-                    safeCoords.append(coord)
+                    safeCoords.append(coordinate)
                 }
+                previousReading = reading
             }
-            if !safeCoords.isEmpty {
-                let polyline = NavPolyline(coordinates: safeCoords, count: safeCoords.count)
-                polyline.statusColor = UIColor(white: 0.5, alpha: 0.5) // Light gray for safe path
-                mapView.addOverlay(polyline, level: .aboveRoads)
-            }
-            if !overCoords.isEmpty {
-                let polyline = NavPolyline(coordinates: overCoords, count: overCoords.count)
-                polyline.statusColor = UIColor(DesignSystem.alertRed)
-                mapView.addOverlay(polyline, level: .aboveRoads)
-            }
+
+            flushHistorySegments()
         }
 
         // MARK: - MKMapViewDelegate
