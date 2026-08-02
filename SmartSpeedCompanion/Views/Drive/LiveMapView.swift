@@ -422,6 +422,36 @@ public struct LiveMapView: UIViewRepresentable {
             }
             return hasher.finalize()
         }
+
+        /// Cheap geometry signature for route invalidation. Sampling the
+        /// endpoints and midpoint is sufficient to detect normal reroutes
+        /// without walking every polyline point on each SwiftUI update.
+        static func routeFingerprint(for route: MKRoute) -> Int {
+            var hasher = Hasher()
+            hasher.combine(route.polyline.pointCount)
+            hasher.combine(Int(route.distance))
+            let count = route.polyline.pointCount
+            guard count > 0 else { return hasher.finalize() }
+            let points = route.polyline.points()
+            // Fixed order is important: Hasher combines values sequentially,
+            // so iterating a Set would make an unchanged route appear to
+            // have a new fingerprint and rebuild every overlay on every tick.
+            // Sample evenly across the complete geometry rather than only a
+            // midpoint. A reroute can preserve endpoints and total distance
+            // while changing a long interior section. A bounded 17-point
+            // sample catches those changes without hashing every GPS vertex
+            // on every SwiftUI update.
+            let sampleCount = min(17, count)
+            let sampledIndices = (0..<sampleCount).map { sample in
+                sampleCount == 1 ? 0 : (sample * (count - 1)) / (sampleCount - 1)
+            }
+            for index in sampledIndices {
+                let coordinate = points[index].coordinate
+                hasher.combine(Int(coordinate.latitude * 100_000))
+                hasher.combine(Int(coordinate.longitude * 100_000))
+            }
+            return hasher.finalize()
+        }
         // Maneuver annotation we own — ref so we don't churn annotations on
         // every GPS ping.
         private var maneuverAnnotation: ManeuverAnnotation? = nil
@@ -431,6 +461,10 @@ public struct LiveMapView: UIViewRepresentable {
         private var lastHistoryCounts: (safeCount: Int, overCount: Int) = (0, 0)
         private var lastIsNavigating: Bool = false
         private var lastRouteDistance: Double = 0
+        /// Geometry fingerprint catches a reroute that has the same distance
+        /// as the previous route. Distance-only invalidation left old route
+        /// lines on screen, which looked like random trailing geometry.
+        private var lastRouteFingerprint: Int? = nil
         private var lastSessionReadingCount: Int = 0
         private var hasAutoFramedRoute: Bool = false
         private var lastStopFingerprint: Int = 0
@@ -518,11 +552,14 @@ public struct LiveMapView: UIViewRepresentable {
         func updateOverlaysIfNeeded(_ mapView: MKMapView, viewModel: DriveViewModel) {
             let vm = viewModel
             let currentRouteDistance = vm.currentRoute?.distance ?? 0
+            let currentRouteFingerprint = vm.currentRoute.map(Self.routeFingerprint(for:))
             let currentReadingCount = vm.sessionRecorder.currentSession?.readings.count ?? 0
             let isNavigating = vm.isNavigating
             let currentStopFP = Self.stopFingerprint(for: vm.routeStops)
 
-            let routeChanged = isNavigating != lastIsNavigating || abs(currentRouteDistance - lastRouteDistance) > 1.0
+            let routeChanged = isNavigating != lastIsNavigating
+                || abs(currentRouteDistance - lastRouteDistance) > 1.0
+                || currentRouteFingerprint != lastRouteFingerprint
             // Throttling: only rebuild history every 5 points to save battery
             // SAFETY: never trigger a history-based rebuild while navigating
             // or selecting a route. During these states we draw route
@@ -571,6 +608,7 @@ public struct LiveMapView: UIViewRepresentable {
             lastIsNavigating = isNavigating
             lastIsSelectingRoute = vm.isSelectingRoute
             lastRouteDistance = currentRouteDistance
+            lastRouteFingerprint = currentRouteFingerprint
             lastStopFingerprint = currentStopFP
             let readings = vm.sessionRecorder.currentSession?.readings ?? []
             let safeCount = readings.filter { !$0.overLimit }.count
@@ -590,25 +628,32 @@ public struct LiveMapView: UIViewRepresentable {
             // Route polyline + destination
             if hasActiveRoute, let route = viewModel.currentRoute {
                 let legs = viewModel.routeLegs
-                let hasLegRoutes = legs.count > 1 && legs.allSatisfy({ $0.route != nil })
+                let hasLegRoutes = !viewModel.routeStops.isEmpty
+                    && legs.count > 1
+                    && legs.allSatisfy({ $0.route != nil })
 
                 if hasLegRoutes {
-                    // MULTI-STOP: draw first leg active (cyan glow + bold),
-                    // remaining legs dimmed (grey) so the driver sees the
-                    // immediate path clearly and the future path as secondary.
-                    if let firstLeg = legs.first, let firstRoute = firstLeg.route {
-                        let glowLine = GlowPolyline(points: firstRoute.polyline.points(), count: firstRoute.polyline.pointCount)
+                    // MULTI-STOP: draw the coordinator's active leg bold,
+                    // not always leg zero. The old behavior kept the first
+                    // leg cyan after reaching a stop, so the visible line no
+                    // longer matched the spoken directions.
+                    let activeIndex = min(
+                        max(viewModel.navigationCoordinator.activeMultiStopLegIndexForDisplay, 0),
+                        legs.count - 1
+                    )
+                    if let activeRoute = legs[activeIndex].route {
+                        let glowLine = GlowPolyline(points: activeRoute.polyline.points(), count: activeRoute.polyline.pointCount)
                         glowLine.glowColor = UIColor(DesignSystem.cyan)
                         mapView.addOverlay(glowLine, level: .aboveRoads)
 
-                        let activeLine = NavPolyline(points: firstRoute.polyline.points(), count: firstRoute.polyline.pointCount)
+                        let activeLine = NavPolyline(points: activeRoute.polyline.points(), count: activeRoute.polyline.pointCount)
                         activeLine.statusColor = UIColor(DesignSystem.cyan)
                         activeLine.isRouteOverlay = true
                         activeLine.useGradient = viewModel.gradientRouteEnabled
                         mapView.addOverlay(activeLine, level: .aboveRoads)
                     }
 
-                    for leg in legs.dropFirst() {
+                    for (index, leg) in legs.enumerated() where index != activeIndex {
                         if let legRoute = leg.route {
                             let dimmed = DimmedLegPolyline(points: legRoute.polyline.points(), count: legRoute.polyline.pointCount)
                             mapView.addOverlay(dimmed, level: .aboveRoads)
@@ -700,10 +745,15 @@ public struct LiveMapView: UIViewRepresentable {
                         )
                         rect = rect.union(userRect)
                     }
+                    // A route selection can publish several SwiftUI updates
+                    // while MapKit is still settling. Do not enqueue an
+                    // animated camera transition here; the camera animator
+                    // owns subsequent changes and an animated fit creates the
+                    // zoom-in/zoom-out jitter reported in TestFlight.
                     mapView.setVisibleMapRect(
                         rect,
                         edgePadding: UIEdgeInsets(top: 200, left: 60, bottom: 60, right: 60),
-                        animated: true
+                        animated: false
                     )
                     hasAutoFramedRoute = true
                 }
@@ -711,6 +761,7 @@ public struct LiveMapView: UIViewRepresentable {
                 // Drop the auto-fit latch when navigation ends so the next
                 // navigation re-frames the polyline.
                 hasAutoFramedRoute = false
+                lastRouteFingerprint = nil
                 // Also clear the alt-route fingerprint so a fresh
                 // `selectDestinationAndCalculateRoutes` call triggers a
                 // rebuild next time the user opens the picker.

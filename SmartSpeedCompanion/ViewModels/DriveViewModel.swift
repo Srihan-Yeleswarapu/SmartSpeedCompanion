@@ -3,7 +3,6 @@ import Combine
 import SwiftData
 import MapKit
 import ActivityKit
-import AVFoundation
 import UIKit
 import WidgetKit
 import FirebaseAuth
@@ -11,7 +10,7 @@ import FirebaseFirestore
 
 /// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
-public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+public final class DriveViewModel: NSObject, ObservableObject {
     // MARK: - Core Services
     public let locationManager: LocationManager
     public let speedEngine: SpeedEngine
@@ -508,24 +507,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
     private static let mapStyleKey = "mapStyle"
 
-    /// AVAudioSession.CategoryOptions bundle used by both
-    /// `setupAudioSession()` (forced at app launch) and `announce()`
-    /// (defensive re-apply before every utterance). Kept as a class-level
-    /// static so the two paths can't drift if a future change adds e.g.
-    /// `.allowBluetoothHFP` for car-kit routing. iOS 17+ only — project
-    /// `deploymentTarget` is `18.0` per `project.yml`, so no
-    /// `@available(iOS 17, *)` guard is needed.
-    private static let navVoiceOptions: AVAudioSession.CategoryOptions = [
-        .duckOthers,
-        .mixWithOthers,
-        .defaultToSpeaker,
-        .allowBluetoothA2DP,
-        .interruptSpokenAudioAndMixWithOthers
-    ]
-
-
-
-
     /// Selected vehicle icon id. Persisted in UserDefaults. Defaults to "default_blue".
     @Published public var selectedVehicleIconId: String = UserDefaults.standard.string(forKey: "selectedVehicleIconId") ?? "default_blue" {
         didSet { UserDefaults.standard.set(selectedVehicleIconId, forKey: "selectedVehicleIconId") }
@@ -638,7 +619,6 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
     // Search Completer
     private let completer = MKLocalSearchCompleter()
-    private let speechSynthesizer = AVSpeechSynthesizer()
     
     // Timer properties
     private var sessionStartTime: Date? = nil
@@ -758,6 +738,12 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
                 }
             },
             startSession: { [weak self] in self?.startSession() },
+            setNavigating: { [weak self] isNavigating in
+                self?.isNavigating = isNavigating
+            },
+            endSession: { [weak self] in
+                self?.endSession()
+            },
             liveActivityStart: { date in
                 #if !targetEnvironment(simulator)
                 LiveActivityManager.shared.startActivity(sessionStartDate: date)
@@ -1289,11 +1275,21 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     // MARK: - Navigation Control
     
     /// Commences turn-by-turn guidance on a specific path.
-    public func startNavigation(with route: MKRoute, isReroute: Bool = false) async {
+    @discardableResult
+    public func startNavigation(with route: MKRoute, isReroute: Bool = false) async -> Bool {
         self.isSelectingRoute = false
-        self.isNavigating = true
-        await navigationCoordinator.startNavigation(with: route, isReroute: isReroute)
+        let wasNavigating = self.isNavigating
+        let started = await navigationCoordinator.startNavigation(with: route, isReroute: isReroute)
+        if started {
+            self.isNavigating = true
+        } else if !wasNavigating && navigationCoordinator.currentRoute == nil {
+            // Do not leave the host VM in a phantom navigating state when a
+            // stale/cancelled route start is rejected before publication.
+            self.isNavigating = false
+        }
+        return started
     }
+
 
     /// Grabs coordinates along the route and pre-fetches speed limit data for those points.
     private func cacheRouteSegments(_ route: MKRoute) async {
@@ -1347,9 +1343,19 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
     
     /// Alternative start navigation that triggers the calculation internally (legacy/direct support).
-    public func startNavigation(to destination: MKMapItem) async {
-        self.isNavigating = true
-        await navigationCoordinator.startNavigation(to: destination)
+    @discardableResult
+    public func startNavigation(to destination: MKMapItem) async -> Bool {
+        let wasNavigating = self.isNavigating
+        let started = await navigationCoordinator.startNavigation(to: destination)
+        if started {
+            self.isNavigating = true
+        } else if !wasNavigating && navigationCoordinator.currentRoute == nil {
+            // A direct start can be rejected while a multi-stop route is
+            // active, or can fail during MapKit calculation. Keep the host
+            // state aligned with the coordinator in either case.
+            self.isNavigating = false
+        }
+        return started
     }
     
     /// Persianality: Track recently searched locations to show in search history.
@@ -1438,7 +1444,8 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
     /// Adds an intermediate stop to the current route. After adding,
     /// recalculates the multi-stop route and starts navigation.
-    public func addStopToRoute(_ mapItem: MKMapItem, at index: Int? = nil) async {
+    @discardableResult
+    public func addStopToRoute(_ mapItem: MKMapItem, at index: Int? = nil, presentRouteStopsSheet: Bool = true) async -> Bool {
         let previousStops = routeStops
         let stop = RouteStop(
             name: mapItem.name ?? "Stop",
@@ -1449,18 +1456,22 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
 
         navigationCoordinator.addStop(stop, at: index)
         let editedStopIDs = routeStops.map(\.id)
-        self.showRouteStopsSheet = true
+        if presentRouteStopsSheet {
+            self.showRouteStopsSheet = true
+        }
         self.isAddingStopToRoute = false
         self.addStopSearchResults = []
 
         // Recalculate the route with the new stop, then refresh navigation
-        if isNavigating {
-            if let route = await navigationCoordinator.calculateMultiStopRoute() {
-                await startNavigation(with: route, isReroute: true)
-            } else {
-                _ = navigationCoordinator.restoreRouteStops(previousStops, ifCurrentIDsMatch: editedStopIDs)
-            }
+        guard isNavigating else { return true }
+
+        if let route = await navigationCoordinator.calculateMultiStopRoute() {
+            await startNavigation(with: route, isReroute: true)
+            return true
         }
+
+        _ = navigationCoordinator.restoreRouteStops(previousStops, ifCurrentIDsMatch: editedStopIDs)
+        return false
     }
 
     /// Removes a stop from the route by its ID.
@@ -1983,54 +1994,7 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
         return "\(intPart) point \(fracPart)"
     }
     
-    // MARK: - Audio Session & Announcements
-    
-    /// Prepares the shared AVAudioSession for spoken navigation.
-    ///
-    /// Includes the deactivate → setCategory → reactivate cycle so the
-    /// `.spokenAudio` mode actually sticks:
-    ///
-    ///   `AlertEngine.init(...)` runs INSIDE `DriveViewModel.init(...)` (the
-    ///   alert engine is constructed here as `let alrtEngine = ...`) and
-    ///   calls `setCategory(.playback, mode: .default) + setActive(true)`
-    ///   immediately, so before we run, the session is already active in
-    ///   `.default` mode for the speeding tone. iOS only honours a mode
-    ///   change when the session transitions inactive → active — without
-    ///   the explicit `setActive(false)` first, the call below updates the
-    ///   recorded category in logs but leaves the underlying routing in
-    ///   `.default` mode, which sends AVSpeechSynthesizer output to the
-    ///   ringer/earpiece speaker at low volume. TestFlight 2.2.x feedback
-    ///   was "navigation messages not heard"; the `DebugLogger` line
-    ///   "NAV VOICE SENT" was still firing normally — the speech was sent,
-    ///   just routed through the wrong output path.
-    private func setupAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            // Guarded release: drop the existing session only if there's
-            // an active audio-app competitor OR the session sits in a
-            // mode/category that would reject the upcoming `.spokenAudio`
-            // transition (e.g. AlertEngine's `.default` mode from init).
-            // Skips the unnecessary release for the common cold-launch /
-            // quiet drive case so opening the app while Spotify is playing
-            // doesn't yank the user's music out of focus for ~100 ms.
-            if session.isOtherAudioPlaying || session.mode != .spokenAudio || session.category != .playback {
-                if (try? session.setActive(false, options: .notifyOthersOnDeactivation)) == nil {
-                    DebugLogger.shared.log("Audio Session pre-deactivate failed (continuing)")
-                }
-            }
-
-            try session.setCategory(
-                .playback,
-                mode: .spokenAudio,
-                options: Self.navVoiceOptions
-            )
-
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
-            DebugLogger.shared.log("Audio Session Configured (.spokenAudio forced at launch)")
-        } catch {
-            DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
-        }
-    }    // MARK: - Native MapKit Feature Helpers
+    // MARK: - Native MapKit Feature Helpers
 
     // TestFlight 2.2.0 (FB10): Look Around removed.
     //   - `loadLookAroundForUpcomingTurn()` and `loadLookAroundForDestination()`
@@ -2363,120 +2327,11 @@ public final class DriveViewModel: NSObject, ObservableObject, AVSpeechSynthesiz
     }
 
     /// Triggers speech synthesis for a given string.
+    /// NavigationCoordinator owns the single speech pipeline so legacy
+    /// navigation call sites cannot compete for, or deactivate, its shared
+    /// AVAudioSession.
     func announce(_ message: String) {
-        let rawVoiceVal = UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool
-        let voiceEnabled = rawVoiceVal ?? true
-
-        guard voiceEnabled, !message.isEmpty else { return }
-
-        // Sanitize punctuation that causes natural speech to sound robotic ("Period", "Full Stop")
-        // NOTE: We only replace dots that are followed by a space to preserve decimals like "2.5"
-        let cleanMessage = message
-            .replacingOccurrences(of: "...", with: " ")
-            .replacingOccurrences(of: "..", with: " ")
-            .replacingOccurrences(of: ". ", with: " ") 
-            .trimmingCharacters(in: .whitespaces)
-
-        // Convert abbreviations like "Ave" to "Avenue" before speaking
-        let expandedMessage = expandAbbreviations(cleanMessage)
-
-        // Defensive: re-apply `.spokenAudio` mode just before every utterance so
-        // anything that flipped the session back to `.default` mid-drive (CarPlay
-        // audio route change, AlertEngine tone reset, an external interruption
-        // handler, a Bluetooth re-pair) is corrected immediately. Cheap no-op when
-        // the state already matches, and applies the same option set used in
-        // setupAudioSession() so behavior stays consistent across launch and
-        // per-utterance calls.
-        let audioSession = AVAudioSession.sharedInstance()
-        try? audioSession.setCategory(
-            .playback,
-            mode: .spokenAudio,
-            options: Self.navVoiceOptions
-        )
-
-        // Only activate audio session if other audio is playing — that way we
-        // don't redundantly grab focus during a quiet drive but ensure
-        // `.duckOthers` kicks in during a Spotify/Music session.
-        let shouldActivate = audioSession.isOtherAudioPlaying
-        if shouldActivate {
-            do {
-                // Activate session so ducking (lowering music volume) kicks in
-                try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-            } catch {
-                DebugLogger.shared.log("AUDIO ACTIVATE ERROR: \(error.localizedDescription)")
-            }
-        }
-        
-        let utterance = AVSpeechUtterance(string: expandedMessage)
-        
-        // BUFFERING: Pre-utterance delay gives car Bluetooth systems ~500ms to 'wake up' 
-        // before the voice starts, preventing the first word from being cut off.
-        utterance.preUtteranceDelay = 0.5 
-        utterance.postUtteranceDelay = 0.2
-        
-        // Attempt to use a premium/enhanced voice if installed
-        if let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
-            utterance.voice = premiumVoice
-        } else {
-            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        }
-        
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        utterance.volume = 1.0
-        
-        speechSynthesizer.speak(utterance)
-        DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage) (Voice enabled: \(voiceEnabled))")
-    }
-
-    /// Maps short address forms into full-blown words for synthesis.
-    private func expandAbbreviations(_ text: String) -> String {
-        var result = text
-        let mapping: [String: String] = [
-            "Ave": "Avenue", "St": "Street", "Pl": "Place", "Rd": "Road",
-            "Dr": "Drive", "Blvd": "Boulevard", "Hwy": "Highway", "Fwy": "Freeway",
-            "Expy": "Expressway", "Pkwy": "Parkway", "Ln": "Lane", "Cir": "Circle",
-            "Ct": "Court", "Ter": "Terrace", "US": "U.S.", 
-            "N": "North", "S": "South", "E": "East", "W": "West", 
-            "NE": "Northeast", "NW": "Northwest", "SE": "Southeast", "SW": "Southwest",
-            "SR": "State Route", "CR": "County Route"
-        ]
-        
-        for (abbr, full) in mapping {
-            // \\b boundaries ensure we don't replace "W" inside the word "Way".
-            let pattern = "\\b\(abbr)\\b\\.?"
-            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
-                let range = NSRange(result.startIndex..., in: result)
-                result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: full)
-            }
-        }
-        
-        // Manual interstate fix
-        if let regex = try? NSRegularExpression(pattern: "\\bI-", options: [.caseInsensitive]) {
-            let range = NSRange(result.startIndex..., in: result)
-            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "Interstate ")
-        }
-        
-        return result
-    }
-
-    // MARK: - AVSpeechSynthesizerDelegate
-    
-    /// Restores background music volume once a navigation announcement finishes.
-    nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            if !synthesizer.isSpeaking {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-                DebugLogger.shared.log("Audio Session Deactivated (Music Restored)")
-            }
-        }
-    }
-    
-    nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            if !synthesizer.isSpeaking {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            }
-        }
+        navigationCoordinator.announceNavigation(message)
     }
 
     /// Disables the system idle timer to keep the screen on while the user is actively driving or following a route.

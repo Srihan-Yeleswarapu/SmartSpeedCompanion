@@ -102,6 +102,12 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     }
     
     public func endNavigationTrigger() async {
+        // NavigationCoordinator clears its route before calling this delegate.
+        // If a new route was started while the old async delegate hop was
+        // suspended, do not let the stale completion tear down that new
+        // CarPlay session.
+        guard !viewModel.isNavigating,
+              viewModel.navigationCoordinator.currentRoute == nil else { return }
         endNavigation()
     }
     
@@ -312,18 +318,12 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
                 currentStepIndex += 1
                 advanceToNextStep()
             }
-        } else {
-            // Reached destination
-            if let dest = viewModel.navigationCoordinator.destination?.placemark.location {
-                let distToDest = location.distance(from: dest)
-                if distToDest < 50.0 {
-                    // DriveViewModel.advanceToNextStep() handles the arrival announcement.
-                    // We just end the CarPlay session here.
-                    endNavigation()
-                    return
-                }
-            }
         }
+        // Arrival and intermediate-stop transitions are owned by
+        // NavigationCoordinator, which receives the same location heartbeat
+        // and knows the active leg. Do not independently compare against the
+        // final destination here: during a multi-stop route that destination
+        // is intentionally farther away than the active CarPlay trip.
 
         // ── ETA Estimation ───────────────────────────────────────────
         //

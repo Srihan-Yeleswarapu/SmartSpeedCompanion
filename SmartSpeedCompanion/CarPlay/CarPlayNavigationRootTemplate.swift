@@ -58,6 +58,9 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     // `selectedResult` delegate for the same tap. Cleared once the preview
     // has been handed to CPMapTemplate.
     @MainActor private var isPresentingTripPreview = false
+    // Prevents duplicate CarPlay result taps while an add-stop route
+    // recalculation is in flight.
+    @MainActor private var isAddingStopInProgress = false
 
     @MainActor
     init(interfaceController: CPInterfaceController, viewModel: DriveViewModel) {
@@ -443,11 +446,35 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             if let icon = searchResultIcon(for: mapItem) { item.setImage(icon) }
             item.handler = { [weak self] _, completion in
                 Task { @MainActor in
-                    guard let self = self else { return }
-                    await self.viewModel.addStopToRoute(mapItem)
-                    self.showStopAddedConfirmation(name: name)
+                    guard let self = self else {
+                        completion()
+                        return
+                    }
+                    guard !self.isAddingStopInProgress else {
+                        completion()
+                        return
+                    }
+                    self.isAddingStopInProgress = true
+                    // CarPlay owns the add-stop flow. Do not present the
+                    // phone's RouteStopsSheet here: it covers the phone HUD
+                    // while CarPlay is searching and leaves the two surfaces
+                    // out of sync. The CarPlay confirmation returns directly
+                    // to the map template. Keep CarPlay's selection completion
+                    // behind the async route mutation so the stack cannot race
+                    // the pop/alert transition.
+                    // Complete the CarPlay row selection promptly; MapKit may
+                    // take an unbounded amount of time to calculate several
+                    // sequential legs, and holding this callback would leave
+                    // the list UI stuck. The single-flight latch serializes the
+                    // later pop/alert transition.
+                    completion()
+                    let didAddStop = await self.viewModel.addStopToRoute(mapItem, presentRouteStopsSheet: false)
+                    if didAddStop {
+                        self.showStopAddedConfirmation(name: name)
+                    } else {
+                        self.showStopAddFailure()
+                    }
                 }
-                completion()
             }
             return item
         }
@@ -484,11 +511,38 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     private func showStopAddedConfirmation(name: String) {
         // Pop to root first to keep the hierarchy shallow, then present
         // the confirmation alert on the clean root map template.
-        interfaceController?.popToRootTemplate(animated: false) { [weak self] success, _ in
-            guard let self = self, success else { return }
+        guard let interfaceController else {
+            isAddingStopInProgress = false
+            return
+        }
+        interfaceController.popToRootTemplate(animated: false) { [weak self] success, _ in
+            guard let self else { return }
+            self.isAddingStopInProgress = false
+            guard success else { return }
             let action = CPAlertAction(title: "OK", style: .default) { _ in }
             let alert = CPAlertTemplate(
                 titleVariants: ["Stop added: \(name)", "Tap + again to add more stops."],
+                actions: [action]
+            )
+            self.interfaceController?.presentTemplate(alert, animated: true, completion: nil)
+        }
+    }
+
+    /// Reports a failed route recalculation without claiming that the stop
+    /// was accepted. The ViewModel restores the previous coherent route.
+    @MainActor
+    private func showStopAddFailure() {
+        guard let interfaceController else {
+            isAddingStopInProgress = false
+            return
+        }
+        interfaceController.popToRootTemplate(animated: false) { [weak self] success, _ in
+            guard let self else { return }
+            self.isAddingStopInProgress = false
+            guard success else { return }
+            let action = CPAlertAction(title: "OK", style: .default) { _ in }
+            let alert = CPAlertTemplate(
+                titleVariants: ["Stop not added", "Route recalculation failed. Try again when connected."],
                 actions: [action]
             )
             self.interfaceController?.presentTemplate(alert, animated: true, completion: nil)

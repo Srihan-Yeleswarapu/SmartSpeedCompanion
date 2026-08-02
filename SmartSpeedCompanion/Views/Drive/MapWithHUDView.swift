@@ -1056,17 +1056,9 @@ fileprivate struct RouteSelectionCard: View {
 
 // MARK: - Navigation Shortcuts Row
 //
-// Two pill buttons shown under the navigation card while a destination is
-// active:
-//   - "Apple Maps"   — MKMapItem.openInMaps(launchOptions:) hands the trip off
-//                      to Apple Maps with full traffic + Look Around the
-//                      moment the user wants it (Apple provides this surface
-//                      inside Apple Maps; no in-app Look Around, per
-//                      TestFlight 2.2.0 FB10).
-//   - "Add Stops"   — Opens the RouteStopsSheet where the user can add,
-//                      reorder, or delete intermediate waypoints. Replaced
-//                      the old "Find Nearby" menu (gas / cafe / parking)
-//                      per user request on 2026-07-26.
+// One pill button shown under the navigation card while a destination is
+// active. It opens the RouteStopsSheet where the user can add, reorder, or
+// delete intermediate waypoints.
 fileprivate struct NavigationShortcutsRow: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     let destination: MKMapItem
@@ -1074,22 +1066,10 @@ fileprivate struct NavigationShortcutsRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                // TestFlight 2.2.0 (FB10): "Refresh Look Around" button
-                // removed per user request. Apple Maps surface via
-                // `Open in Apple Maps` below covers the destination-preview
-                // use case instead.
-                Button(action: {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    driveViewModel.openInAppleMaps(destination)
-                }) {
-                    Label("Open in Apple Maps", systemImage: "arrow.up.right.square")
-                        .labelStyle(.titleAndIcon)
-                        .font(.system(size: 13, weight: .bold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .foregroundColor(.white)
-                        .liquidGlassChip(cornerRadius: 18, interactive: true)
-                }
+                // Keep only the in-app stop action in this row. The external
+                // Apple Maps handoff was a redundant button in the navigation
+                // card and the latest TestFlight feedback explicitly asks for
+                // it to be removed.
                 Button(action: {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     driveViewModel.showRouteStopsSheet = true

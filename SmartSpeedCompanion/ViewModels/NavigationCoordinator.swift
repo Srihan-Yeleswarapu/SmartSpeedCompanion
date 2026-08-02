@@ -52,6 +52,7 @@ import UIKit
 // default (which is the embedded `DefaultVoiceAnnouncer` below).
 @MainActor
 protocol VoiceAnnouncer: AnyObject {
+    var isSpeaking: Bool { get }
     func announce(_ message: String)
     /// Deactivate the audio session cleanly when navigation ends.
     /// Keeps the session alive between announcements to avoid CarPlay
@@ -63,6 +64,11 @@ protocol VoiceAnnouncer: AnyObject {
 final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
     private var voiceEnabled: Bool = true
+    private var audioSessionConfigured = false
+
+    var isSpeaking: Bool {
+        synthesizer.isSpeaking || synthesizer.isPaused
+    }
 
     override init() {
         super.init()
@@ -72,7 +78,6 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
         // delegate ref to strong — it would leak this whole subtree for
         // the app lifetime once the navigation graph grows.
         synthesizer.delegate = self
-        setupAudioSession()
     }
 
     /// CarPlay-friendly audio session options.
@@ -100,9 +105,18 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     private func setupAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .spokenAudio, options: Self.navVoiceOptions)
+            // AlertEngine and the legacy speed-alert path share this process-
+            // wide AVAudioSession and can legitimately switch it back to
+            // `.default` while navigation is active. Do not trust only a
+            // local configured flag: re-apply the navigation mode whenever
+            // another subsystem changed it, while avoiding category churn
+            // when the spoken route is already installed.
+            if session.mode != .spokenAudio || !audioSessionConfigured {
+                try session.setCategory(.playback, mode: .spokenAudio, options: Self.navVoiceOptions)
+                DebugLogger.shared.log("Audio Session Mode Restored (spokenAudio, nav voice channel)")
+            }
             try session.setActive(true, options: .notifyOthersOnDeactivation)
-            DebugLogger.shared.log("Audio Session Configured (spokenAudio, nav voice channel)")
+            audioSessionConfigured = true
         } catch {
             DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
         }
@@ -117,7 +131,20 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     /// Also reduced `preUtteranceDelay` from 0.5 to 0.05 to eliminate
     /// the unnatural half-second gap before each announcement.
     func announce(_ message: String) {
+        guard UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool ?? true else { return }
+        // AVSpeechSynthesizer queues utterances by default. Navigation can
+        // produce a new cue before the previous one finishes; queuing those
+        // stale cues makes CarPlay speech arrive late and sound like it is
+        // repeatedly cut off. Let the current cue finish and retry the next
+        // stage on the following GPS tick instead of stacking audio.
+        guard !isSpeaking else { return }
+
         let expandedMessage = NavigationCoordinator.expandAbbreviations(message)
+
+        // Configure lazily on the first accepted cue. This avoids activating
+        // and ducking other audio at app launch; the session remains stable
+        // until navigation ends.
+        setupAudioSession()
 
         let utterance = AVSpeechUtterance(string: expandedMessage)
         utterance.preUtteranceDelay = 0.05
@@ -141,6 +168,7 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     func deactivateSession() {
         synthesizer.stopSpeaking(at: .immediate)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        audioSessionConfigured = false
         DebugLogger.shared.log("Audio Session Deactivated (navigation ended)")
     }
 
@@ -206,6 +234,7 @@ public final class NavigationCoordinator: ObservableObject {
             finalDestinationMapItem = destination
             routeLegs.removeAll()
             multiStopLegDestinations.removeAll()
+            publishedMultiStopStateGeneration = nil
             activeMultiStopLegIndex = 0
             multiStopStateGeneration &+= 1
         }
@@ -246,6 +275,10 @@ public final class NavigationCoordinator: ObservableObject {
     /// current stop rather than claiming the final destination is the active
     /// leg's endpoint.
     private var multiStopLegDestinations: [MKMapItem] = []
+    /// Generation of the last coherent routeLegs snapshot. Stop edits keep
+    /// that old snapshot temporarily for rollback, but it must not be used
+    /// for guidance until a replacement calculation publishes successfully.
+    private var publishedMultiStopStateGeneration: UInt64?
     private var activeMultiStopLegIndex: Int = 0
 
     // MARK: - Internal nav scratch
@@ -280,6 +313,16 @@ public final class NavigationCoordinator: ObservableObject {
     /// location even if the backend reconstructs the `SpeedCamera` struct
     /// repeatedly across location ticks.
     private var spokenCameraKeys: Set<String> = []
+    /// Prevents repeated arrival tasks while the final GPS fix is delivered
+    /// across multiple location ticks.
+    private var isCompletingNavigation = false
+    /// Cancels delayed arrival teardown if the user starts a new route first.
+    private var arrivalTeardownTask: Task<Void, Never>?
+    private var navigationLifecycleGeneration: UInt64 = 0
+    /// Invalidates overlapping direct/search route requests before an older
+    /// MapKit response can publish routes for the wrong destination.
+    private var routeRequestGeneration: UInt64 = 0
+    private var navigationTeardownInProgress = false
 
     /// Delegate hook used by CarPlay to keep its template stack in sync.
     /// Kept as a weak var to avoid retain cycles.
@@ -303,6 +346,13 @@ public final class NavigationCoordinator: ObservableObject {
     private let onRerouteRequest: (MKMapItem) async -> Void
     /// Starts a recording session (only invoked when `!isRecordingProvider()`).
     private let startSession: () -> Void
+    /// Updates the host ViewModel's navigation flag when navigation ends
+    /// from an arrival/CarPlay callback rather than the phone wrapper.
+    private let setNavigating: (Bool) -> Void
+    /// Ends the host recording session after navigation reaches its endpoint.
+    /// The host callback runs after `setNavigating(false)` so it cannot recurse
+    /// back into navigation teardown.
+    private let endSession: () -> Void
     /// Begins a Live Activity for the active nav session. The host VM is
     /// responsible for gating `#if !targetEnvironment(simulator)` since
     /// the activity call itself shouldn't be parameterized on host env.
@@ -333,6 +383,8 @@ public final class NavigationCoordinator: ObservableObject {
             availableRoutesSetter: { _ in },
             onRerouteRequest: { _ in },
             startSession: { },
+            setNavigating: { _ in },
+            endSession: { },
             liveActivityStart: { _ in },
             liveActivityEnd: { },
             voiceAnnouncer: DefaultVoiceAnnouncer()
@@ -349,6 +401,8 @@ public final class NavigationCoordinator: ObservableObject {
         availableRoutesSetter: @escaping ([MKRoute]) -> Void = { _ in },
         onRerouteRequest: @escaping (MKMapItem) async -> Void = { _ in },
         startSession: @escaping () -> Void = { },
+        setNavigating: @escaping (Bool) -> Void = { _ in },
+        endSession: @escaping () -> Void = { },
         liveActivityStart: @escaping (Date) -> Void = { _ in },
         liveActivityEnd: @escaping () -> Void = { },
         sessionStartTimeProvider: @escaping () -> Date? = { nil },
@@ -360,6 +414,8 @@ public final class NavigationCoordinator: ObservableObject {
         self.availableRoutesSetter = availableRoutesSetter
         self.onRerouteRequest = onRerouteRequest
         self.startSession = startSession
+        self.setNavigating = setNavigating
+        self.endSession = endSession
         self.liveActivityStart = liveActivityStart
         self.liveActivityEnd = liveActivityEnd
         self.sessionStartTimeProvider = sessionStartTimeProvider
@@ -412,6 +468,11 @@ public final class NavigationCoordinator: ObservableObject {
         guard routeStops.map(\.id) == expectedIDs else { return false }
         routeStops = stops
         multiStopStateGeneration &+= 1
+        // The preserved routeLegs/multiStopLegDestinations still belong to
+        // this restored stop order. Mark that coherent snapshot current again;
+        // otherwise the published-generation guard would permanently disable
+        // intermediate-leg advancement after a failed edit rollback.
+        publishedMultiStopStateGeneration = multiStopStateGeneration
         return true
     }
 
@@ -481,6 +542,7 @@ public final class NavigationCoordinator: ObservableObject {
         }
 
         self.multiStopLegDestinations = allLegs.map { $0.destination }
+        self.publishedMultiStopStateGeneration = calculationGeneration
         self.activeMultiStopLegIndex = 0
         for estimate in computedStopEstimates {
             routeStops[estimate.index].travelTimeFromPrevious = estimate.travelTime
@@ -616,6 +678,7 @@ public final class NavigationCoordinator: ObservableObject {
         isCalculatingMultiStop = false
         finalDestinationMapItem = nil
         multiStopLegDestinations.removeAll()
+        publishedMultiStopStateGeneration = nil
         activeMultiStopLegIndex = 0
         multiStopStateGeneration &+= 1
     }
@@ -631,6 +694,13 @@ public final class NavigationCoordinator: ObservableObject {
         return multiStopLegDestinations[activeMultiStopLegIndex]
     }
 
+    /// Index of the leg currently being guided. The map uses this to keep the
+    /// active leg bold after a stop transition instead of continuing to draw
+    /// the original first leg as the primary route.
+    public var activeMultiStopLegIndexForDisplay: Int {
+        activeMultiStopLegIndex
+    }
+
     /// Advances guidance from an intermediate stop to the next precomputed
     /// leg. Returns nil when the final leg is already active.
     @discardableResult
@@ -639,6 +709,7 @@ public final class NavigationCoordinator: ObservableObject {
         // succeeds. Do not advance that stale snapshot after the last stop was
         // removed while its replacement route is still pending.
         guard !routeStops.isEmpty,
+              publishedMultiStopStateGeneration == multiStopStateGeneration,
               activeMultiStopLegIndex + 1 < routeLegs.count,
               let nextRoute = routeLegs[activeMultiStopLegIndex + 1].route,
               multiStopLegDestinations.indices.contains(activeMultiStopLegIndex + 1) else {
@@ -653,7 +724,9 @@ public final class NavigationCoordinator: ObservableObject {
         activeMultiStopLegIndex += 1
         currentRoute = nextRoute
         currentStepIndex = 0
-        multiStopStateGeneration &+= 1
+        // The published route snapshot remains valid while moving between its
+        // legs. Do not advance the edit/calculation generation here: doing so
+        // would make the next leg look stale even though no stop changed.
         let transitionGeneration = multiStopStateGeneration
         // CarPlay owns its own CPNavigationSession and step array. Ask it to
         // replace that session immediately; otherwise its monitor would keep
@@ -891,6 +964,14 @@ public final class NavigationCoordinator: ObservableObject {
     /// The `isSelectingRoute` flag (also host-VM state) is NOT touched
     /// here — that's a UI-state concern for the wrapper method.
     public func selectDestinationAndCalculateRoutes(to destination: MKMapItem, isRerouting: Bool = false) async {
+        routeRequestGeneration &+= 1
+        let requestGeneration = routeRequestGeneration
+        // A fresh user-selected destination supersedes any prior off-route
+        // reroute indicator immediately; otherwise a failed/stale reroute can
+        // leave the HUD spinning while this normal search is in flight.
+        if !isRerouting {
+            self.isRerouting = false
+        }
         self.destination = destination
         self.finalDestinationMapItem = destination
         multiStopStateGeneration &+= 1
@@ -910,6 +991,8 @@ public final class NavigationCoordinator: ObservableObject {
             let directions = MKDirections(request: request)
             DebugLogger.shared.log("Calculating routes to: \(destination.name ?? "Unknown")")
             let response = try await directions.calculate()
+            guard requestGeneration == routeRequestGeneration,
+                  mapItemsMatch(destination, self.destination) else { return }
             self.availableRoutesSetter(response.routes)
             DebugLogger.shared.log("Found \(response.routes.count) available routes\(isRerouting ? " (Fast Reroute)" : "")")
         } catch {
@@ -917,7 +1000,7 @@ public final class NavigationCoordinator: ObservableObject {
             print("Route error: \(error)")
         }
 
-        if isRerouting {
+        if requestGeneration == routeRequestGeneration {
             self.isRerouting = false
         }
     }
@@ -927,27 +1010,53 @@ public final class NavigationCoordinator: ObservableObject {
     /// Commences turn-by-turn guidance on a specific path. Sets `isNavigating`
     /// is the wrapper's responsibility (host-VM state); this method focuses
     /// on the navigation-tick-readable state.
-    public func startNavigation(with route: MKRoute, isReroute: Bool = false) async {
+    @discardableResult
+    public func startNavigation(with route: MKRoute, isReroute: Bool = false) async -> Bool {
         DebugLogger.shared.log("Navigation \(isReroute ? "REROUTED" : "STARTED") using Route (\(Int(route.distance))m)")
         // Invalidate any queued intermediate-leg CarPlay handoff before
         // replacing the active route (normal starts and reroutes included).
-        multiStopStateGeneration &+= 1
-        self.currentRoute = route
-        self.currentStepIndex = 0
+        // Replacing a normal route invalidates pending multi-stop work. A
+        // multi-stop start usually follows a successful calculation whose
+        // snapshot must remain valid for intermediate-leg progression.
+        if routeStops.isEmpty {
+            multiStopStateGeneration &+= 1
+        } else {
+            // A stop edit leaves the previous route visible while a new
+            // calculation is in flight. Never start that stale route.
+            guard publishedMultiStopStateGeneration == multiStopStateGeneration else { return false }
+        }
+        let startWasMultiStop = !routeStops.isEmpty
+        let startMultiStopGeneration = multiStopStateGeneration
+        let startRouteRequestGeneration = routeRequestGeneration
+        // Reserve this start before the first await. A newer start invalidates
+        // this token, so an older cache-warmup completion cannot publish a
+        // stale route afterward.
+        navigationLifecycleGeneration &+= 1
+        let startNavigationGeneration = navigationLifecycleGeneration
+        arrivalTeardownTask?.cancel()
+        arrivalTeardownTask = nil
 
         // Reset flags so we can re-announce the approach to the first turn
         self.stepStageFlags.removeAll()
         self.lastDistanceToTurn = nil
         self.spokenCameraKeys.removeAll()
 
-        startRerouteTimer() // Every 5 minutes check for a faster path
+        // Cache speed limits for the route points to ensure we stay offline-capable during the drive.
+        await cacheRouteSegments(route)
 
-        // Compute ETA from total journey (multi-stop-aware). When routeStops
-        // is populated, `calculateMultiStopRoute` already set `self.eta` and
-        // `self.distanceToDestination` to the sum of ALL leg values. Only
-        // overwrite with the single-leg values when there are no intermediate
-        // stops, so the ETA never shrinks to just the first leg after a stop
-        // is added (code review bug).
+        // Stop edits or a newer navigation start can occur while the cache
+        // warmup is suspended. Do not publish this route after either event.
+        guard navigationLifecycleGeneration == startNavigationGeneration,
+              startRouteRequestGeneration == routeRequestGeneration,
+              startMultiStopGeneration == multiStopStateGeneration,
+              !startWasMultiStop || (
+                  !routeStops.isEmpty &&
+                  publishedMultiStopStateGeneration == multiStopStateGeneration
+              ) else { return false }
+
+        // Compute ETA from total journey (multi-stop-aware) only after the
+        // async validation above. A stale start must not overwrite the active
+        // route's ETA/distance while a newer start is in flight.
         if routeStops.isEmpty {
             self.eta = Date().addingTimeInterval(route.expectedTravelTime)
             self.distanceToDestination = route.distance
@@ -960,18 +1069,40 @@ public final class NavigationCoordinator: ObservableObject {
         // When routeStops is non-empty and multi-stop data is present,
         // we keep the total ETA / distance untouched.
 
-        // Automatically start recording the drive session if it hasn't been started manually
+        // Automatically start recording the drive session if it hasn't been started manually.
+        // This is committed only after the route generation survives cache warming.
+
+        // Commit navigation-owned state only after all async validation has
+        // passed. This prevents stale starts from leaving a route, timer, or
+        // recording session partially active.
+        self.currentRoute = route
+        self.currentStepIndex = 0
+        self.isCompletingNavigation = false
+        self.navigationTeardownInProgress = false
+        startRerouteTimer()
         if !self.isRecordingProvider() {
             self.startSession()
             DebugLogger.shared.log("Session AUTO-STARTED with navigation")
         }
 
-        // Cache speed limits for the route points to ensure we stay offline-capable during the drive
-        await cacheRouteSegments(route)
-
         // Inform the CarPlay/UI layer that navigation is moving
         if let dest = self.destination {
             await navigationDelegate?.startNavigationTrigger(to: dest, route: route)
+        }
+
+        // A newer navigation start or stop edit may have taken ownership while
+        // CarPlay replaced its session. Do not let this stale continuation
+        // overwrite maneuver state, speak an old route, or start a duplicate
+        // Live Activity.
+        guard navigationLifecycleGeneration == startNavigationGeneration,
+              startRouteRequestGeneration == routeRequestGeneration,
+              startMultiStopGeneration == multiStopStateGeneration,
+              !startWasMultiStop || (!routeStops.isEmpty && publishedMultiStopStateGeneration == multiStopStateGeneration) else {
+            // The old CarPlay handoff may already have installed this route,
+            // but a newer lifecycle now owns future updates. Keep the host in
+            // a valid navigating state while that replacement is committing;
+            // only report failure when there is no active route left to own.
+            return currentRoute != nil && !isCompletingNavigation
         }
 
         // Setup initial UI text based on the first meaningful step
@@ -1024,16 +1155,53 @@ public final class NavigationCoordinator: ObservableObject {
         if !isReroute {
             self.liveActivityStart(Date())
         }
+        return true
     }
 
     /// Alternative start navigation that triggers the calculation internally
     /// (legacy/direct support). The wrapper on the host VM is responsible
     /// for setting `isNavigating = true` and for starting a recording if
     /// none is in progress.
-    public func startNavigation(to destination: MKMapItem) async {
+    @discardableResult
+    public func startNavigation(to destination: MKMapItem) async -> Bool {
+        // A direct route cannot replace an active multi-stop plan: its
+        // destination and route legs have different semantics. Traffic
+        // rerouting skips this path for multi-stop sessions as well.
+        guard routeStops.isEmpty else { return false }
+
+        // Keep the legacy/direct start path consistent with startNavigation(with:).
+        // Calculate before replacing the current destination. That keeps an
+        // already-active route coherent while MapKit is still awaiting the
+        // replacement route. The request token also invalidates a concurrent
+        // destination-search response.
+        routeRequestGeneration &+= 1
+        let directRouteRequestGeneration = routeRequestGeneration
+        navigationLifecycleGeneration &+= 1
+        let directStartGeneration = navigationLifecycleGeneration
+        arrivalTeardownTask?.cancel()
+        arrivalTeardownTask = nil
+        isCompletingNavigation = false
+        navigationTeardownInProgress = false
+
+        guard let route = await calculateRouteBetween(
+            source: MKMapItem.forCurrentLocation(),
+            destination: destination
+        ) else {
+            // Do not tear down a newer route when this request was superseded.
+            guard navigationLifecycleGeneration == directStartGeneration else { return false }
+            if currentRoute == nil {
+                self.setNavigating(false)
+            }
+            return false
+        }
+
+        // The calculation is cancellable by a newer direct start or teardown.
+        guard navigationLifecycleGeneration == directStartGeneration,
+              routeRequestGeneration == directRouteRequestGeneration else { return false }
+
         self.destination = destination
-        if !self.isRecordingProvider() { self.startSession() }
-        await navigationDelegate?.startNavigationTrigger(to: destination, route: nil as MKRoute?)
+        self.destinationItem = destination
+        return await startNavigation(with: route)
     }
 
     /// Terminates the current navigation session. Cleans all nav-owned
@@ -1042,7 +1210,35 @@ public final class NavigationCoordinator: ObservableObject {
     /// BEFORE invoking this, for the `endSession()` recording call AFTER,
     /// and for honoring the simulator speaker gate.
     public func endNavigation() async {
+        // Completion can be requested by the phone heartbeat and CarPlay in
+        // the same GPS tick. The first caller owns teardown; later callers
+        // must not end the recording session or notify the delegate twice.
+        guard !navigationTeardownInProgress else { return }
+        navigationTeardownInProgress = true
+        // Invalidate any route search/direct MapKit request that is still
+        // suspended. Its response must not repopulate availableRoutes after
+        // this navigation session has been torn down.
+        routeRequestGeneration &+= 1
+        arrivalTeardownTask?.cancel()
+        arrivalTeardownTask = nil
+        navigationLifecycleGeneration &+= 1
+        let teardownGeneration = navigationLifecycleGeneration
         self.currentRoute = nil
+        self.isCompletingNavigation = true
+        self.destination = nil
+        self.destinationItem = nil
+        self.nextManeuverInstruction = ""
+        self.nextManeuverImageName = "arrow.up"
+        self.distanceToNextTurn = 0
+        self.distanceToDestination = 0
+        self.eta = nil
+        // Arrival can invoke this method directly from the location heartbeat,
+        // bypassing DriveViewModel.endNavigation(). Keep the host UI and
+        // recording lifecycle in sync before notifying CarPlay.
+        self.setNavigating(false)
+        if self.isRecordingProvider() {
+            self.endSession()
+        }
         rerouteTimer?.invalidate()
         rerouteTimer = nil
         self.stepStageFlags.removeAll()
@@ -1063,6 +1259,11 @@ public final class NavigationCoordinator: ObservableObject {
 
         await navigationDelegate?.endNavigationTrigger()
 
+        // The delegate call can suspend and allow a new route to start. Do
+        // not finish the old route's Live Activity after that new lifecycle
+        // has taken ownership of the coordinator.
+        guard navigationLifecycleGeneration == teardownGeneration,
+              navigationTeardownInProgress else { return }
         self.liveActivityEnd()
     }
 
@@ -1081,8 +1282,37 @@ public final class NavigationCoordinator: ObservableObject {
     /// check for steps, turns, and reroutes. Drives off-route detection,
     /// step progression, voice announcements, and ETA refresh.
     public func updateNavigationProgress(at location: CLLocation) {
-        guard let route = currentRoute else { return }
+        guard !isCompletingNavigation, let route = currentRoute else { return }
         let steps = route.steps
+
+        // Arrival must not depend on the driver still moving. A final GPS fix
+        // is commonly delivered after braking or at a red light, so checking
+        // only inside the "advance while moving" branch leaves the last
+        // instruction visible indefinitely. For multi-stop routes, advance
+        // the active leg first; only the final leg ends the trip.
+        let arrivalLocation: CLLocation?
+        if let activeDestination = activeMultiStopDestination {
+            arrivalLocation = activeDestination.placemark.location
+        } else if routeStops.isEmpty {
+            arrivalLocation = destination?.placemark.location
+        } else {
+            arrivalLocation = nil
+        }
+        if let arrivalLocation, location.distance(from: arrivalLocation) <= 50 {
+            if activeMultiStopDestination != nil,
+               activeMultiStopLegIndex + 1 < routeLegs.count {
+                _ = advanceToNextMultiStopLeg()
+                return
+            }
+
+            HapticAlertManager.playNavigationPop()
+            let arrivalWasBlockedBySpeech = voiceAnnouncer.isSpeaking
+            if !arrivalWasBlockedBySpeech {
+                announce("You have arrived at your destination.")
+            }
+            scheduleArrivalTeardown(announceArrivalWhenAvailable: arrivalWasBlockedBySpeech)
+            return
+        }
 
         // 1. OFF-ROUTE DETECTION: Check if we are too far from the polyline
         let nearestPoint = findNearestPointOnPolyline(location.coordinate, polyline: route.polyline)
@@ -1334,10 +1564,15 @@ public final class NavigationCoordinator: ObservableObject {
 
         // 1. Initial Advance Warning (Right after previous turn or start)
         if !flags.contains("initial") {
-            flags.insert("initial")
-
-            // Only give advance warning if we aren't already right on top of the turn
+            // Only give advance warning if we aren't already right on top of the turn.
+            // Do not mark the stage until it was actually accepted by the
+            // announcer; this lets the next GPS tick retry after a prior cue
+            // finishes instead of silently losing the instruction.
             if distanceToTurn > immediateThreshold + 50 {
+                guard !voiceAnnouncer.isSpeaking else {
+                    stepStageFlags[stepIndex] = flags
+                    return
+                }
                 let formattedDist = formatDistance(distanceToTurn)
                 if distanceToTurn > 3218 { // > 2 miles, give a "continue"
                     let routeName = currentRoute?.name ?? "the road"
@@ -1346,6 +1581,7 @@ public final class NavigationCoordinator: ObservableObject {
                     announce("In \(formattedDist), \(activeInstruction)")
                 }
             }
+            flags.insert("initial")
         }
 
         // 1.5 Approaching Warning (TestFlight 2.2.x enhancement): the third
@@ -1366,7 +1602,10 @@ public final class NavigationCoordinator: ObservableObject {
            distanceToTurn <= 643.0 &&
            distanceToTurn > immediateThreshold &&
            !flags.contains("approaching") {
-            flags.insert("approaching")
+            guard !voiceAnnouncer.isSpeaking else {
+                stepStageFlags[stepIndex] = flags
+                return
+            }
             let approachingDist = formatDistance(distanceToTurn)
             let lower = activeInstruction.lowercased()
             if lower.contains("merge onto") || lower.contains("take exit") {
@@ -1374,15 +1613,79 @@ public final class NavigationCoordinator: ObservableObject {
             } else {
                 announce("In \(approachingDist), \(activeInstruction)")
             }
+            flags.insert("approaching")
         }
 
         // 2. Immediate Turning Warning (Right before the turn)
         if distanceToTurn <= immediateThreshold && !flags.contains("immediate") {
-            flags.insert("immediate")
+            guard !voiceAnnouncer.isSpeaking else {
+                stepStageFlags[stepIndex] = flags
+                return
+            }
             announce(activeInstruction)
+            flags.insert("immediate")
         }
 
         stepStageFlags[stepIndex] = flags
+    }
+
+    /// Gives the arrival utterance time to reach the CarPlay audio route
+    /// before endNavigation tears down the shared AVAudioSession. The old
+    /// immediate teardown stopped AVSpeechSynthesizer at .immediate and could
+    /// truncate the only confirmation the driver heard.
+    private func scheduleArrivalTeardown(announceArrivalWhenAvailable: Bool = false) {
+        guard !isCompletingNavigation else { return }
+        isCompletingNavigation = true
+        navigationLifecycleGeneration &+= 1
+        let generation = navigationLifecycleGeneration
+        arrivalTeardownTask?.cancel()
+        arrivalTeardownTask = Task { @MainActor [weak self] in
+            // Give the current utterance a small head start, then wait for it
+            // to finish. If arrival happened while another cue was speaking,
+            // speak the arrival cue after that cue instead of silently losing
+            // the only completion message the driver should hear.
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+
+            let deadline = Date().addingTimeInterval(5)
+            while !Task.isCancelled,
+                  let self,
+                  self.voiceAnnouncer.isSpeaking,
+                  Date() < deadline {
+                do {
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                } catch {
+                    return
+                }
+            }
+
+            guard !Task.isCancelled,
+                  let self,
+                  self.navigationLifecycleGeneration == generation,
+                  self.isCompletingNavigation else { return }
+
+            if announceArrivalWhenAvailable {
+                self.announce("You have arrived at your destination.")
+                let speechDeadline = Date().addingTimeInterval(5)
+                while !Task.isCancelled,
+                      self.voiceAnnouncer.isSpeaking,
+                      Date() < speechDeadline {
+                    do {
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                    } catch {
+                        return
+                    }
+                }
+            }
+
+            guard !Task.isCancelled,
+                  self.navigationLifecycleGeneration == generation,
+                  self.isCompletingNavigation else { return }
+            await self.endNavigation()
+        }
     }
 
     /// Updates the index and UI state for the next turn.
@@ -1410,8 +1713,11 @@ public final class NavigationCoordinator: ObservableObject {
             if dist <= 50 {
                 // Haptic: arrival celebration
                 HapticAlertManager.playNavigationPop()
-                announce("You have arrived at your destination.")
-                Task { await self.endNavigation() }
+                let arrivalWasBlockedBySpeech = voiceAnnouncer.isSpeaking
+                if !arrivalWasBlockedBySpeech {
+                    announce("You have arrived at your destination.")
+                }
+                scheduleArrivalTeardown(announceArrivalWhenAvailable: arrivalWasBlockedBySpeech)
             }
         }
         return false
@@ -1571,10 +1877,17 @@ public final class NavigationCoordinator: ObservableObject {
 
     /// Spoken navigation message — routes through the injected
     /// `voiceAnnouncer` (production: real AVSpeechSynthesizer; tests: spy).
-    /// The default announcer handles abbreviation expansion and per-call
-    /// AVAudioSession defensive re-apply so callers don't have to know.
+    /// The default announcer owns the shared AVAudioSession so navigation
+    /// never competes with a second synthesizer.
     private func announce(_ message: String) {
         voiceAnnouncer.announce(message)
+    }
+
+    /// Internal bridge for legacy DriveViewModel call sites. Keeping one
+    /// announcer prevents the old synthesizer from deactivating the shared
+    /// audio session while coordinator speech is still in progress.
+    internal func announceNavigation(_ message: String) {
+        announce(message)
     }
 
     /// Maps short address forms ("St", "Rd", "I-17") into full words
@@ -1626,7 +1939,12 @@ public final class NavigationCoordinator: ObservableObject {
     }
 
     private func checkForFasterRoute() async {
-        guard let dest = destinationItem, let current = currentRoute else { return }
+        // A faster direct route would discard the ordered intermediate-leg
+        // plan. Multi-stop traffic updates must be recalculated as a complete
+        // snapshot instead of entering the single-destination path below.
+        guard routeStops.isEmpty,
+              let dest = destinationItem,
+              let current = currentRoute else { return }
 
         let request = MKDirections.Request()
         request.source = MKMapItem.forCurrentLocation()
