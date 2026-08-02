@@ -259,30 +259,15 @@ fileprivate struct NavigationInstructionCard: View {
             }
             .padding(.horizontal, 14)
             .padding(.top, 12)
-            .padding(.bottom, driveViewModel.routeStops.isEmpty ? 12 : 4)
+            .padding(.bottom, driveViewModel.routeStops.count >= 2 ? 4 : 12)
 
-            // Action buttons row (Add Stop + Stops list)
-            HStack(spacing: 8) {
-                // Add Stop button
-                Button(action: {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    driveViewModel.showRouteStopsSheet = true
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 10))
-                        Text(driveViewModel.routeStops.isEmpty ? "Add Stop" : "Edit Stops")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .liquidGlassChip(cornerRadius: 12, tint: DesignSystem.cyan.opacity(0.08), interactive: true)
-                }
-                .buttonStyle(.plain)
-
-                // Optimize button — only appears when there are 2+ stops to reorder
-                if driveViewModel.routeStops.count >= 2 {
+            // The in-card "+ Add Stop" / "Edit Stops" button was removed per
+            // TestFlight feedback 72. Stop management remains available in the
+            // dedicated "Add Stops" shortcut row below this card, while the
+            // optimization action stays here only when it is useful for 2+
+            // stops.
+            if driveViewModel.routeStops.count >= 2 {
+                HStack(spacing: 8) {
                     Button(action: {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         driveViewModel.showRouteStopsSheet = true
@@ -302,12 +287,12 @@ fileprivate struct NavigationInstructionCard: View {
                         )
                     }
                     .buttonStyle(.plain)
-                }
 
-                Spacer()
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 12)
         }
         .liquidGlass(interactive: true)
     }
