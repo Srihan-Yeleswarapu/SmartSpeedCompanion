@@ -406,21 +406,17 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     private func ensureAudioSessionActive() {
         let session = AVAudioSession.sharedInstance()
         
-        // Always re-apply category and activate. Calling setActive(true)
-        // on an already-active session is a harmless no-op. When the
-        // session was silently deactivated (e.g. by navigation speech
-        // ending, or an interruption that didn't post a notification),
-        // this re-activates it so the next beep is audible.
+        // FIX: Do NOT re-apply the audio category here. Re-applying
+        // category with .interruptSpokenAudioAndMixWithOthers before
+        // every beep interrupts ongoing navigation speech, causing the
+        // "glitchy audio" reported in TestFlight feedback 71.
+        //
+        // The category is already set correctly by setupAudioSession()
+        // and activateAudioDucking(). Just ensure the session is active.
+        // Calling setActive(true) on an already-active session is a
+        // harmless no-op; when the session was silently deactivated
+        // (e.g. by navigation speech ending), this re-activates it.
         do {
-            try session.setCategory(
-                .playback,
-                mode: .default,
-                options: [
-                    .mixWithOthers,
-                    .interruptSpokenAudioAndMixWithOthers,
-                    .duckOthers
-                ]
-            )
             try session.setActive(true)
             wasInterrupted = false
         } catch {
