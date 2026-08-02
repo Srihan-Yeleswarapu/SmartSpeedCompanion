@@ -67,6 +67,11 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     // Prevents duplicate CarPlay result taps while an add-stop route
     // recalculation is in flight.
     @MainActor private var isAddingStopInProgress = false
+    // Handoff latches prevent a phone-owned route from being installed into
+    // the CarPlay session more than once when several @Published properties
+    // change during one navigation start.
+    @MainActor private var lastPhoneNavigationHandoffKey: String?
+    @MainActor private var lastPhoneDestinationPreviewKey: String?
     // CarPlay enforces a small maximum template hierarchy. Keep references
     // to the active add-stop templates so repeated taps and late search
     // completions cannot push duplicate screens onto the stack.
@@ -176,6 +181,12 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         // isNavigating check and the locals capture, bail out rather
         // than starting an orphaned CarPlay session.
         guard viewModel.isNavigating else { return }
+        let key = navigationHandoffKey(route: route, destination: destination)
+        // `bindViewModel()` can receive the current published route while the
+        // root is being created. Avoid installing the same route twice when
+        // the one-shot connection handoff runs immediately afterward.
+        guard key != lastPhoneNavigationHandoffKey else { return }
+        lastPhoneNavigationHandoffKey = key
         navigationManager.startNavigation(route: route, destination: destination)
     }
 
@@ -317,6 +328,67 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
 
         // The add-stop button is always enabled — category search (gas/coffee/food)
         // works without an active route; a route is only needed when confirming a stop.
+
+        // Keep CarPlay synchronized when the phone selects a destination or
+        // starts navigation while CarPlay is already connected. The one-shot
+        // connection handoff above cannot handle that common ordering.
+        viewModel.navigationCoordinator.$destination
+            .combineLatest(viewModel.$availableRoutes,
+                           viewModel.navigationCoordinator.$currentRoute,
+                           viewModel.$isNavigating)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] destination, availableRoutes, route, isNavigating in
+                guard let self, !self.isHandlingCarPlayTrip else { return }
+
+                guard let destination else {
+                    self.lastPhoneDestinationPreviewKey = nil
+                    self.lastPhoneNavigationHandoffKey = nil
+                    return
+                }
+
+                if isNavigating, let route {
+                    let key = self.navigationHandoffKey(route: route, destination: destination)
+                    guard key != self.lastPhoneNavigationHandoffKey else { return }
+                    self.lastPhoneNavigationHandoffKey = key
+                    // The phone may have a trip preview visible on CarPlay
+                    // from the destination-selection event. Replace it with
+                    // active guidance before starting the session.
+                    self.mapTemplate.hideTripPreviews()
+                    self.navigationManager.startNavigation(route: route, destination: destination)
+                } else if !isNavigating, route == nil, !availableRoutes.isEmpty {
+                    // A phone search selection is useful on CarPlay even
+                    // before the user taps a route on the phone: wait until
+                    // route calculation has completed, then show the same
+                    // CarPlay trip preview so the driver can start guidance
+                    // from the head unit without re-searching. The route-ready
+                    // gate avoids showing a duplicate/empty preview during the
+                    // short interval where destination is published first.
+                    let key = self.destinationPreviewKey(for: destination)
+                    guard key != self.lastPhoneDestinationPreviewKey else { return }
+                    self.lastPhoneDestinationPreviewKey = key
+                    self.presentTripPreviewOnce(for: destination)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    @MainActor
+    private func destinationPreviewKey(for destination: MKMapItem) -> String {
+        let coordinate = destination.placemark.coordinate
+        return "\(coordinate.latitude),\(coordinate.longitude)|\(destination.name ?? \"\")"
+    }
+
+    @MainActor
+    private func navigationHandoffKey(route: MKRoute, destination: MKMapItem) -> String {
+        let coordinate = destination.placemark.coordinate
+        let points = route.polyline.points()
+        let count = route.polyline.pointCount
+        let first = count > 0 ? points[0].coordinate : coordinate
+        let last = count > 0 ? points[count - 1].coordinate : coordinate
+        return String(format: "%.5f,%.5f|%.1f|%.1f|%d|%.5f,%.5f|%.5f,%.5f",
+                      coordinate.latitude, coordinate.longitude,
+                      route.distance, route.expectedTravelTime, count,
+                      first.latitude, first.longitude, last.latitude, last.longitude)
     }
 
     @MainActor
@@ -930,8 +1002,20 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         Task { @MainActor in
             guard !isHandlingCarPlayTrip else { return }
             isHandlingCarPlayTrip = true; defer { isHandlingCarPlayTrip = false }
+            // CarPlay normally dismisses previews automatically for this
+            // callback. Explicitly hide them as well: on some iOS 26 head
+            // units the preview/prompt remains visible until the app hands
+            // control back after its async route calculation.
+            mapTemplate.hideTripPreviews()
             if viewModel.isNavigating { await viewModel.navigationCoordinator.endNavigation() }
             await navigationManager.handleCarPlayStartedTrip(trip)
+            // The coordinator publishes the route during the async handoff.
+            // Record that exact route so the synchronization publisher does
+            // not install a second CarPlay session when this callback returns.
+            if let route = viewModel.navigationCoordinator.currentRoute,
+               let destination = viewModel.navigationCoordinator.destination {
+                lastPhoneNavigationHandoffKey = navigationHandoffKey(route: route, destination: destination)
+            }
         }
     }
     nonisolated func mapTemplateDidStopNavigating(_ mapTemplate: CPMapTemplate) {

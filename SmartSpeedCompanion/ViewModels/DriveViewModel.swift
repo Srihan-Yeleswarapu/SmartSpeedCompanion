@@ -624,6 +624,16 @@ public final class DriveViewModel: NSObject, ObservableObject {
     private var sessionStartTime: Date? = nil
     private var sessionTimer: AnyCancellable? = nil
     private var rerouteTimer: Timer?
+    /// Live Activity updates are intentionally coalesced. The location
+    /// heartbeat is 500 ms, but ActivityKit does not need a new snapshot on
+    /// every GPS fix and frequent updates add heat on a real device.
+    private var lastLiveActivityUpdateAt: Date = .distantPast
+    private let liveActivityUpdateInterval: TimeInterval = 2.0
+    /// The cloud profile only needs a coarse last-known position. Writing a
+    /// Firestore document on every GPS heartbeat caused unnecessary radio,
+    /// serialization, and server work during a drive.
+    private var lastCloudLocationSyncAt: Date = .distantPast
+    private let cloudLocationSyncInterval: TimeInterval = 10.0
     private var currentStepIndex: Int = 0
     private var cancellables = Set<AnyCancellable>()
     
@@ -655,6 +665,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// Reset to nil in `endNavigation()` so each drive starts with a
     /// clean baseline.
     private var lastSpeedLimitFetchHeading: Double? = nil
+    /// Serializes heading-triggered speed-limit evaluations. The GPS sink is
+    /// intentionally frequent, while road resolution/provider calls are
+    /// asynchronous; without this guard, slow requests could pile up during
+    /// a navigation session and contribute to heat and stale writes.
+    private var headingDeltaEvaluationTask: Task<Void, Never>?
     /// Threshold for the heading-delta trigger (degrees, absolute delta).
     /// 20° chosen so passing a cross street (e.g. Bush Rd at a 45° angle)
     /// triggers a fresh fetch before the GPS snaps to the adjacent road.
@@ -849,15 +864,31 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 if self.navigationCoordinator.currentRoute != nil {
                     self.navigationCoordinator.checkOffRouteStatus(at: location)
                 }
-                // Sync position to Firebase for potential multi-device/dashboard features
-                AuthenticationManager.shared.updateLastLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
+                // Sync position to Firebase for potential multi-device/dashboard
+                // features, but only at a coarse cadence. A Firestore write for
+                // every 500 ms GPS heartbeat was a major avoidable source of
+                // radio/CPU work and phone heat.
+                let cloudNow = Date()
+                if (self.isRecording || self.isNavigating),
+                   cloudNow.timeIntervalSince(self.lastCloudLocationSyncAt) >= self.cloudLocationSyncInterval {
+                    self.lastCloudLocationSyncAt = cloudNow
+                    AuthenticationManager.shared.updateLastLocation(
+                        latitude: location.coordinate.latitude,
+                        longitude: location.coordinate.longitude
+                    )
+                }
+                // Heading-delta trigger is only useful while following a route;
+                // do not create a task for every GPS fix during a recording-only
+                // drive.
                 // Heading-delta trigger: a 30+ degree bearing change
                 // forces a fresh fetch even mid-route. Pre-cache of the
                 // route ahead + heading-triggered re-fetches are the
                 // two "more smooth" adds per the user's request; the
                 // existing throttled fetches remain in place. Fire-and-
                 // forget so we don't block the GPS sink block.
-                Task { await self.evaluateHeadingDeltaTrigger() }
+                if self.isNavigating {
+                    self.scheduleHeadingDeltaEvaluation()
+                }
             }
             .store(in: &cancellables)
 
@@ -873,8 +904,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
         Timer.publish(every: 5.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
+                guard let self, self.isRecording || self.isNavigating else { return }
                 #if !targetEnvironment(simulator)
-                self?.writeWidgetSnapshot()
+                self.writeWidgetSnapshot()
                 #endif
             }
             .store(in: &cancellables)
@@ -940,6 +972,8 @@ public final class DriveViewModel: NSObject, ObservableObject {
         sessionRecorder.startSession(destinationPlaceID: destID)
         
         sessionStartTime = Date()
+        lastLiveActivityUpdateAt = .distantPast
+        lastCloudLocationSyncAt = .distantPast
         sessionTimer = Timer.publish(every: 1, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
@@ -959,6 +993,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     /// Updates the Dynamic Island and Lock Screen widgets with real-time driving data.
     private func updateLiveActivity() {
+        guard isRecording || isNavigating else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastLiveActivityUpdateAt) >= liveActivityUpdateInterval else { return }
+        lastLiveActivityUpdateAt = now
+
         // Live Activities don't render in the iOS Simulator. Calling the
         // manager from a simulator emits ActivityKit no-op warnings every
         // 1-second tick — gate the call so the simulator path is silent.
@@ -1205,6 +1244,12 @@ public final class DriveViewModel: NSObject, ObservableObject {
         sessionStartTime = nil
         self.sessionDuration = 0
         
+        // Stop any in-flight heading-triggered provider work before the
+        // location source is shut down. This prevents a late navigation task
+        // from continuing after the drive has ended.
+        headingDeltaEvaluationTask?.cancel()
+        headingDeltaEvaluationTask = nil
+
         // ── Critical: stop location hardware when session ends ──────
         // Prevents the background location indicator (orange pill) from
         // appearing when the user goes to another app after ending a drive.
@@ -2182,6 +2227,18 @@ public final class DriveViewModel: NSObject, ObservableObject {
         if diff > 180 { diff -= 360 }
         if diff < -180 { diff += 360 }
         return diff
+    }
+
+    /// Starts at most one asynchronous heading evaluation at a time. A later
+    /// GPS fix is intentionally coalesced into the next evaluation rather than
+    /// creating another concurrent geocoder/provider chain.
+    private func scheduleHeadingDeltaEvaluation() {
+        guard headingDeltaEvaluationTask == nil else { return }
+        headingDeltaEvaluationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.evaluateHeadingDeltaTrigger()
+            self.headingDeltaEvaluationTask = nil
+        }
     }
 
     /// Fires a fresh speed-limit fetch when the user's bearing has

@@ -1145,6 +1145,33 @@ public struct LiveMapView: UIViewRepresentable {
             return view
         }
 
+        /// Converts a native MapKit POI tap into the same destination flow as
+        /// text search. `MKMapFeatureAnnotation` is the annotation type used
+        /// by Apple's rendered map for restaurants, stores, roads, and other
+        /// places; it must be resolved with `MKMapItemRequest` before routing.
+        public func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+            guard let feature = view.annotation as? MKMapFeatureAnnotation else { return }
+
+            // Remove the native callout before presenting our route picker so
+            // the tap has one clear result instead of leaving a POI card
+            // underneath the app's route-selection card.
+            mapView.deselectAnnotation(feature, animated: true)
+            let request = MKMapItemRequest(mapFeatureAnnotation: feature)
+            request.getMapItem { [weak self] mapItem, error in
+                guard let self else { return }
+                guard let mapItem else {
+                    if let error {
+                        DebugLogger.shared.log("Map POI selection failed: \(error.localizedDescription)")
+                    }
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.parent.viewModel.selectDestinationAndCalculateRoutes(to: mapItem)
+                }
+            }
+        }
+
         public func mapView(_ mapView: MKMapView, didChange mode: MKUserTrackingMode, animated: Bool) {
             // If the system changed tracking mode (e.g. user rotated device), log it
             DebugLogger.shared.log("Tracking mode changed to: \(mode.rawValue)")
