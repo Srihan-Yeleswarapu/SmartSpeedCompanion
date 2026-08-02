@@ -324,7 +324,6 @@ class CarPlayDestinationController {
     private func setDestination(_ item: MKMapItem) {
         guard !isSettingDestination else { return }
         isSettingDestination = true
-        defer { isSettingDestination = false }
 
         let destName = item.name ?? "Destination"
 
@@ -347,30 +346,20 @@ class CarPlayDestinationController {
         Task { @MainActor in
             await viewModel.selectDestinationAndCalculateRoutes(to: item)
 
-            // Replace the loading template with the confirmation. Pop first,
-            // then present the alert on the now-clean stack.
-            self.interfaceController?.popTemplate(animated: false) { [weak self] _, _ in
+            // Return to the clean root before presenting the confirmation.
+            // CPAlertAction dismisses its CPAlertTemplate automatically;
+            // trying to dismiss it again from the OK handler races CarPlay's
+            // own dismissal and can make the button appear unresponsive.
+            guard let interfaceController = self.interfaceController else {
+                self.isSettingDestination = false
+                return
+            }
+            interfaceController.popToRootTemplate(animated: false) { [weak self] success, _ in
                 guard let self = self else { return }
+                self.isSettingDestination = false
+                guard success else { return }
 
-                // ── Show confirmation alert ───────────────────────────
-                // CPAlertTemplate is presented modally via presentTemplate.
-                // The action handler MUST dismiss the alert first, then pop
-                // the navigation stack — calling popToRootTemplate while the
-                // alert is still presented would leave the alert visible on
-                // top of whatever the stack unwound to.
-                let confirmAction = CPAlertAction(
-                    title: "OK",
-                    style: .default
-                ) { [weak self] _ in
-                    self?.interfaceController?.dismissTemplate(
-                        animated: true
-                    ) { _, _ in
-                        self?.interfaceController?.popToRootTemplate(
-                            animated: true,
-                            completion: nil
-                        )
-                    }
-                }
+                let confirmAction = CPAlertAction(title: "OK", style: .default) { _ in }
                 let confirmAlert = CPAlertTemplate(
                     titleVariants: ["Destination set to \(destName)"],
                     actions: [confirmAction]
