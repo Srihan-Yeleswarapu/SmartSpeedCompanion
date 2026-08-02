@@ -64,8 +64,16 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     public static let shared = HERELocalBatchCache()
 
     private var db: OpaquePointer?
+    /// Disabled for this process if a legacy-cache migration cannot prove that
+    /// malformed rows were removed. Returning no batch data is safer than
+    /// serving a stale road/limit answer.
+    private var cacheDisabled = false
     private let dbURL: URL
     private let queue = DispatchQueue(label: "com.speedsense.hereBatchCache", qos: .utility)
+    /// Bump whenever the persisted row interpretation changes. Version 2
+    /// invalidates rows written by the old GeoJSON parser, which swapped HERE's
+    /// `[longitude, latitude]` positions and could associate a valid road name
+    /// with an unusable or misleading coordinate.
 
     /// 30-day TTL for cached entries.
     private let ttlDays: Int = 30
@@ -76,13 +84,55 @@ public final class HERELocalBatchCache: @unchecked Sendable {
         let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         self.dbURL = cachesDir.appendingPathComponent("hereBatchCache.sqlite")
+        let migrationCompleted = resetPersistedStoreIfNeeded()
         openOrCreateDB()
+        if !migrationCompleted {
+            // If a locked file prevented deletion, clear its rows after the
+            // connection opens. Do not mark the migration complete until the
+            // malformed legacy data has actually been removed.
+            let cleared = queue.sync { () -> Bool in
+                guard db != nil else { return false }
+                return exec("DELETE FROM cached_roads") && exec("VACUUM")
+            }
+            if cleared {
+                UserDefaults.standard.set(2, forKey: "hereBatchCacheSchemaVersion")
+            } else {
+                cacheDisabled = true
+                DebugLogger.shared.log("HERELocalBatchCache: disabling cache after failed legacy-data migration")
+            }
+        }
     }
 
     deinit {
         if let db = db {
             sqlite3_close_v2(db)
         }
+    }
+
+    @discardableResult
+    private func resetPersistedStoreIfNeeded() -> Bool {
+        let schemaKey = "hereBatchCacheSchemaVersion"
+        let currentVersion = 2
+        guard UserDefaults.standard.integer(forKey: schemaKey) != currentVersion else { return true }
+
+        // The old cache may contain rows created with the incorrect HERE
+        // GeoJSON coordinate order. Do not let those rows survive an app
+        // upgrade and continue producing wrong road/limit answers.
+        var removed = true
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let url = URL(fileURLWithPath: dbURL.path + suffix)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                removed = false
+                DebugLogger.shared.log("HERELocalBatchCache: schema migration could not remove \(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        if removed {
+            UserDefaults.standard.set(currentVersion, forKey: schemaKey)
+        }
+        return removed
     }
 
     private func openOrCreateDB() {
@@ -144,6 +194,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     ///   - bearing: User's bearing in degrees. If non-nil, filters by direction.
     /// - Returns: The closest matching cached road, or nil if not found.
     public func lookup(roadName: String, bearing: Double? = nil) -> CachedRoad? {
+        guard !cacheDisabled else { return nil }
         let dir = directionFromBearing(bearing)
         var result: CachedRoad?
 
@@ -195,6 +246,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     ///   - radiusMeters: Search radius in meters. Default 50m.
     /// - Returns: The nearest cached road within the radius, or nil.
     public func lookupNearest(to coordinate: CLLocationCoordinate2D, radiusMeters: Double = 50) -> CachedRoad? {
+        guard !cacheDisabled else { return nil }
         var result: CachedRoad?
 
         queue.sync {
@@ -263,11 +315,19 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     ///   but completely different road.
     /// - Returns the best match, or nil if nothing is cached nearby.
     public func lookup(coordinate: CLLocationCoordinate2D, roadName: String?, bearing: Double?) -> CachedRoad? {
-        // Primary path: name-first
-        if let name = roadName, !name.isEmpty {
-            if let cached = lookup(roadName: name, bearing: bearing) {
+        guard !cacheDisabled else { return nil }
+        // Primary path: name-first. A road name can span many miles, so the
+        // name-only result still needs a coordinate-distance check. This also
+        // rejects legacy rows written by the old HERE GeoJSON parser, which
+        // treated [longitude, latitude] as [latitude, longitude].
+        if let name = roadName, !name.isEmpty,
+           let cached = lookup(roadName: name, bearing: bearing) {
+            let cachedLocation = CLLocation(latitude: cached.latitude, longitude: cached.longitude)
+            let requestedLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            if cachedLocation.distance(from: requestedLocation) <= 75 {
                 return cached
             }
+            DebugLogger.shared.log("HERELocalBatchCache: rejected distant name match '\(cached.roadName)' (\(Int(cachedLocation.distance(from: requestedLocation)))m)")
         }
 
         // Secondary path: spatial fallback
@@ -292,7 +352,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     /// Store multiple road segments from a batch API response.
     /// Each row occupies ~80 bytes; 5000 rows ≈ 400KB (trivially small).
     public func store(roads: [CachedRoad]) {
-        guard !roads.isEmpty else { return }
+        guard !cacheDisabled, !roads.isEmpty else { return }
 
         queue.sync {
             guard let db = self.db else { return }
@@ -333,12 +393,14 @@ public final class HERELocalBatchCache: @unchecked Sendable {
 
     /// Check whether any cached road data exists within radius of a coordinate.
     public func isAreaCached(coordinate: CLLocationCoordinate2D, radiusMeters: Double = 100) -> Bool {
+        guard !cacheDisabled else { return false }
         return lookupNearest(to: coordinate, radiusMeters: radiusMeters) != nil
     }
 
     /// Estimate coverage as a fraction (0.0–1.0) by checking 4 concentric
     /// radii around the coordinate.
     public func estimatedCoverage(at coordinate: CLLocationCoordinate2D, radiusMeters: Double = 1500) -> Double {
+        guard !cacheDisabled else { return 0 }
         let checkRadiuses: [Double] = [50, 100, 200, 500]
         var hits = 0
         for r in checkRadiuses {
@@ -351,6 +413,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
 
     /// Total number of cached road entries.
     public var count: Int {
+        guard !cacheDisabled else { return 0 }
         var result = 0
         queue.sync {
             guard let db = self.db else { return }

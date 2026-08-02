@@ -2118,10 +2118,12 @@ public final class DriveViewModel: NSObject, ObservableObject {
         let gpsMps = locationManager.latestLocation?.speed ?? 0
         let currentSpeedMph = gpsMps * 2.23694
 
+        let roadName = await RoadGeocoder.shared.resolveRoadContext(at: coord)?.roadName
         _ = await SmartSpeedLimitService.shared.updateSpeedLimit(
             at: coord,
             heading: currentHeading,
             currentSpeedMph: currentSpeedMph,
+            roadName: roadName,
             forceRefresh: true
         )
         DebugLogger.shared.log("manualRefetchSpeedLimit: completed (limit=\(limit)).")
@@ -2234,15 +2236,20 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// beyond the coordinate where that name was resolved.
     func refreshCurrentRoadName(at coordinate: CLLocationCoordinate2D, generation: UInt64) async {
         guard generation == roadNameRefreshGeneration else { return }
-        let context = await RoadGeocoder.shared.resolveRoadContext(at: coordinate)
-        // The request may have awaited a network fallback. Re-check both the
-        // generation and the live fix before publishing, otherwise a delayed
-        // result from the previous road can label the current road incorrectly.
+        _ = await RoadGeocoder.shared.resolveRoadContext(at: coordinate)
+        // The request may have awaited a network fallback. Re-read and
+        // reverse-geocode the latest fix before publishing; validating only
+        // the original coordinate can cross an intersection and label Riggs
+        // as Cedarcest (or vice versa).
         guard generation == roadNameRefreshGeneration,
-              let latest = locationManager.latestLocation,
-              latest.distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)) <= 100 else { return }
+              let latest = locationManager.latestLocation else { return }
+        let latestCoordinate = latest.coordinate
+        let latestContext = await RoadGeocoder.shared.resolveRoadContext(at: latestCoordinate, forceRefresh: true)
+        guard generation == roadNameRefreshGeneration,
+              let confirmedLatest = locationManager.latestLocation,
+              confirmedLatest.distance(from: CLLocation(latitude: latestCoordinate.latitude, longitude: latestCoordinate.longitude)) <= 18 else { return }
 
-        if let name = context?.roadName?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let name = latestContext?.roadName?.trimmingCharacters(in: .whitespacesAndNewlines),
            !name.isEmpty {
             if name != currentRoadName {
                 currentRoadName = name
@@ -2250,13 +2257,12 @@ public final class DriveViewModel: NSObject, ObservableObject {
             // Keep the anchor fresh even when the road name itself is
             // unchanged; otherwise a long drive on one road can make a later
             // failed lookup look like it belongs to the old road forever.
-            currentRoadNameCoordinate = coordinate
-        } else if let previousCoordinate = currentRoadNameCoordinate,
-                  latest.distance(from: CLLocation(latitude: previousCoordinate.latitude, longitude: previousCoordinate.longitude)) > 150 {
-            // A failed lookup on a new road must not leave the old road label
-            // pinned forever. Keep the chip through brief unnamed-lot churn,
-            // but clear it once the latest fix is materially beyond the road
-            // where that name was resolved.
+            currentRoadNameCoordinate = latestCoordinate
+        } else {
+            // The forced latest-fix lookup returned no road. Do not keep
+            // displaying a previous road through an intersection or GPS
+            // transition; a wrong road label is more misleading than a
+            // temporarily hidden one.
             currentRoadName = nil
             currentRoadNameCoordinate = nil
         }
@@ -2349,6 +2355,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
         self.currentRoadName = nil
         self.currentRoadNameCoordinate = nil
         self.roadNameRefreshGeneration &+= 1
+        Task {
+            await RoadGeocoder.shared.clearCache()
+        }
     }
 
     /// Triggers speech synthesis for a given string.

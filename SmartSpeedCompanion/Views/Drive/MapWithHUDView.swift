@@ -910,10 +910,13 @@ fileprivate struct LimitSignView: View {
     /// the two live network paths, and shows an unobtrusive grey when no data is available.
     private var sourceChip: (text: String, color: Color) {
         switch source {
-        case "Live (ArcGIS)":   return ("ArcGIS", Color(hex: "#34D38A"))     // green = freshest
-        case "Live (Overpass)": return ("OSM", Color(hex: "#00D4FF"))        // cyan = live but OSM-based
-        case "DB":              return ("DB", DesignSystem.cyan)             // local fallback
-        case "DB (Recovered)":  return ("DB (R)", DesignSystem.amber)        // expanded-search fallback
+        case "Batch (HERE)":    return ("HERE", Color(hex: "#34D38A"))      // warm HERE cache
+        case "Live (HERE)":     return ("HERE", Color(hex: "#00D4FF"))      // live HERE
+        case "Live (ArcGIS)":   return ("ArcGIS", Color(hex: "#34D38A"))     // live fallback
+        case "Live (Overpass)": return ("OSM", Color(hex: "#00D4FF"))        // live OSM fallback
+        // Legacy DB values are retained only for decoding old state. They are
+        // not an active source and must never be presented as current data.
+        case "DB", "DB (Recovered)": return ("--", Color(hex: "#8888AA"))
         default:                return ("--", Color(hex: "#8888AA"))         // No Data / unknown
         }
     }

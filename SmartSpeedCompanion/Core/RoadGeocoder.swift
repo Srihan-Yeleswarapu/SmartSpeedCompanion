@@ -11,8 +11,9 @@
 //      the chain degrades to spatial-only scoring instead of crashing.
 //
 // Either returns placemark.thoroughfare = "W Frye Rd" / properties.street =
-// "West Frye Road" which `RoadNameMatcher.normalize(_:)` aliases to "FRYE RD"
-// so the SQLite lookup bites.
+// "West Frye Road". Results are always tied to the coordinate that produced
+// them; a nearby intersection must not reuse a road name from an adjacent
+// 50 m grid cell.
 
 import Foundation
 import CoreLocation
@@ -48,14 +49,24 @@ public struct RoadIdentification: Sendable {
 public actor RoadGeocoder {
     public static let shared = RoadGeocoder()
 
-    /// 50m grid precision (~0.0005° at AZ latitudes).
-    private let gridPrecision: Double = 0.0005
+    /// Small de-duplication grid (~25m at Phoenix latitudes). A larger
+    /// bucket can straddle an intersection and incorrectly reuse the name of
+    /// a nearby cross street.
+    private let gridPrecision: Double = 0.00025
     /// 24h TTL matches the on-disk SpeedLimitResponseCache diskTtl.
     private let ttlSeconds: TimeInterval = 24 * 60 * 60
+    /// A grid cell is a de-duplication bucket, not proof that every point in
+    /// it is on the same road. Keep a cached answer only when the new fix is
+    /// genuinely near the coordinate that produced the answer.
+    private let maxCachedCoordinateDistance: CLLocationDistance = 18
 
     private var memory: [String: RoadIdentification] = [:]
     /// In-flight de-dup: grid key -> Task awaiting any backend's response.
     private var inflight: [String: Task<RoadIdentification?, Never>] = [:]
+    /// Request generations prevent an older in-flight geocode from writing its
+    /// road name back after a newer coordinate has forced an independent lookup.
+    private var inflightGeneration: [String: UInt64] = [:]
+    private var nextGeneration: UInt64 = 0
 
     /// Network fallback. Singleton so its NSLock-guarded throttle state
     /// survives across `resolveRoadContext` calls instead of being reset
@@ -73,25 +84,71 @@ public actor RoadGeocoder {
     /// Resolve the road the user is on at `coord`. Returns a cached entry if
     /// fresh (within 24h); otherwise falls through to CLGeocoder. Returns nil
     /// if geocode fails -- the caller should degrade to spatial-only lookup.
-    public func resolveRoadContext(at coord: CLLocationCoordinate2D) async -> RoadIdentification? {
+    /// Set `forceRefresh` when a caller must validate the road at the latest
+    /// GPS fix rather than reusing a nearby cached answer (for example, after
+    /// an asynchronous request crosses an intersection).
+    public func resolveRoadContext(
+        at coord: CLLocationCoordinate2D,
+        forceRefresh: Bool = false
+    ) async -> RoadIdentification? {
         let key = gridKey(for: coord)
-        if let cached = memory[key] {
-            if Date().timeIntervalSince(cached.resolvedAt) < ttlSeconds {
-                return cached
-            }
+        if forceRefresh {
             memory.removeValue(forKey: key)
         }
-        // De-dup: if another caller is already geocoding this cell, await them.
-        if let pending = inflight[key] {
-            return await pending.value
+        if !forceRefresh, let cached = memory[key] {
+            let cachedLocation = CLLocation(latitude: cached.coord.latitude, longitude: cached.coord.longitude)
+            let requestedLocation = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+            if Date().timeIntervalSince(cached.resolvedAt) < ttlSeconds,
+               cachedLocation.distance(from: requestedLocation) <= maxCachedCoordinateDistance {
+                return cached
+            }
+            // Do not let a stale or cross-street answer survive merely because
+            // both fixes round into the same spatial bucket.
+            memory.removeValue(forKey: key)
         }
+        // De-dup: if another caller is already geocoding this cell, await it,
+        // but never hand its answer to a coordinate that is too far from the
+        // fix that produced that answer. A single grid cell can straddle an
+        // intersection (the Riggs/Cedarcest failure mode).
+        if let pending = inflight[key] {
+            let result = await pending.value
+            if !forceRefresh,
+               let result,
+               Date().timeIntervalSince(result.resolvedAt) < ttlSeconds,
+               CLLocation(latitude: result.coord.latitude, longitude: result.coord.longitude)
+                    .distance(from: CLLocation(latitude: coord.latitude, longitude: coord.longitude)) <= maxCachedCoordinateDistance {
+                return result
+            }
+
+            // The in-flight result belongs to another nearby fix. Invalidate
+            // its write token before resolving this coordinate independently,
+            // so the older task cannot overwrite the newer road name later.
+            nextGeneration &+= 1
+            let generation = nextGeneration
+            inflightGeneration[key] = generation
+            let replacement = await Self.geocode(coordinate: coord)
+            guard inflightGeneration[key] == generation else { return replacement }
+            inflightGeneration.removeValue(forKey: key)
+            inflight.removeValue(forKey: key)
+            if let replacement {
+                memory[key] = replacement
+            }
+            return replacement
+        }
+
+        nextGeneration &+= 1
+        let generation = nextGeneration
         let task = Task<RoadIdentification?, Never> { [coord] in
             await Self.geocode(coordinate: coord)
         }
         inflight[key] = task
+        inflightGeneration[key] = generation
         let result = await task.value
+        // Only the newest request for this key may publish or clear the entry.
+        guard inflightGeneration[key] == generation else { return result }
+        inflightGeneration.removeValue(forKey: key)
         inflight.removeValue(forKey: key)
-        if let result = result {
+        if let result {
             memory[key] = result
         }
         return result
@@ -100,6 +157,15 @@ public actor RoadGeocoder {
     /// Drop everything (e.g. when the user ends a drive session).
     public func clearCache() {
         memory.removeAll()
+        // Cancel and discard all in-flight ownership records so an old
+        // completion cannot leave a stale task reachable or publish into a
+        // later drive session.
+        for task in inflight.values {
+            task.cancel()
+        }
+        inflight.removeAll()
+        inflightGeneration.removeAll()
+        nextGeneration &+= 1
     }
 
     private static func geocode(coordinate coord: CLLocationCoordinate2D) async -> RoadIdentification? {

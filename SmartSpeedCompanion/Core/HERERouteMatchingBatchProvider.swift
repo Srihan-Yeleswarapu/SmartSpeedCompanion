@@ -18,7 +18,8 @@
 //   1. Extract the road name (e.g., "I-10", "Baseline Rd")
 //   2. Compute the direction from the link's geometry bearing
 //   3. Extract the speed limit from matched link attributes
-//   4. Record the midpoint coordinate of the link's geometry
+//   4. Record the midpoint coordinate of the link's GeoJSON geometry
+//      (`[longitude, latitude]` → `CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0])`)
 //   5. Insert a CachedRoad row into the SQLite cache
 //
 // When the user later drives on the same road, SpeedLimitService
@@ -237,7 +238,10 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
             if let geometry = link["geometry"] as? [String: Any],
                let coords = geometry["coordinates"] as? [[Double]] {
                 for pair in coords where pair.count >= 2 {
-                    geometryCoords.append(CLLocationCoordinate2D(latitude: pair[0], longitude: pair[1]))
+                    // HERE returns GeoJSON positions in [longitude, latitude]
+                    // order. Reversing these values puts batch-cache points
+                    // on the real road instead of thousands of kilometres away.
+                    geometryCoords.append(CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0]))
                 }
             }
 
@@ -246,7 +250,7 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
                let geometry = section["geometry"] as? [String: Any],
                let coords = geometry["coordinates"] as? [[Double]] {
                 for pair in coords where pair.count >= 2 {
-                    geometryCoords.append(CLLocationCoordinate2D(latitude: pair[0], longitude: pair[1]))
+                    geometryCoords.append(CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0]))
                 }
             }
 
