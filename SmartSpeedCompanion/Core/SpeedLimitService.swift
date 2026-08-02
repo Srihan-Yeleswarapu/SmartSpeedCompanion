@@ -1,32 +1,32 @@
 // SpeedLimitService.swift
 // Orchestrator that picks the best speed-limit answer for the user's current coord.
 //
-// Decision tree (live-first; SQLite only as last-resort fallback):
+// Decision tree (live-first; no Arizona SQLite fallback):
 //   1. Spatial-grid cache lookup -> hit short-circuits everything below.
-//   2. If NetworkReachability.isConnected:
-//        Walk liveProviders in order (HERE REST -> ArcGIS HPMS -> Overpass) -- first
-//        non-nil response wins. On network/parse failure for a provider, drop and
-//        try the next.
-//   3. SQLite fallback (offline, or all live providers missed) -- with ExpandedSearch
-//        retry and miss-grace window before dropping state to "No Data".
-//   4. SQLite miss raises missCount; at missThresholdBeforeClear consecutive misses
-//      we clear the local caches so stale bounding boxes can't pin us.
+//   2. HERE Batch cache lookup -> cached HERE road data wins without a network call.
+//   3. If NetworkReachability.isConnected, walk liveProviders in order (HERE REST ->
+//      ArcGIS HPMS -> Overpass) -- first non-nil response wins. On network/parse
+//      failure for a provider, drop and try the next.
+//   4. If every active provider misses, return No Data and let the continuity guard
+//      apply its normal miss-grace window.
+//
+// The Arizona SQLite implementation and bundled file remain in the repository as a
+// dormant, intentionally uncalled option for a future all-states replacement. The
+// app must never use that Arizona-only dataset in the current provider pipeline.
 //
 // Trade-off note: live-first + cache-first means a recently-installed sign change
 // will be picked up on the very next fetch after the 30-min memory cache TTL expires.
-// No stale-DB-window bug -- the bundled SQLite is treated as offline fallback only.
 //
-// @Published dataSource is a typed SpeedLimitDataSource enum. Both fallback paths (the
-// primary offline fallback and the ExpandedSearch recovery) and any future HERE path
-// surface through this enum (e.g. .localDB, .localDBRecovered, .liveHERE).
+// @Published dataSource retains legacy localDB cases for decoding compatibility,
+// but this service never creates or publishes them.
 //
 // PHASE 4 -- SpeedLimit Continuity Guard
 // --------------------------------------
 // When the user drives under a flyover (e.g. South Alma School Road under US-60 in
 // Mesa/Chandler, AZ), CLGeocoder can briefly resolve `roadName` to the OVERPASS
 // road for ~3-5 seconds while the underlying arterial's name re-resolves. The
-// orchestrator then returns the freeway's 75 mph for that window, before SQLite
-// name-match corrects back to 45 mph.
+// continuity guard holds a suspect live-provider answer during that window
+// instead of allowing a nearby road result to flicker onto the HUD.
 //
 // The guard dampens that flicker WITHOUT blocking legitimate road transitions:
 //   * Small speed delta (<= SUSPICIOUS_JUMP_MPH=15 mph) AND no
@@ -39,7 +39,7 @@
 //   * Speed delta > SUSPICIOUS_JUMP_MPH AND conflicting road identity -> SUSPECT.
 //     Hold the prior committed limit for up to 3 fetches. A second fetch that
 //     reproduces the suspect identity commits it (real transition). A second fetch
-//     that disagrees (e.g. SQLite name-match wins) commits THAT, dropping suspect.
+//     that disagrees commits that result, dropping the suspect.
 //   * Physics override: if `|new - currentSpeed| <= 10 mph` AND the prior limit
 //     was already off-physics, commit immediately even with a big delta. This
 //     case models a real highway on-ramp -- the driver is accelerating at 72 mph,
@@ -83,8 +83,8 @@ public class SmartSpeedLimitService: ObservableObject {
     /// refreshed via just-in-time geofence triggers as the user drives.
     private let batchCache = HERELocalBatchCache.shared
 
-    /// Live network providers — run only when online AND no offline
-    /// provider returned a result.
+    /// Live network providers — the only non-cache providers used by the app.
+    /// The dormant Arizona SQLite service is deliberately not part of this chain.
     private let liveProviders: [SpeedLimitProvider]
 
     private let reachability = NetworkReachability.shared
@@ -187,10 +187,9 @@ public class SmartSpeedLimitService: ObservableObject {
     /// limit value and updates the @Published `currentLimit` + `dataSource`
     /// properties.
     ///
-    /// `roadName` is the reverse-geocoded road name from RoadGeocoder. When
-    /// non-nil it's threaded into Pass 1 SQLite scoring so a name match
-    /// decisively outscores a name-mismatched big-bbox freeway candidate
-    /// (the West Frye Rd vs S 202 case).
+    /// `roadName` is the reverse-geocoded road name from RoadGeocoder. It is
+    /// passed to live providers and cache lookups for road-aware matching.
+    /// The dormant Arizona SQLite scorer is not invoked by this API.
     public func updateSpeedLimit(
         at coordinate: CLLocationCoordinate2D,
         heading: Double?,
@@ -273,18 +272,16 @@ public class SmartSpeedLimitService: ObservableObject {
         let roadKey: String
         let providerName: String
         let detail: String
-        /// True when the chain returned no data this fetch (SQLite fallback
-        /// missed too). The continuity guard forwards misses to the grace
-        /// window / cache-clear logic.
+        /// True when the active cache/provider chain returned no data this fetch.
+        /// The continuity guard forwards misses to the grace window logic.
         let isMiss: Bool
     }
 
-    /// Resolve the speed limit from the chain: cache -> live providers ->
-    /// sqlite fallback. NEVER writes to the response cache here -- cache
+    /// Resolve the speed limit from the active chain: response cache -> HERE batch
+    /// cache -> live providers. NEVER writes to the response cache here -- cache
     /// writes happen only on commit, after the continuity guard clears the
-    /// candidate. The bundled SQLite is intentionally LAST so live data wins
-    /// when the network is up; SQLite only fires when offline OR every live
-    /// provider missed/shrugged.
+    /// candidate. The Arizona-only SQLite service is intentionally dormant and is
+    /// not consulted when offline or when live providers miss.
     private func resolveCandidate(
         at coordinate: CLLocationCoordinate2D,
         heading: Double?,
@@ -294,10 +291,9 @@ public class SmartSpeedLimitService: ObservableObject {
     ) async -> Candidate {
         // 1. Cache short-circuit.
         //    When `forceRefresh` is true (e.g. the user tapped the speed limit
-        //    sign because the displayed answer is wrong), skip the cache so
-        //    we run the live provider chain + SQLite fallback and surface any
-        //    fresher answer. Normal GPS-driven fetches leave `forceRefresh`
-        //    at its `false` default and continue to hit the cache as before.
+        //    sign because the displayed answer is wrong), skip the response cache
+        //    so we run HERE Batch + the live provider chain for a fresher answer.
+        //    Normal GPS-driven fetches leave `forceRefresh` at `false`.
         if !forceRefresh, let cached = await cache.lookup(at: coordinate, roadName: roadName) {
             return Candidate(
                 limit: cached.speedLimitMph,
@@ -359,53 +355,14 @@ public class SmartSpeedLimitService: ObservableObject {
             }
         }
 
-        // 5. SQLite fallback (offline, or all providers missed).
-        return await querySQLiteFallback(
-            at: coordinate, heading: heading,
-            currentSpeedMph: currentSpeedMph, roadName: roadName
+        // 4. No active provider has data. Do not consult the Arizona-only SQLite
+        // implementation: its bundled coverage is not representative of the
+        // other 49 states. Returning a miss keeps all regions on the same path.
+        return Candidate(
+            limit: 0, source: .noData,
+            roadKey: "", providerName: "", detail: "",
+            isMiss: true
         )
-    }
-
-    /// SQLite fallback with ExpandedSearch retry. Returns a Miss candidate when
-    /// both attempts fail so the continuity guard can apply the grace window.
-    private func querySQLiteFallback(
-        at coordinate: CLLocationCoordinate2D,
-        heading: Double?,
-        currentSpeedMph: Double,
-        roadName: String?
-    ) async -> Candidate {
-        do {
-            let localLimit = try await ArizonaSpeedLimitService.shared.updateSpeedLimit(
-                at: coordinate, heading: heading,
-                currentSpeedMph: currentSpeedMph, roadName: roadName
-            )
-            return Candidate(
-                limit: localLimit, source: .localDB,
-                roadKey: "local-sqlite", providerName: "AZ SQLite",
-                detail: roadName.map { "Local SQLite fallback along \($0)" }
-                    ?? "Local SQLite fallback within 1 km corridor",
-                isMiss: false
-            )
-        } catch {
-            if let recoveryLimit = try? await ArizonaSpeedLimitService.shared.updateSpeedLimit(
-                at: coordinate, heading: heading,
-                currentSpeedMph: currentSpeedMph, roadName: roadName,
-                expandedSearch: true
-            ) {
-                return Candidate(
-                    limit: recoveryLimit, source: .localDBRecovered,
-                    roadKey: "local-sqlite-recovered", providerName: "AZ SQLite",
-                    detail: "Expanded-search SQLite fallback",
-                    isMiss: false
-                )
-            }
-
-            return Candidate(
-                limit: 0, source: .noData,
-                roadKey: "", providerName: "", detail: "",
-                isMiss: true
-            )
-        }
     }
 
     // MARK: - Continuity guard (commit / hold decision)
@@ -599,15 +556,12 @@ public class SmartSpeedLimitService: ObservableObject {
         }
         if missCount >= missThresholdBeforeClear {
             guard generation == latestUpdateGeneration else { return (currentLimit, consecutiveMissCount) }
-            // Capture the revision boundary before either clear can suspend.
-            // Responses issued after this point receive a higher revision and
-            // are preserved by the cache even if this miss becomes stale.
+            // Capture the revision boundary before the response-cache clear can
+            // suspend. Responses issued after this point receive a higher revision
+            // and are preserved even if this miss becomes stale.
             let clearThroughRevision = nextCacheStoreRevision
-            let arizonaRevision = await ArizonaSpeedLimitService.shared.currentCacheRevision()
-            await ArizonaSpeedLimitService.shared.clearCache(ifRevision: arizonaRevision)
-            // A newer request may have committed while the SQLite cache clear
-            // suspended. Do not let this stale miss erase its cache entry.
-            guard generation == latestUpdateGeneration else { return (currentLimit, consecutiveMissCount) }
+            // The dormant Arizona SQLite cache is deliberately not touched here.
+            // Only the active response cache is cleared after sustained misses.
             await cache.clear(rejectingRevisionsThrough: clearThroughRevision)
             guard generation == latestUpdateGeneration else { return (currentLimit, consecutiveMissCount) }
             lastValidLimit = 0
@@ -627,6 +581,9 @@ public class SmartSpeedLimitService: ObservableObject {
         case "HERE REST":  return .liveHERE
         case "ArcGIS":     return .liveArcGIS
         case "Overpass":   return .liveOverpass
+        // Keep the legacy mapping for decoding old persisted responses, although
+        // SpeedLimitResponseCache rejects these entries and the live pipeline never
+        // creates them anymore.
         case "AZ SQLite":  return .localDB
         default:           return .noData
         }

@@ -41,8 +41,8 @@ public final class SpeedEngine: ObservableObject {
     // No own throttle on road-name resolution. `RoadGeocoder` carries its
     // own 50m grid-cell cache (see SmartSpeedCompanion/Core/RoadGeocoder.swift)
     // so a typical city drive costs ~1 geocode per block instead of per 1-Hz
-    // GPS ping, AND the cached road name is preserved across the 50m cells so
-    // the name-match bonus in ArizonaSpeedLimitService keeps firing.
+    // GPS ping. The cached road name is preserved across the 50m cells so
+    // live providers receive consistent road context on every fetch.
 
     /// Minimum distance (meters) the user must travel before we re-query the speed limit provider.
     /// The orchestration now self-throttles via the SpeedLimitResponseCache (spatial-grid

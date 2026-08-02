@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-website/server.py -- Stdlib HTTP server that proxies all three of Speedio's
+website/server.py -- Stdlib HTTP server that proxies Speedio's active
 speed-limit providers so the website can show the answer side-by-side per
-provider.
+provider. The former Arizona SQLite implementation is retained below as
+archival reference only and is never called by the active routes.
 
 Endpoints
 ---------
@@ -11,26 +12,22 @@ Endpoints
   GET  /api/reverse-geocode?lat=&lon=        Nominatim /reverse proxy,
                                               50m grid cache + 1 req/sec
                                               throttle (per Nominatim policy)
-  POST /api/speedlimit-az       {lat, lon, road_name?}
+  POST /api/speedlimit-az       410 archived/disabled (legacy route only)
   POST /api/speedlimit-arcgis   {lat, lon, heading?}
   POST /api/speedlimit-overpass {lat, lon, heading?}
 
-Python<>Swift parity
--------------------
-scoring here MUST mirror `SmartSpeedCompanion/Core/RoadNameMatcher.swift`
-1:1 so the iOS app and the web agree on which candidate wins for the same
-(lat, lon, roadName). The constants here are byte-for-byte copies of the
-Swift tables. If you add a normalisation rule in Swift, copy it here as
-well, and update the regression tests in
-`test_snap_named.py` and `test_snap_corridor.py` to assert the same
-score on both sides.
+Archived Python parity helpers
+------------------------------
+The `name_match_score`, `snap`, and related geometry helpers below are retained
+only for the historical regression tests (`test_snap_named.py` and
+`test_snap_corridor.py`) and future all-states replacement work. They are not
+called by the HTTP orchestrator, do not open a database, and are not an active
+speed-limit provider. The production pipeline is HERE Batch → HERE REST →
+ArcGIS → Overpass → No Data.
 
-The scoring loop in `snap(segments, lat, lon, road_name)` DECISIVELY
-favours any candidate whose `RouteId` matches `road_name` (per
-`name_match_score`) via `NAME_MATCH_BONUS_MAGNITUDE` (10000) so a
-residential street like "07 FRYE RD" outranks the freeway "S 202"
-which only partially overlaps by spatial bbox. This is the fix for:
-"driving on West Frye Road and the app says 65 mph".
+If the archived AZ implementation is ever reactivated, update these helpers
+and their tests alongside the Swift implementation; do not add them back to
+`orchestrate_speed_limit` without replacing the dataset with nationwide data.
 
 Stdlib only. Run:
     python website/server.py
@@ -41,7 +38,6 @@ import json
 import math
 import os
 import re
-import sqlite3
 import threading
 import time
 import urllib.error
@@ -50,46 +46,20 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-# ---- Geographic constants mirrored verbatim from ArizonaSpeedLimitService.swift
-GRID_DEGREES = 0.02             # Swift: searchBuffer / gridPrecision
-SNAP_RADIUS_M = 20.0           # Swift: maxSnappingDistance when expandedSearch=false
-CACHE_RADIUS_DEGREES = 0.03    # Swift: cacheRadiusDegrees (~2 mi)
-SKIP_DIAGONAL_DEGREES = 1.0    # Swift: county-polygon diagonal cap
-SCORE_BASE_OFFSET = 25.0       # Swift: SCORE_BASE_OFFSET (was 1.0)
-NAME_MATCH_BONUS_MAGNITUDE = 10000.0  # Swift: ArizonaSpeedLimitService.NAME_MATCH_BONUS_MAGNITUDE
-# Gate width for the name-first scoring pass. Wider than the legacy 20 m
-# SNAP_RADIUS_M so imperfect ESRI geodatabase bboxes don't accidentally
-# exclude the user's actual road. If NO candidate matches within this gate,
-# SQLite is REJECTED entirely so the orchestrator falls through to live
-# ArcGIS / Overpass.
-# -- AUTHORITATIVE BASIS (research 2026-07): FHWA HPMS data is required at
-#   1:24,000 scale (NMAS) ~= 12.2 m absolute accuracy. Typical urban OSM
-#   data precision can reach sub-5 m; rural/non-metro GPS-hardware
-#   positional error typically 5-50 m depending on signal environment.
-#   200 m is ~10x the looser GPS-hardware bound, deliberately wide to
-#   err on availability over precision. Risk: false positives when driving
-#   near parallel roads (trusts RoadNameMatcher to disambiguate).
-NAME_MATCH_SPATIAL_GATE_M = 200.0  # Swift: NAME_MATCH_SPATIAL_GATE_M (mirrored 1:1)
-# Minimum RoadNameMatcher.score (0.0..1.0) for a candidate to qualify.
-# -- AUTHORITATIVE BASIS (research 2026-07): industry default for strict
-#   entity-resolution fuzzy matching is 0.7-0.8 (Levenshtein / Jaro-Winkler).
-#   0.5 is permissive and RELIES on aggressive pre-normalization in
-#   RoadNameMatcher.normalize(_:) -- suffix aliases, direction prefixes,
-#   zero-padded terminus suffix, leading numeric prefix -- to drop the
-#   noise. Without those normalizations, the same threshold would risk
-#   false positives like "Main St" matching "Maple St".
-NAME_MATCH_THRESHOLD = 0.5       # Swift: NAME_MATCH_THRESHOLD (mirrored 1:1)
-# ---- Pass 2 corridor-ambiguity hardening ----
-# A corridor (max(w,h) > 3 * min(w,h)) whose centerlineOffset exceeds
-# AMBIGUOUS_CORRIDOR_OFFSET_M is treated as ambiguous: it engulfs the user
-# bboxes in Chandler 256 km long, dist=0, but the user's actually 740 m
-# off the inferred centerline. We apply a massive penalty so a tight
-# local-road candidate (square bboxes, dist<=a few meters, centerlineOffset=0)
-# decisively wins over an ambiguous mega-bbox corridor.
-AMBIGUOUS_CORRIDOR_ASPECT_RATIO = 3.0  # Swift: RoadSegment.isCorridor()
-AMBIGUOUS_CORRIDOR_OFFSET_M = 250.0     # Swift: RoadSegment.isAmbiguous()
-AMBIGUOUS_CORRIDOR_PENALTY = 2000.0     # Swift: penalty added to score when ambiguous
-PASS2_LOCAL_ROAD_RADIUS_M = 1000.0      # Swift: wider gate for non-corridors in Pass 2
+# ---- ARCHIVE ONLY: Arizona SQLite mirror constants --------------------------
+# These constants support the small, tested `snap()` reference helpers below.
+# They are intentionally outside the active HTTP/provider path. No active route
+# opens SQLite or calls these helpers.
+SNAP_RADIUS_M = 20.0
+SKIP_DIAGONAL_DEGREES = 1.0
+SCORE_BASE_OFFSET = 25.0
+NAME_MATCH_BONUS_MAGNITUDE = 10000.0
+NAME_MATCH_SPATIAL_GATE_M = 200.0
+NAME_MATCH_THRESHOLD = 0.5
+AMBIGUOUS_CORRIDOR_ASPECT_RATIO = 3.0
+AMBIGUOUS_CORRIDOR_OFFSET_M = 250.0
+AMBIGUOUS_CORRIDOR_PENALTY = 2000.0
+PASS2_LOCAL_ROAD_RADIUS_M = 1000.0
 EARTH_M_PER_DEG_LAT = 111_111.0
 GEOCODE_GRID_DEGREES = 0.0005  # Swift: RoadGeocoder.gridPrecision (~50m)
 GEOCODE_TTL_SECONDS = 24 * 3600
@@ -98,11 +68,6 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "Speedio-WebLookup/1.0 (research; speedsenseapp@gmail.com)"
 
 PORT = int(os.environ.get('PORT', '8089'))
-DB_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), '..',
-    'SmartSpeedCompanion', 'Resources', 'ArizonaSpeedLimits.sqlite',
-))
-
 # HERE Platform API Key — set via env var or bundled config.
 # Mirrors HERECredentialStore which reads from HERE-Config.plist.
 HERE_API_KEY = os.environ.get('HERE_API_KEY', '').strip()
@@ -159,12 +124,13 @@ GENERIC_TYPE_KEYWORDS = {
 }
 
 
-# ---- Mirrored functions ------------------------------------------------
+# ---- ARCHIVE ONLY: historical matcher functions ----------------------------
+# Keep these functions for regression coverage and future replacement work.
+# They must remain unreachable from `orchestrate_speed_limit` and HTTP handlers.
 
 def segment_distance_m(minx, maxx, miny, maxy, lat, lon):
-    """Mirror RoadSegment.distance(to:) in ArizonaSpeedLimitService.swift.
-    POINT-TO-BOUNDING-BOX-EDGE distance in meters. Used as the SPATIAL
-    GATE (SNAP_RADIUS_M); points physically inside the bbox always return 0.
+    """Archived reference for RoadSegment.distance(to:).
+    It is retained for regression tests and future replacement work only.
     """
     dx = max(0.0, minx - lon, lon - maxx)
     dy = max(0.0, miny - lat, lat - maxy)
@@ -296,8 +262,11 @@ def name_match_score(geocoded_name, sqlite_route_id):
 
 
 def fetch_segments(conn, lat, lon):
-    """Mirror refreshCircularCache(at:) SQL and bounds. Return positive-limit
-    segments within a 0.03 deg box (~2 mi radius) around (lat, lon).
+    """ARCHIVE ONLY: adapt historical SQLite rows for future reactivation.
+
+    Production code never calls this helper and the server no longer imports
+    sqlite3 or opens the Arizona file. A future reactivation must deliberately
+    restore its database dependency and replace the dataset nationwide.
     """
     cur = conn.cursor()
     cur.execute(
@@ -307,10 +276,8 @@ def fetch_segments(conn, lat, lon):
         "WHERE ? <= b.maxx AND ? >= b.minx "
         "  AND ? <= b.maxy AND ? >= b.miny",
         (
-            lon - CACHE_RADIUS_DEGREES,
-            lon + CACHE_RADIUS_DEGREES,
-            lat - CACHE_RADIUS_DEGREES,
-            lat + CACHE_RADIUS_DEGREES,
+            lon - 0.03, lon + 0.03,
+            lat - 0.03, lat + 0.03,
         ),
     )
     out = []
@@ -330,8 +297,10 @@ def fetch_segments(conn, lat, lon):
 
 
 def snap(segments, lat, lon, road_name=None):
-    """Mirror updateSpeedLimit(at:heading:currentSpeedMph:roadName:expandedSearch:) in
-    Swift (with heading=nil, currentSpeedMph=nil, lastSegmentId=nil).
+    """ARCHIVE ONLY: mirror the historical Arizona matcher.
+
+    This is used by regression tests with synthetic segments, never by the
+    HTTP orchestrator or any active provider.
 
     Two-pass scoring (named-first, then spatial):
 
@@ -434,7 +403,7 @@ def snap(segments, lat, lon, road_name=None):
     return best_limit, best_route, None
 
 
-# ---- SpeedLimit Continuity Guard (mirror of SmartSpeedLimitService.swift)
+# ---- SpeedLimit Continuity Guard (active test mirror) ----------------------
 #
 # Pure-Python mirror of the iOS orchestrator's `finalizeWithContinuity(...)`
 # decision so the website's tests can regression-check the same algorithm
@@ -844,7 +813,7 @@ def query_here_batch_for_speed(lat, lon, road_name=None, heading=None):
 #   3. HERE REST (primary live provider)
 #   4. ArcGIS HPMS (secondary live)
 #   5. Overpass (tertiary live)
-#   6. SQLite fallback (offline / last resort)
+#   6. No Data when all active providers miss
 
 def orchestrate_speed_limit(lat, lon, road_name=None, heading=None):
     """Run the full speed-limit decision tree matching SmartSpeedLimitService.
@@ -947,49 +916,9 @@ def orchestrate_speed_limit(lat, lon, road_name=None, heading=None):
         return result
     _trace('5. Overpass', 'miss', 'no ways with maxspeed tag nearby')
 
-    # Step 6: SQLite fallback (offline / last resort)
-    _trace('6. SQLite', 'sys', 'fallback to AZ SQLite')
-    if os.path.exists(DB_PATH):
-        try:
-            conn = sqlite3.connect(f'file:{DB_PATH}?mode=ro', uri=True)
-            try:
-                segments = fetch_segments(conn, lat, lon)
-                snap_result = snap(segments, lat, lon, road_name=road_name)
-                limit, route, reject_reason = snap_result
-                if limit > 0 and reject_reason is None:
-                    sqlite_resp = {
-                        'speedLimitMph': limit,
-                        'roadKey': route or 'local-sqlite',
-                        'providerName': 'AZ SQLite',
-                        'detail': (
-                            f'Local SQLite lookup along {road_name}'
-                            if road_name
-                            else 'Local SQLite lookup within 1 km corridor'
-                        ),
-                    }
-                    _trace('6. SQLite', 'hit', f'{limit} mph on {route or "?"}')
-                    RESPONSE_CACHE.store(lat, lon, sqlite_resp, road_name)
-                    result.update({
-                        'limit': limit,
-                        'source': 'DB',
-                        'provider': sqlite_resp['providerName'],
-                        'road_key': route or '',
-                        'detail': sqlite_resp['detail'],
-                    })
-                    return result
-                elif reject_reason:
-                    _trace('6. SQLite', 'reject', reject_reason)
-                else:
-                    _trace('6. SQLite', 'miss', 'no spatial match')
-            finally:
-                conn.close()
-        except Exception as exc:
-            _trace('6. SQLite', 'err', str(exc))
-    else:
-        _trace('6. SQLite', 'skip', 'DB not found')
-
-    # No provider returned data
-    _trace('Result', 'err', 'No Data from any provider')
+    # No active provider returned data. The Arizona SQLite implementation remains
+    # archived in the repository, but this server intentionally never executes it.
+    _trace('Result', 'err', 'No Data from any active provider')
     return result
 
 
@@ -997,8 +926,8 @@ def orchestrate_speed_limit(lat, lon, road_name=None, heading=None):
 
 def query_overpass_for_speed(lat, lon, heading=None):
     """Mirror OverpassSpeedLimitProvider.fetchSpeedLimit(at:heading:) in Swift.
-    Throttled to ~1 query / 100m of movement. Returns SpeedLimitResponse
-    dict-compatible with AZ SQLite / ArcGIS responses, or None.
+    Throttled to ~1 query / 100m of movement. Returns a live-provider response
+    dict compatible with ArcGIS responses, or None.
     """
     query = (
         "[out:json][timeout:10];\n"
@@ -1284,12 +1213,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/health':
             return self._json(200, {
                 'service': 'speedio',
-                'db_exists': os.path.exists(DB_PATH),
-                'db_path': DB_PATH,
+                'archived_arizona_sqlite': True,
                 'endpoints': ['/api/reverse-geocode', '/api/speedlimit',
-                          '/api/speedlimit-az', '/api/speedlimit-arcgis',
-                          '/api/speedlimit-overpass', '/api/speedlimit-here',
-                          '/api/speedlimit-batch', '/api/here-status'],
+                          '/api/speedlimit-arcgis', '/api/speedlimit-overpass',
+                          '/api/speedlimit-here', '/api/speedlimit-batch',
+                          '/api/here-status'],
             'here_configured': bool(HERE_API_KEY) and HERE_API_KEY != 'YOUR_HERE_API_KEY',
             'batch_cache_count': BATCH_CACHE.count,
             'response_cache_count': RESPONSE_CACHE.count,
@@ -1360,42 +1288,12 @@ class Handler(BaseHTTPRequestHandler):
             heading = None
 
         if path == '/api/speedlimit-az':
-            if not os.path.exists(DB_PATH):
-                return self._json(500, {'error': f'AZ sqlite not found: {DB_PATH}'})
-            try:
-                conn = sqlite3.connect(f'file:{DB_PATH}?mode=ro', uri=True)
-                try:
-                    segments = fetch_segments(conn, lat, lon)
-                    snap_result = snap(segments, lat, lon, road_name=road_name)
-                    # Always a 3-tuple: (limit, route, reject_reason_or_None)
-                    limit, route, reject_reason = snap_result
-                    if reject_reason is not None:
-                        return self._json(200, {
-                            'found': False,
-                            'reason': reject_reason,
-                            'road_name': road_name,
-                        })
-                    if limit <= 0:
-                        return self._json(200, {
-                            'found': False,
-                            'reason': 'no spatial match within {}'.format(int(SNAP_RADIUS_M)),
-                        })
-                    return self._json(200, {
-                        'found': True,
-                        'speedMph': limit,
-                        'roadKey': 'local-sqlite',
-                        'providerName': 'AZ SQLite',
-                        'detail': (
-                            f'Local SQLite lookup along {road_name}'
-                            if road_name
-                            else 'Local SQLite lookup within 1 km corridor'
-                        ),
-                        'routeId': route,
-                    })
-                finally:
-                    conn.close()
-            except Exception as exc:
-                return self._json(500, {'error': str(exc)})
+            # Keep the historical route recognizable without allowing the
+            # Arizona-only dataset to be queried in practice.
+            return self._json(410, {
+                'error': 'Arizona SQLite provider is archived and disabled',
+                'replacement': 'Use /api/speedlimit for the active all-states provider chain',
+            })
 
         if path == '/api/speedlimit-arcgis':
             resp = query_arcgis_for_speed(lat, lon, heading=heading)
@@ -1431,7 +1329,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    print(f'[server] AZ SQLite at {DB_PATH}')
+    print('[server] Arizona SQLite provider: archived/disabled')
     here_status = 'configured' if HERE_API_KEY and HERE_API_KEY != 'YOUR_HERE_API_KEY' else 'NOT configured'
     print(f'[server] HERE API: {here_status}')
     print(f'[server] serving http://127.0.0.1:{PORT}/')
@@ -1440,12 +1338,12 @@ def main():
     print('[server]   GET  /health')
     print('[server]   GET  /api/reverse-geocode?lat=&lon=')
     print('[server]   GET  /api/speedlimit?lat=&lon=&road_name=&heading=')
-    print('[server]   POST /api/speedlimit-az      (lat, lon, road_name)')
+    print('[server]   POST /api/speedlimit-az      (410 archived/disabled)')
     print('[server]   POST /api/speedlimit-arcgis   (lat, lon)')
     print('[server]   POST /api/speedlimit-overpass (lat, lon)')
     print('[server]   POST /api/speedlimit-here     (lat, lon)')
     print('[server]   POST /api/speedlimit-batch    (lat, lon, road_name)')
-    print('[server] Pipeline (iOS mirror): Cache -> HERE Batch -> HERE REST -> ArcGIS -> Overpass -> AZ SQLite')
+    print('[server] Pipeline (iOS mirror): Cache -> HERE Batch -> HERE REST -> ArcGIS -> Overpass -> No Data')
     print(f'[server] Response cache: {RESPONSE_CACHE.count} entries | Batch cache: {BATCH_CACHE.count} entries')
     httpd = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     try:

@@ -101,9 +101,11 @@ targets:
       # back to compile-time constants in CameraDecisionEngine if the resource is missing.
       - path: SmartSpeedCompanion/Resources/CameraTuning.json
         buildPhase: resources
-      # Explicitly declare DB as a resource to be copied into the app bundle
-      - path: SmartSpeedCompanion/Resources/ArizonaSpeedLimits.sqlite
-        buildPhase: resources
+      # Preserve the Arizona SQLite implementation/data in the repository for a
+      # future all-states replacement, but do not bundle it in the production app.
+      # No active code path calls ArizonaSpeedLimitService today.
+      # - path: SmartSpeedCompanion/Resources/ArizonaSpeedLimits.sqlite
+      #   buildPhase: resources
       - path: SmartSpeedCompanion/Configuration/GoogleService-Info.plist
         buildPhase: resources
       - path: SmartSpeedCompanion/Configuration/HERE-Config.plist

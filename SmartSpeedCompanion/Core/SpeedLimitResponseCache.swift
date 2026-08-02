@@ -100,6 +100,13 @@ public actor SpeedLimitResponseCache {
         let canonicalName = canonicalRoadName(roadName)
         let key = gridKey(for: coordinate, roadName: canonicalName)
         guard var entry = memory[key], isFresh(entry), entry.roadName == canonicalName else { return nil }
+        // Never revive a response produced by the dormant Arizona-only SQLite
+        // fallback. This also protects users who upgrade with an old disk cache.
+        guard entry.response.providerName != "AZ SQLite" else {
+            memory.removeValue(forKey: key)
+            memoryRevisionByKey.removeValue(forKey: key)
+            return nil
+        }
         let recordedLoc = CLLocation(latitude: entry.lat, longitude: entry.lon)
         let queriedLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         if recordedLoc.distance(from: queriedLoc) > 50 { return nil }
@@ -198,6 +205,10 @@ public actor SpeedLimitResponseCache {
         let cutoff = Date().addingTimeInterval(-diskTtl)
 
         for entry in entries where entry.cachedAt > cutoff {
+            // Do not load legacy Arizona SQLite answers into the active cache.
+            // The implementation remains dormant for possible future reuse, but
+            // its Arizona-only data must not affect the all-states pipeline.
+            guard entry.response.providerName != "AZ SQLite" else { continue }
             let coordinate = CLLocationCoordinate2D(latitude: entry.lat, longitude: entry.lon)
             guard isValidCoordinate(coordinate) else { continue }
             let canonicalName = canonicalRoadName(entry.roadName)

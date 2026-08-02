@@ -1,6 +1,7 @@
 // SpeedLimitDataSource.swift
-// Typed enum that replaces the stringly-typed "DB", "DB (Recovered)", "No Data"
-// labels previously hard-coded into SmartSpeedLimitService.
+// Typed enum that replaces the stringly-typed source labels previously hard-coded
+// into SmartSpeedLimitService. The legacy DB cases remain Codable-compatible but
+// are dormant and are never produced by the active provider pipeline.
 //
 // Why typed (not String)?
 //   - Catches typos at compile time (you can't write `.lvieArcGIS` by mistake).
@@ -23,9 +24,10 @@ public enum SpeedLimitDataSource: String, Equatable, Codable, Sendable, CaseIter
     case liveArcGIS = "Live (ArcGIS)"
     /// Live data from the OpenStreetMap Overpass API (queries the OSM `maxspeed` tag).
     case liveOverpass = "Live (Overpass)"
-    /// Local SQLite fallback (AZ geodatabase from the bundled .sqlite / .geodatabase file).
+    /// Legacy Arizona SQLite source retained for decoding older persisted state.
+    /// It is intentionally not produced by the current all-states pipeline.
     case localDB = "DB"
-    /// Local SQLite fallback with the expanded-search path (60m radius instead of 20m).
+    /// Legacy expanded-search Arizona SQLite source retained for compatibility.
     case localDBRecovered = "DB (Recovered)"
     /// No recent answer from any provider. UI should display a friendly "searching" message.
     case noData = "No Data"

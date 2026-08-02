@@ -196,7 +196,7 @@
   <div id="app">
     <header>
       <h1><span class="dot"></span>Speedio Lookup <a href="carplay-simulator.html" class="nav-link">&#128755; CarPlay</a></h1>
-      <p>Click anywhere on the map. The pipeline mirrors the iOS app&rsquo;s SmartSpeedLimitService exactly: Cache &rarr; HERE Batch &rarr; HERE REST &rarr; ArcGIS HPMS &rarr; Overpass &rarr; AZ SQLite. The big number shows what the app would display; the cards below show each provider individually.</p>
+      <p>Click anywhere on the map. The pipeline mirrors the iOS app&rsquo;s SmartSpeedLimitService exactly: Cache &rarr; HERE Batch &rarr; HERE REST &rarr; ArcGIS HPMS &rarr; Overpass &rarr; No Data. The Arizona SQLite implementation remains archived for a possible future all-states replacement, but is not used here.</p>
       <p style="margin-top:6px;font-size:11px;">
         <span id="here-status" style="color:var(--miss);">HERE API: <span id="here-status-text">checking&hellip;</span></span>
         &middot;
@@ -241,13 +241,6 @@
         <div class="src-mph"></div>
         <div class="src-detail"></div>
       </div>
-      <div class="src-card" data-provider="az">
-        <div class="src-header">
-          <span class="src-name az">5. AZ SQLite</span><span class="status">…</span>
-        </div>
-        <div class="src-mph"></div>
-        <div class="src-detail"></div>
-      </div>
     </div>
 
     <button id="tracer-toggle">&#128225; Pipeline trace</button>
@@ -261,9 +254,9 @@
          1. ResponseCache (spatial grid, 30-min TTL)
          2. BatchCache (HERE Route Matching offline results, name-first)
          3. HERE REST (HERE Routing API v8, primary live provider)
-         4. ArcGIS HPMS (FHWA sample-panel sections, secondary live)
+           4. ArcGIS HPMS (FHWA sample-panel sections, secondary live)
          5. Overpass (OSM maxspeed tag, tertiary live)
-         6. AZ SQLite with expanded search fallback (offline / last resort)
+         6. No Data when the active providers have no answer
        The big top number tracks the iOS' logical pick (first non-null result
        from the pipeline). The cards below display each provider individually.
        ====================================================================== */
@@ -423,40 +416,6 @@
       }
     }
 
-    // ---- Provider 5: AZ SQLite (mirrors ArizonaSpeedLimitService) ----
-    async function queryAzSqlite(lat, lon, roadName) {
-      trace('AZ SQLite', `POST /api/speedlimit-az ${roadName ? '(road_name=' + roadName + ')' : '(no road_name)'}`, 'sys');
-      let r;
-      try {
-        r = await fetch('/api/speedlimit-az', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lon, road_name: roadName || null }),
-        });
-      } catch (e) {
-        trace('AZ SQLite', 'network error: ' + e.message, 'err');
-        return { found: false, error: e.message };
-      }
-      if (!r.ok) {
-        trace('AZ SQLite', 'HTTP ' + r.status, 'err');
-        return { found: false, error: 'HTTP ' + r.status };
-      }
-      const d = await r.json();
-      if (!d.found) {
-        if (d.reason) {
-          trace('AZ SQLite', 'REJECTED: ' + d.reason, 'err');
-        } else {
-          trace('AZ SQLite', 'no segment matched (no name match, no spatial match)', 'err');
-        }
-        return { found: false, reason: d.reason || null };
-      }
-      trace('AZ SQLite',
-        d.speedMph + ' mph &middot; routeId=' + (d.routeId || '?') + ' &middot; ' + d.detail,
-        'hit');
-      return { found: true, speedMph: d.speedMph, providerName: 'AZ SQLite',
-               roadKey: 'local-sqlite', detail: d.detail, routeId: d.routeId, source: 'az' };
-    }
-
     // ---- Reverse geocode (mirrors RoadGeocoder) ----
     async function reverseGeocode(lat, lon) {
       trace('ReverseGeo', `GET /api/reverse-geocode?lat=${lat}&lon=${lon}`, 'sys');
@@ -481,7 +440,7 @@
 
     // ---- Orchestrator (mirrors SmartSpeedLimitService.resolveCandidate) ----
     // Decision tree (matches iOS app exactly):
-    //   Cache -> Batch Cache -> HERE REST -> ArcGIS -> Overpass -> SQLite
+    //   Cache -> Batch Cache -> HERE REST -> ArcGIS -> Overpass -> No Data
     // The big top number tracks the iOS' logical pick (first non-null result).
     // The cards below show each provider's individual result.
     //
@@ -497,24 +456,23 @@
       trace('PIPELINE', 'road_name=' + (roadName || '<none>'), 'sys');
 
       // ---- iOS Pipeline (mirrors SmartSpeedLimitService.resolveCandidate) ----
-      // Chain: Cache(server) -> Batch -> HERE -> ArcGIS -> Overpass -> SQLite
+      // Chain: Cache(server) -> Batch -> HERE -> ArcGIS -> Overpass -> No Data
       // The server-side response cache is checked in the orchestrator endpoint.
       // For individual cards, we query each provider separately.
 
-      trace('PIPELINE', 'parallel fetch: Batch + HERE REST + ArcGIS + Overpass + AZ SQLite', 'sys');
+      trace('PIPELINE', 'parallel fetch: Batch + HERE REST + ArcGIS + Overpass', 'sys');
 
-      // Fetch ALL providers in parallel for fast UX. The pick order is
+      // Fetch the active providers in parallel for fast UX. The pick order is
       // determined client-side below, matching the iOS pipeline priority.
-      const [batch, here, arc, ov, az] = await Promise.all([
+      const [batch, here, arc, ov] = await Promise.all([
         queryBatch(lat, lon, roadName),
         queryHERE(lat, lon),
         queryArcGIS(lat, lon),
         queryOverpass(lat, lon),
-        queryAzSqlite(lat, lon, roadName),
       ]);
 
       // iOS-equivalent pick: same priority order as the app chain:
-      // Cache(server-side) -> Batch -> HERE -> ArcGIS -> Overpass -> AZ SQLite -> No Data
+      // Cache(server-side) -> Batch -> HERE -> ArcGIS -> Overpass -> No Data
       // Note: Cache is handled server-side in the orchestrator response, but
       // for individual provider cards, the client picks the first non-null provider.
       let pick = null, pickSrc = 'nodata';
@@ -522,7 +480,6 @@
       else if (here.found) { pick = { mph: here.speedMph, provider: 'here',   detail: here.detail, roadKey: here.roadKey }; pickSrc = 'here'; }
       else if (arc.found)  { pick = { mph: arc.speedMph, provider: 'arcgis', detail: arc.detail, roadKey: arc.roadKey }; pickSrc = 'arcgis'; }
       else if (ov.found)   { pick = { mph: ov.speedMph, provider: 'overpass', detail: ov.detail, roadKey: ov.roadKey }; pickSrc = 'overpass'; }
-      else if (az.found)   { pick = { mph: az.speedMph, provider: 'az', detail: az.detail, routeId: az.routeId }; pickSrc = 'az'; }
       else                 { pick = { mph: null, provider: null }; pickSrc = 'nodata'; }
 
       trace('PIPELINE',
@@ -530,17 +487,17 @@
           : `pick=${pickSrc} mph=${pick.mph}`,
         pickSrc === 'nodata' ? 'err' : 'ok');
 
-      return { batch, here, arc, ov, az, pick, pickSrc, roadName, rg };
+      return { batch, here, arc, ov, pick, pickSrc, roadName, rg };
     }
 
     // ---- Renderers ----
     function renderBig(p, lat, lon, roadName) {
       const has = p.mph != null && p.mph > 0;
-      const klassMap = { batch:'batch', here:'here', arcgis:'arcgis', overpass:'overpass', az:'db', nodata:'nodata' };
+      const klassMap = { batch:'batch', here:'here', arcgis:'arcgis', overpass:'overpass', nodata:'nodata' };
       const klass = klassMap[p.provider || 'nodata'] || 'nodata';
       const labelMap = {
         batch: 'HERE Batch', here: 'HERE REST', arcgis:'ArcGIS HPMS',
-        overpass:'Overpass', az:'DB (AZ SQLite)', nodata:'No Data'
+        overpass:'Overpass', nodata:'No Data'
       };
       const providerLabel = labelMap[p.provider || 'nodata'] || 'No Data';
       const safe = (s) => String(s == null ? '' : s).replace(/[<>]/g, c => c === '<' ? '&lt;' : '&gt;');
@@ -596,8 +553,6 @@
                  Object.assign({}, all.arc,    { picked: pickSrc === 'arcgis' }));
       renderCard(document.querySelector('.src-card[data-provider="overpass"]'),
                  Object.assign({}, all.ov,     { picked: pickSrc === 'overpass' }));
-      renderCard(document.querySelector('.src-card[data-provider="az"]'),
-                 Object.assign({}, all.az,     { picked: pickSrc === 'az' }));
       sourcesEl.style.display = 'flex';
     }
 
@@ -607,7 +562,7 @@
       bigEl.classList.add('loading');
       bigEl.innerHTML =
         '<div style="text-align:center;color:var(--mute);padding:8px 0;">&#8987; Querying ' +
-        'HERE Batch &rarr; HERE REST &rarr; ArcGIS &rarr; Overpass &rarr; AZ SQLite&hellip;</div>';
+        'HERE Batch &rarr; HERE REST &rarr; ArcGIS &rarr; Overpass&hellip;</div>';
       document.querySelectorAll('.src-card').forEach(c => {
         c.classList.add('loading');
         c.classList.remove('picked');

@@ -22,7 +22,7 @@
 //     an intersection. The bearing filter resolves this.
 //   - Overpass published throttle is 2 req/sec/IP. We honor this with a hard 60-second
 //     backoff window after a 429 response — further queries in that window return nil
-//     so the orchestrator falls through to the SQLite fallback.
+//     so the orchestrator proceeds to its normal No Data/miss path.
 //   - `maxspeed` value parsing handles "25 mph", "40", "60 km/h", "50 kmh", etc.
 //     km/h values are converted to mph so downstream consumers always see mph.
 

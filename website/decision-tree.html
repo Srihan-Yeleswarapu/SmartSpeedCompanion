@@ -420,6 +420,14 @@
           <div class="sub">Walk providers in order</div>
         </div>
         <div class="arrow-down solid"></div>
+        <!-- HERE REST -->
+        <div class="node cyan" data-detail="here-rest">
+          <span class="icon">🧭</span>
+          <div class="label">HERE REST</div>
+          <div class="sub">HERE Routing API v8<br>Heading-aligned speed limit</div>
+          <span class="badge green" style="background:rgba(52,211,153,0.15);color:var(--green)">Primary live</span>
+        </div>
+        <div class="arrow-down solid"></div>
         <!-- ArcGIS HPMS -->
         <div class="node cyan" data-detail="arcgis">
           <span class="icon">🏛️</span>
@@ -436,11 +444,11 @@
           <span class="badge amber" style="background:rgba(251,191,36,0.15);color:var(--amber)">60s 429 backoff</span>
         </div>
         <div class="arrow-down solid"></div>
-        <!-- Fall through -->
-        <div class="node amber" data-detail="live-fallthrough">
-          <span class="icon">⏭️</span>
-          <div class="label">Network Fall-Through</div>
-          <div class="sub">All live providers missed<br>→ SQLite fallback</div>
+        <!-- Active chain miss -->
+        <div class="node red" data-detail="live-fallthrough">
+          <span class="icon">📭</span>
+          <div class="label">No Active Provider Answer</div>
+          <div class="sub">All live providers missed<br>→ No Data / grace window</div>
         </div>
       </div>
       <div class="branch-arm">
@@ -449,98 +457,8 @@
         <!-- Skip live providers -->
         <div class="node red" data-detail="skip-live">
           <span class="icon">✈️</span>
-          <div class="label">Skip Live Providers</div>
-          <div class="sub">No network → straight to SQLite</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Arrow from both offline fallthrough and live fallthrough to SQLite -->
-  <div class="arrow-down solid"></div>
-
-  <!-- STEP 3: SQLite -->
-  <div class="row">
-    <div class="node purple" data-detail="sqlite">
-      <span class="icon">🗄️</span>
-      <div class="label">Step 3: SQLite Fallback</div>
-      <div class="sub">ArizonaSpeedLimits.sqlite<br>Circular 2mi cache · ESRI geodatabase</div>
-    </div>
-  </div>
-  <div class="arrow-down solid"></div>
-
-  <!-- SQLite 3-pass scoring -->
-  <div class="row">
-    <div class="node amber" data-detail="sqlite-passes">
-      <span class="icon">🧮</span>
-      <div class="label">3-Pass Scoring Engine</div>
-      <div class="sub">Spatial + heading + speed + name match</div>
-    </div>
-  </div>
-
-  <!-- 3 passes -->
-  <div class="row">
-    <div class="branch-wrapper">
-      <div class="branch-arm">
-        <div class="node purple" data-detail="pass1">
-          <span class="icon">①</span>
-          <div class="label">Pass 1: Name Match</div>
-          <div class="sub">RoadNameMatcher.score()<br>Canonical / subset / numeric<br>Huge 10000× bonus on match</div>
-          <span class="badge green" style="background:rgba(52,211,153,0.15);color:var(--green)">Wins if ≥0.5</span>
-        </div>
-      </div>
-      <div class="branch-arm">
-        <div class="node purple" data-detail="pass15">
-          <span class="icon">①.₅</span>
-          <div class="label">Pass 1.5: Bearing Salvage</div>
-          <div class="sub">Directional bbox alignment<br>User heading vs road axis<br>30m gate · 30° tolerance</div>
-          <span class="badge amber" style="background:rgba(251,191,36,0.15);color:var(--amber)">Salvage path</span>
-        </div>
-      </div>
-      <div class="branch-arm">
-        <div class="node purple" data-detail="pass2">
-          <span class="icon">②</span>
-          <div class="label">Pass 2: Spatial-Only</div>
-          <div class="sub">No road name available<br>2000× ambiguous-corridor penalty<br>Heading + speed differential</div>
-          <span class="badge red" style="background:rgba(248,113,113,0.15);color:var(--red)">Last resort</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Branch: SQLite found / miss -->
-  <div class="row">
-    <div class="branch-wrapper">
-      <div class="branch-arm">
-        <span class="branch-label green">SQLite HIT</span>
-        <div class="arrow-down solid"></div>
-        <div class="node green" data-detail="sqlite-hit">
-          <span class="icon">🎯</span>
-          <div class="label">SQLite Candidate Ready</div>
-          <div class="sub">Limit + roadKey + source label<br>→ Continuity Guard</div>
-        </div>
-      </div>
-      <div class="branch-arm">
-        <span class="branch-label red">SQLITE MISS</span>
-        <div class="arrow-down solid"></div>
-        <div class="node red" data-detail="sqlite-miss">
-          <span class="icon">📭</span>
-          <div class="label">Expanded Search Retry</div>
-          <div class="sub">60m radius (instead of 20m)</div>
-        </div>
-        <div class="arrow-down solid"></div>
-        <!-- miss tally -->
-        <div class="node red" data-detail="miss-tally">
-          <span class="icon">🔢</span>
-          <div class="label">Miss Counter</div>
-          <div class="sub">consecutiveMissCount += 1<br>"No Data" after 20 misses</div>
-        </div>
-        <div class="arrow-down solid"></div>
-        <div class="node green" data-detail="grace-window">
-          <span class="icon">🕊️</span>
-          <div class="label">Grace Window</div>
-          <div class="sub">Show last valid limit<br>Keep old answer for &lt;20 misses</div>
-          <span class="badge green" style="background:rgba(52,211,153,0.15);color:var(--green)">Hold prior</span>
+          <div class="label">Offline → No Data</div>
+          <div class="sub">No network → no regional database fallback</div>
         </div>
       </div>
     </div>
@@ -548,11 +466,22 @@
 
   <div class="arrow-down solid"></div>
 
-  <!-- STEP 4: Continuity Guard -->
+  <!-- Active-provider miss / grace path -->
+  <div class="row">
+    <div class="node red" data-detail="miss-tally">
+      <span class="icon">📭</span>
+      <div class="label">Active Provider Miss</div>
+      <div class="sub">Increment miss count<br>Hold prior briefly, then No Data</div>
+    </div>
+  </div>
+
+  <div class="arrow-down solid"></div>
+
+  <!-- STEP 3: Continuity Guard -->
   <div class="row">
     <div class="node amber" data-detail="continuity">
       <span class="icon">🛡️</span>
-      <div class="label">Step 4: Continuity Guard</div>
+      <div class="label">Step 3: Continuity Guard</div>
       <div class="sub">finalizeWithContinuity()<br>Prevents flyover / cross-street flicker</div>
     </div>
   </div>
@@ -646,7 +575,7 @@ const details = {
   entry: {
     title: '🚦 SpeedLimit Orchestrator',
     body: `<code>SmartSpeedLimitService.updateSpeedLimit()</code> is the central decision maker. It runs two phases:
-    <br><br>1. <strong>resolveCandidate():</strong> walks the cache → live providers → SQLite fallback and returns a <code>Candidate</code> value (limit, source, roadKey).
+    <br><br>1. <strong>resolveCandidate():</strong> walks the response cache → HERE batch cache → live providers and returns a <code>Candidate</code> value (limit, source, roadKey). If no active provider answers, it returns a miss — there is no Arizona-only fallback.
     <br>2. <strong>finalizeWithContinuity():</strong> the continuity guard decides whether to commit the candidate, hold the prior limit, or sink-in after repeated fetches.
     <br><br>The function is <code>@MainActor</code>-isolated so all <code>@Published</code> UI updates are atomic.`
   },
@@ -660,36 +589,43 @@ const details = {
   },
   'cache-hit': {
     title: '✅ Cache Hit — Fast Path',
-    body: `When the cache hits, Speedio returns the stored answer immediately — no network request, no SQLite query. This covers <strong>~60% of GPS ticks</strong> in typical driving (revisiting the same road segments).
+    body: `When the cache hits, Speedio returns the stored answer immediately — no network request. This covers <strong>~60% of GPS ticks</strong> in typical driving (revisiting the same road segments).
     <br><br>• Latency: <strong>0 ms</strong> (in-memory dictionary lookup)
     <br>• The response is returned before the continuity guard even fires (cache lookups skip the guard entirely on a true hit).
     <br>• On disk load at startup: cached sessions from 30 days prior are instantly available offline.`
   },
   'cache-miss': {
     title: '❌ Cache Miss — Full Resolution Chain',
-    body: `When the cache misses (new cell, expired, or stale distance), Speedio proceeds to the live provider chain:
+    body: `When the cache misses (new cell, expired, or stale distance), Speedio proceeds to the active provider chain:
     <br><br>• First checks <code>NetworkReachability.isConnected</code>
-    <br>• If online, walks <strong>ArcGIS HPMS</strong> → <strong>Overpass (OSM)</strong> in order
-    <br>• If offline (or all live providers return nil), falls through to <strong>SQLite</strong>
+    <br>• If online, walks <strong>HERE REST</strong> → <strong>ArcGIS HPMS</strong> → <strong>Overpass (OSM)</strong> in order
+    <br>• If offline (or all live providers return nil), returns a miss — there is no state-specific database fallback
     <br>• Result flows through the continuity guard before being committed to the HUD and written back to the cache.`
   },
   network: {
     title: '📶 Network Reachability Gate',
-    body: `<code>NWPathMonitor</code> publishes whether the device has an active network path. Used to short-circuit the live provider chain when offline:
-    <br><br>• <strong>Online:</strong> walk ArcGIS HPMS → Overpass (OSM) in order.
-    <br>• <strong>Offline:</strong> skip directly to the local SQLite fallback.
+    body: `<code>NWPathMonitor</code> publishes whether the device has an active network path. Used to gate the live provider chain:
+    <br><br>• <strong>Online:</strong> walk HERE REST → ArcGIS HPMS → Overpass (OSM) in order.
+    <br>• <strong>Offline:</strong> skip network calls and return a miss; the Arizona-only SQLite dataset is archived and disabled.
     <br><br>The monitor defaults to <code>true</code> (optimistic) until the first path sample arrives.`
   },
   'live-chain': {
     title: '🌐 Live Provider Chain',
-    body: `When online, Speedio walks the live providers in priority order. Each provider conforms to the <code>SpeedLimitProvider</code> protocol:
+    body: `When online, Speedio walks HERE REST → ArcGIS HPMS → Overpass in priority order. Each provider conforms to the <code>SpeedLimitProvider</code> protocol:
     <br><br>• <strong>Returns</strong> <code>SpeedLimitResponse?</code>: nil = "no coverage here" (walk to next provider). Non-nil = "I have an answer."
     <br>• <strong>Throws</strong> on I/O failure (timeout, HTTP 429, parse error). The orchestrator catches the error and walks to the next provider.
-    <br>• Both providers self-throttle: skip duplicate queries within 100m of the last success, or 10s of the last failure.`
+    <br>• Providers self-throttle duplicate or recently failed queries.`
+  },
+  'here-rest': {
+    title: '🧭 HERE REST — Primary Live Provider',
+    body: `The HERE REST provider queries the HERE Routing API v8 for the speed limit at the current coordinate.
+    <br><br>• <strong>Primary live source:</strong> it runs before ArcGIS HPMS and Overpass when network connectivity is available.
+    <br>• <strong>Heading-aware:</strong> its short probe follows the vehicle course when valid, reducing wrong-road answers at intersections.
+    <br>• If HERE has no credentials, coverage, or a transient failure, the chain continues to ArcGIS HPMS, then Overpass.`
   },
   arcgis: {
     title: '🏛️ ArcGIS HPMS — Federal Data',
-    body: `The Highway Performance Monitoring System from the FHWA. <strong>Most authoritative source for Arizona highways.</strong>
+    body: `The Highway Performance Monitoring System from the FHWA. <strong>A nationwide federal source for covered highway segments.</strong>
     <br><br>• <strong>Coverage:</strong> FHWA "sample panel" sections — interstates, US highways, state routes. Most local streets are <em>not</em> in HPMS.
     <br>• <strong>Query:</strong> point query against FeatureServer layer 48 (SpeedLimit_2024). Returns speed limit + route number + direction + sign type (regulatory / warning).
     <br>• <strong>Heading-aware:</strong> scores multiple features by proximity + heading. If you're driving NB, gives strong preference to NB-direction road segments.
@@ -705,34 +641,31 @@ const details = {
     <br>• <strong>Parses parenthetical context:</strong> "30 mph (truck)" → 30 mph.`
   },
   'live-fallthrough': {
-    title: '⏭️ Live Fall-Through → SQLite',
-    body: `When <strong>all live providers</strong> either return nil (no coverage) or throw (network error), the orchestrator falls through to the local SQLite database:
-    <br><br>• ArcGIS HPMS misses on most local streets (not in FHWA panel).
-    <br>• Overpass misses when no OSM <code>maxspeed</code> tag exists (common on US residential/arterial roads where the tag hasn't been surveyed).
-    <br>• SQLite serves as the <strong>guaranteed baseline</strong> for Arizona roads.
-    <br>• Outside Arizona: if both live providers miss and SQLite has no data → "No Data" on the HUD.`
+    title: '📭 Active Providers Miss → No Data',
+    body: `When <strong>all active providers</strong> either return nil (no coverage) or throw (network error), the orchestrator returns a miss:
+    <br><br>• ArcGIS HPMS misses on many local streets (not in FHWA panel).
+    <br>• Overpass misses when no OSM <code>maxspeed</code> tag exists.
+    <br>• The Arizona-only SQLite implementation remains archived for a future all-states replacement, but is not queried today.
+    <br>• The continuity guard briefly holds the last valid limit, then the HUD shows "No Data."`
   },
   'skip-live': {
-    title: '✈️ Offline: Skip Live Providers',
-    body: `When the device has no network connectivity (<code>NetworkReachability.isConnected == false</code>), Speedio bypasses all live providers and goes straight to the local SQLite database:
-    <br><br>• <strong>CLGeocoder still works</strong> (Apple's on-device geocode index is available even offline) → road name flows in → SQLite name match kicks in.
-    <br>• Data source shows <strong>"DB"</strong> on the HUD.
-    <br>• If SQLite also misses (outside Arizona), the system enters the grace window and eventually shows "No Data."`
+    title: '✈️ Offline: No Regional Fallback',
+    body: `When the device has no network connectivity (<code>NetworkReachability.isConnected == false</code>), Speedio skips live requests and returns a miss:
+    <br><br>• <strong>CLGeocoder still works</strong> for road context, but it does not activate a state-specific speed-limit database.
+    <br>• The Arizona SQLite implementation and file remain archived, not bundled or queried.
+    <br>• The continuity guard provides a short grace window, then the HUD shows <strong>"No Data"</strong>.`
   },
   sqlite: {
-    title: '🗄️ Step 3: SQLite Fallback',
-    body: `The bundled <code>ArizonaSpeedLimits.sqlite</code> file from the ESRI geodatabase. <strong>A comprehensive database of Arizona road speed limits.</strong>
-    <br><br>• <strong>Circular cache:</strong> upon moving &gt;1 mile from the last cache center, loads all segments in a 2-mile radius into memory. Subsequent queries within that radius hit the memory cache — no file I/O.
-    <br>• <strong>Grid cache:</strong> 0.02° (~2.2km) cells with <code>floor()</code>-based stable keys. Queries the SQLite spatial index.
-    <br>• <strong>Clear on 20 consecutive misses:</strong> prevents stale bounding-box data from pinning the wrong road.
-    <br>• Each segment stores: <code>minx, maxx, miny, maxy</code> (bounding box), <code>limit</code> (mph), <code>routeId</code> (e.g. "07 FRYE RD").`
+    title: '🗄️ Arizona SQLite — Archived',
+    body: `The Arizona-only SQLite implementation and <code>ArizonaSpeedLimits.sqlite</code> file remain in the repository as a dormant seam for a future all-states replacement.
+    <br><br>• It is <strong>not bundled</strong> in the production app.
+    <br>• No iOS or website production lookup calls it.
+    <br>• Legacy cached responses from this provider are rejected during cache load.
+    <br>• Reintroducing a complete nationwide dataset later can restore this seam without changing the active HERE → ArcGIS → Overpass chain.`
   },
   'sqlite-passes': {
-    title: '🧮 SQLite 3-Pass Scoring Engine',
-    body: `The SQLite scoring engine runs up to three passes to find the best-matching road segment:
-    <br><br><strong>Pass 1 — Name Match (gates at 200m):</strong> if road name available, score each candidate with <code>RoadNameMatcher.score()</code>. A match ≥0.5 wins with a 10000× bonus. Rejects SQLite entirely if no name match found (falls through to live providers).
-    <br><br><strong>Pass 1.5 — Bearing Salvage (gates at 30m):</strong> if name match failed, check directional bbox alignment within 30° of user heading. Tight 30m physical gate prevents freeway pickup.
-    <br><br><strong>Pass 2 — Spatial-Only (gates at 20m/1000m):</strong> no road name available. Uses distance + heading + speed differential + ambiguous-corridor penalty (+2000 for high-aspect-ratio bboxes &gt;250m from centerline).`
+    title: '🧮 Archived SQLite Scoring (Inactive)',
+    body: `The former Arizona scoring engine is retained in source for future reference, but it is not an active part of the current pipeline. The production app uses the same HERE, ArcGIS, and Overpass chain across all states.`
   },
   pass1: {
     title: '① Pass 1: Road Name Match',
@@ -763,29 +696,21 @@ const details = {
     <br>• Gate: ambiguous corridors use 20m radius; other candidates use 1000m.`
   },
   'sqlite-hit': {
-    title: '🎯 SQLite Candidate → Continuity Guard',
-    body: `When the SQLite engine finds a winning candidate, it bundles: <code>limit</code> (mph), <code>routeId</code> (e.g. "07 FRYE RD"), <code>source</code> (.localDB or .localDBRecovered), and sends it to the continuity guard.
-    <br><br>The continuity guard then decides: commit immediately, hold as suspect, or sink-in after repeated fetches.
-    <br><br>If committed, the result is published to the HUD and written to the response cache so the next GPS tick in that 50m cell is an instant cache hit.`
+    title: '🎯 Archived Provider (Inactive)',
+    body: `There is no SQLite candidate in the active pipeline. This detail key is retained only so older links/bookmarks remain understandable; current results come from HERE Batch, HERE REST, ArcGIS, Overpass, or No Data.`
   },
   'sqlite-miss': {
-    title: '📭 SQLite Miss → Expanded Retry',
-    body: `When the first SQLite pass finds no segment within 20m of the user:
-    <br><br>• <strong>Expanded search</strong> retries with a 60m radius instead of 20m. This catches roads where the geodatabase bounding boxes are misaligned with the GPS point.
-    <br>• If expanded search also misses → the candidate is a <strong>Miss</strong>.
-    <br>• Misses increase <code>consecutiveMissCount</code>.
-    <br>• Within the first 19 consecutive misses, the <strong>last valid limit</strong> is preserved (grace window).
-    <br>• At 20 consecutive misses: <strong>both caches are cleared</strong> (SQLite spatial cache + response cache) to prevent stale bbox data from pinning the wrong road. HUD shows "No Data."`
+    title: '📭 Active Provider Miss',
+    body: `When the active HERE, ArcGIS, and Overpass providers have no answer, the candidate is a miss. The continuity guard briefly preserves a prior valid limit, then returns "No Data"; no expanded Arizona database retry occurs.`
   },
   'miss-tally': {
     title: '🔢 Miss Counter & Cache Clear',
     body: `Consecutive misses are tracked per drive session:
-    <br><br>• After <strong>20 consecutive misses</strong> (≈20-83 seconds of driving with no data), Speedio:
-    <br>&nbsp;&nbsp;1. Clears the <code>ArizonaSpeedLimitService</code> spatial grid cache
-    <br>&nbsp;&nbsp;2. Clears the <code>SpeedLimitResponseCache</code> (both memory and disk)
-    <br>&nbsp;&nbsp;3. Resets <code>lastValidLimit</code> and <code>consecutiveMissCount</code> to 0
-    <br>&nbsp;&nbsp;4. Sets <code>dataSource = .noData</code>
-    <br><br>This <strong>prevents stale bounding-box data</strong> from pinning the wrong road when the user has genuinely left the covered area.`
+    <br><br>• After <strong>20 consecutive misses</strong> (≈20-83 seconds of driving with no active provider data), Speedio:
+    <br>&nbsp;&nbsp;1. Clears the active <code>SpeedLimitResponseCache</code> (memory and disk)
+    <br>&nbsp;&nbsp;2. Resets <code>lastValidLimit</code> and <code>consecutiveMissCount</code> to 0
+    <br>&nbsp;&nbsp;3. Sets <code>dataSource = .noData</code>
+    <br><br>No Arizona spatial cache is loaded or cleared because that provider is archived and inactive.`
   },
   'grace-window': {
     title: '🕊️ Grace Window — Hold Prior Limit',
@@ -795,7 +720,7 @@ const details = {
     <br>• This mirrors the user experience of physical road signs staying in view for a few seconds after you pass them.`
   },
   continuity: {
-    title: '🛡️ Step 4: Continuity Guard',
+    title: '🛡️ Step 3: Continuity Guard',
     body: `The continuity guard (<code>finalizeWithContinuity()</code>) is the cognitive layer that prevents the HUD from flickering when GPS accuracy or road-name resolution momentarily snags.
     <br><br><strong>Motivating case:</strong> driving under a flyover (e.g. S Alma School Road under US-60 in Mesa). CLGeocoder briefly resolves to the <em>overpass road</em> (US-60, 75 mph) for 3-5 seconds before snapping back to the arterial (45 mph). Without the guard, the HUD flashes 75 → 45 → 75.
     <br><br>The guard fires <strong>before cache writes</strong>, so the 75 mph flyover flicker never poisons the response cache.`
@@ -836,7 +761,7 @@ const details = {
   commit: {
     title: '📊 HUD Update — Final Output',
     body: `Once the continuity guard commits a candidate, Speedio:
-    <br><br>• <strong>Publishes to UI:</strong> <code>currentLimit</code> (mph) and <code>dataSource</code> (e.g. "Live (ArcGIS)", "DB", "No Data")
+    <br><br>• <strong>Publishes to UI:</strong> <code>currentLimit</code> (mph) and <code>dataSource</code> (e.g. "Live (HERE)", "Live (ArcGIS)", "No Data")
     <br>• <strong>Persists to cache:</strong> writes the response to <code>SpeedLimitResponseCache</code> (memory + disk) off the main actor
     <br>• <strong>Updates SpeedStatus:</strong> compares your smoothed speed against (limit + user buffer):
     <br>&nbsp;&nbsp;&nbsp;🟢 Safe: speed &lt; limit + buffer

@@ -35,7 +35,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// 1-2 ticks before geocode resolves, end-of-drive cleardown, or
     /// geocode returning no thoroughfare on a parking-lot churn).
     @Published public var currentRoadName: String? = nil
-    /// Current speed limit from the active data source (Overpass or Arizona GeoJSON).
+    /// Current speed limit from the active HERE, ArcGIS, or Overpass data source.
     @Published public var limit: Int = 0
     /// Status indicating if the user is over, near, or safely within the limit.
     @Published public var status: SpeedStatus = .safe
@@ -520,7 +520,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     }
 
     /// When true, the route polyline is drawn with a gradient (iOS 17+) tinted by
-    /// the per-segment speed limit pulled from our local SQLite provider.
+    /// the per-segment speed limit pulled from the active live-provider cache.
     public var gradientRouteEnabled: Bool {
         get { UserDefaults.standard.object(forKey: "gradientRouteEnabled") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "gradientRouteEnabled") }
@@ -798,12 +798,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
             .receive(on: RunLoop.main)
             .assign(to: &$nearbyCameras)
         
-        // 3. CACHE INITIALIZATION: Load Arizona speed limit data into memory (only happens once)
-        Task {
-            await ArizonaSpeedLimitService.shared.loadDataIfNeeded()
-        }
-        
-        // 4. PERIODIC UI SYNC: Update Live Activities and items every 5 seconds if active
+        // 3. PERIODIC UI SYNC: Update Live Activities and items every 5 seconds if active
         Timer.publish(every: 5.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
@@ -1232,10 +1227,6 @@ public final class DriveViewModel: NSObject, ObservableObject {
             #if !targetEnvironment(simulator)
             LiveActivityManager.shared.endActivity()
             #endif
-            Task {
-                // Wipe speed limit cache to save memory once drive is over
-                await ArizonaSpeedLimitService.shared.clearCache()
-            }
             // Free amenity + maneuver-coordinate transient state between
             // drives so the next navigation starts clean.
             // (Look-Around scratch state was removed in TestFlight 2.2.0 / FB10.)
@@ -1307,10 +1298,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
         }
         if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
 
-        // Layer 1: SQLite pre-cache. Existing path, no network hit.
-        await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
-
-        // Layer 2: live-provider ahead-of-time pre-fetch. Fires
+        // Live-provider ahead-of-time pre-fetch. Fires
         // `SmartSpeedLimitService.prefetchAheadOfRoute(...)` for every
         // sample coord with bounded concurrency (4 in flight). Skips
         // the continuity guard so the user's actual GPS-driven
@@ -2090,8 +2078,8 @@ public final class DriveViewModel: NSObject, ObservableObject {
 
     /// User-triggered re-fetch of the speed-limit answer for the current
     /// location. Bypasses `SpeeEDLimitResponseCache` via
-    /// `forceRefresh: true` so the live provider chain + SQLite fallback
-    /// run fresh and surface any newer answer. Wired to a tap on the
+    /// `forceRefresh: true` so the live provider chain runs fresh and surfaces
+    /// any newer answer. Wired to a tap on the
     /// `LimitSignView` (see `MapWithHUDView.swift`).
     ///
     /// Visual feedback: toggles `isRefreshingSpeedLimit` @Published

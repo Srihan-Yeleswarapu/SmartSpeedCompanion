@@ -1994,10 +1994,11 @@ public final class NavigationCoordinator: ObservableObject {
         }
         if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
 
-        // Layer 1: SQLite pre-cache. Existing path, no network hit.
-        await ArizonaSpeedLimitService.shared.preCacheRoute(coordinates: coordinates)
-
-        // Layer 2: live-provider ahead-of-time pre-fetch. Fires
+        // Warm the active live-provider response cache ahead of the route. The
+        // Arizona-only SQLite route pre-cache remains available in its dormant
+        // implementation but is intentionally not called by production code.
+        // Live providers are the same HERE/ArcGIS/Overpass chain used on GPS ticks.
+        // Fires
         // `SmartSpeedLimitService.prefetchAheadOfRoute(...)` for every
         // sample coord with bounded concurrency (4 in flight). Skips
         // the continuity guard so the user's actual GPS-driven

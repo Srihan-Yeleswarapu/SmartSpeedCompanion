@@ -1,9 +1,9 @@
 // SpeedLimitProvider.swift
-// Shared types for all speed-limit providers (live network + local SQLite).
+// Shared types for all active speed-limit providers (live network + HERE batch cache).
 //
-// Both ArcGISHPMSProvider and OverpassSpeedLimitProvider conform to SpeedLimitProvider.
-// The local Arizona SQLite service continues to use its existing actor interface; the
-// orchestrator (SmartSpeedLimitService) is the only consumer of the protocol.
+// HERE REST, ArcGIS HPMS, and Overpass conform to SpeedLimitProvider. The dormant
+// Arizona SQLite service intentionally does not conform to or participate in this
+// active provider protocol.
 
 import Foundation
 import CoreLocation
@@ -20,7 +20,7 @@ public struct SpeedLimitResponse: Sendable, Equatable, Codable {
     /// hysteresis across coordinate changes on the same road segment.
     ///   - ArcGIS HPMS: "SR<SRNumber>-<Direction>" (e.g. "SR010-NB")
     ///   - Overpass: "way<OSM_WAY_ID>" (e.g. "way123456789")
-    ///   - SQLite fallback uses its own RouteId, but goes through the actor interface.
+    ///   - Live providers use their own stable road identifiers.
     public let roadKey: String
     /// Human-readable name of the provider that produced this answer.
     public let providerName: String
@@ -41,7 +41,7 @@ public struct SpeedLimitResponse: Sendable, Equatable, Codable {
 /// since most members are stateless singletons). The protocol distinguishes between
 /// "I have no record for this point" (return `nil`) and "I tried but the network/parse
 /// failed" (throw). The orchestrator relies on this distinction to decide whether to
-/// walk the provider chain or fall through to the local SQLite fallback.
+/// walk the active live-provider chain or return a miss when no provider has data.
 public protocol SpeedLimitProvider: Sendable {
     /// Short provider name used for logging and `SpeedLimitDataSource` labels.
     var displayName: String { get }
