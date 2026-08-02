@@ -185,6 +185,9 @@ targets:
         # used for destination search and overspeed alerts. List/Alert/
         # Information templates are still used by the settings, profile,
         # saved-places, and route-stop sub-flows.
+        # CPNowPlayingTemplate: required by the CarPlay Audio App category
+        # (com.apple.developer.carplay-audio — granted 2026-08-02).
+        # CarPlayNowPlayingController pushes it from the map root.
         CPSupportedTemplates:
           - CPMapTemplate
           - CPSearchTemplate
@@ -193,6 +196,7 @@ targets:
           - CPAlertTemplate
           - CPInformationTemplate
           - CPGridTemplate
+          - CPNowPlayingTemplate
         NSSupportsLiveActivities: true
         UIRequiredDeviceCapabilities:
           - location-services

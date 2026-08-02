@@ -3,24 +3,33 @@
 <plist version="1.0">
 <dict>
     <!--
-      NOTE 2026-07-30 — CarPlay Navigation App APPROVED.
-      Apple's current provisioning profiles authorize CPMapTemplate +
-      CPNavigationSession via `com.apple.developer.carplay-maps`
-      (the consolidated key Apple now issues for approved CarPlay
-      navigation apps) together with `carplay-driving-task`.
-      The legacy `carplay-navigation` / `carplay-audio` keys are NOT
-      present in the approved "Speedio App Store" profile (UUID
-      fd2d8fb6-6497-4e92-9d8a-2087c876afa9) — declaring them here would
-      cause codesign to reject the entitlements as unauthorized.
-      If you see a crash at setRootTemplate → CPAssertAllowedClasses,
-      the installed provisioning profile is stale: re-download from
-      developer.apple.com → Certificates, Identifiers & Profiles →
-      Profiles → Speedio App Store and re-encode the
-      APPSTORE_PROVISIONING_PROFILE_BASE64 GitHub secret.
+      NOTE 2026-08-02 — CarPlay Audio App capability GRANTED.
+      The CarPlay Audio App (CarPlay framework) entitlement
+      (`com.apple.developer.carplay-audio`) has been assigned to this
+      account, unlocking first-class audio for Speedio on CarPlay:
+      a stable AVAudioSession that routes through the car's dedicated
+      navigation-voice channel (separate volume control, lower latency),
+      background audio while connected, and the Now Playing template
+      (CPNowPlayingTemplate) that the audio-app category requires.
+
+      ACTION REQUIRED: re-download the "Speedio App Store" provisioning
+      profile from developer.apple.com → Certificates, Identifiers &
+      Profiles → Profiles after enabling CarPlay Audio App on App ID
+      `com.speedsense.app`, then re-encode the
+      APPSTORE_PROVISIONING_PROFILE_BASE64 GitHub secret (and the local
+      Speedio_App_Store.mobileprovision). Building with this entitlement
+      before the profile is regenerated will fail codesign.
+
+      The legacy `carplay-navigation` key is intentionally absent —
+      navigation capability ships via the consolidated
+      `com.apple.developer.carplay-maps` key Apple now issues for
+      approved CarPlay navigation apps.
     -->
     <key>com.apple.developer.carplay-driving-task</key>
     <true/>
     <key>com.apple.developer.carplay-maps</key>
+    <true/>
+    <key>com.apple.developer.carplay-audio</key>
     <true/>
     <key>keychain-access-groups</key>
     <array>

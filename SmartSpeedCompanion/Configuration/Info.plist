@@ -46,6 +46,7 @@
         <string>CPListTemplate</string>
         <string>CPAlertTemplate</string>
         <string>CPInformationTemplate</string>
+        <string>CPNowPlayingTemplate</string>
     </array>
     <key>NSMotionUsageDescription</key>
     <string>We use motion data for advanced crash detection during drive sessions.</string>

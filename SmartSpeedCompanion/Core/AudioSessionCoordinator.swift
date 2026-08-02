@@ -1,0 +1,139 @@
+// Path: Core/AudioSessionCoordinator.swift
+//
+// Single owner of the process-wide AVAudioSession.
+//
+// Before this type existed, TWO subsystems configured and tore down the
+// shared session independently:
+//   • DefaultVoiceAnnouncer (nav voice)   → .playback / .spokenAudio
+//   • AlertEngine (speed-alert tones)     → .playback / .default with
+//     `.mixWithOthers` AND `.duckOthers` combined
+//
+// That tug-of-war was the root cause of the "glitchy audio" reports:
+// every category/mode change or setActive(false) forced CarPlay's audio
+// pipeline to re-negotiate mid-drive, and the contradictory
+// `.mixWithOthers` + `.duckOthers` options made the head-unit DSP
+// oscillate between mixing and ducking.
+//
+// The coordinator:
+//   • Configures the session ONCE (lazily) with a single stable policy.
+//   • Reference-counts activations, so a speeding alert ending can no
+//     longer tear down the session underneath an active navigation
+//     prompt (or vice versa).
+//   • Never changes category/mode while audio is in flight.
+//
+// This also pairs with the CarPlay Audio App entitlement
+// (`com.apple.developer.carplay-audio`): a recognized CarPlay audio app
+// keeps its AVAudioSession in a stable, first-class state, so the
+// `.spokenAudio` mode routes prompts through the car's dedicated
+// navigation-voice channel instead of fighting the media pipeline.
+
+import Foundation
+import AVFoundation
+
+@MainActor
+public final class AudioSessionCoordinator {
+
+    public static let shared = AudioSessionCoordinator()
+
+    /// CarPlay-friendly audio session policy.
+    ///
+    /// • `.playback` + `.spokenAudio` routes audio through CarPlay's
+    ///   dedicated navigation-voice channel (separate volume control,
+    ///   lower latency) instead of the media A2DP channel.
+    /// • `.duckOthers` lowers music volume while our alerts are active.
+    /// • `.interruptSpokenAudioAndMixWithOthers` lets prompts cut through
+    ///   podcasts without pulling the route away.
+    /// • NO `.mixWithOthers` — it contradicts `.duckOthers` and made the
+    ///   CarPlay DSP oscillate between mixing and ducking.
+    /// `.interruptSpokenAudioAndMixWithOthers` requires iOS 17+; the
+    /// deployment target is 18.4, so no `@available` guard is needed.
+    private static let sessionOptions: AVAudioSession.CategoryOptions = [
+        .duckOthers,
+        .defaultToSpeaker,
+        .interruptSpokenAudioAndMixWithOthers
+    ]
+
+    private var isConfigured = false
+    private var navigationHolders = 0
+    private var alertHolders = 0
+
+    private init() {}
+
+    // MARK: - Holders
+
+    /// Nav voice holds the session for the ENTIRE navigation — not per
+    /// utterance. Per-utterance teardown was the glitch that made CarPlay
+    /// speech arrive late and sound cut off.
+    public func beginNavigation() {
+        configureIfNeeded()
+        navigationHolders += 1
+        activateSession()
+    }
+
+    public func endNavigation() {
+        navigationHolders = max(0, navigationHolders - 1)
+        deactivateIfIdle()
+    }
+
+    /// Speed alerts hold the session (with ducking) while the car is over
+    /// the limit. Acquiring/releasing this slot never changes the
+    /// category/mode, so it cannot interrupt an active nav prompt.
+    public func beginAlertDucking() {
+        configureIfNeeded()
+        alertHolders += 1
+        activateSession()
+    }
+
+    public func endAlertDucking() {
+        alertHolders = max(0, alertHolders - 1)
+        deactivateIfIdle()
+    }
+
+    /// Ensure the session is active before a beep or utterance. Calling
+    /// `setActive(true)` on an already-active session is a harmless no-op;
+    /// when the session was silently deactivated (e.g. by a phone call /
+    /// Siri interruption), this reliably re-activates it.
+    public func ensureActive() {
+        configureIfNeeded()
+        activateSession()
+    }
+
+    // MARK: - Session plumbing
+
+    private func configureIfNeeded() {
+        guard !isConfigured else { return }
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .spokenAudio, options: Self.sessionOptions)
+            isConfigured = true
+            DebugLogger.shared.log("Audio Session configured (playback / spokenAudio)")
+        } catch {
+            DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
+        }
+    }
+
+    private func activateSession() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            DebugLogger.shared.log("Audio Session ACTIVATE ERROR: \(error.localizedDescription)")
+        }
+    }
+
+    /// Deactivates the session ONLY when no subsystem still needs it.
+    /// `.notifyOthersOnDeactivation` tells the previously-interrupted app
+    /// (Music, Spotify, YouTube) that it can restore its volume.
+    private func deactivateIfIdle() {
+        guard navigationHolders == 0, alertHolders == 0 else { return }
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            // Re-apply the policy on the next begin. Safe to do while
+            // nothing is playing — the churn that caused glitches happened
+            // while audio was in flight, never while idle.
+            isConfigured = false
+            DebugLogger.shared.log("Audio Session deactivated (idle)")
+        } catch {
+            DebugLogger.shared.log("Audio Session DEACTIVATE ERROR: \(error.localizedDescription)")
+        }
+    }
+}

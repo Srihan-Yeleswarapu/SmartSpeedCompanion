@@ -4,7 +4,6 @@ import Foundation
 import Combine
 import AVFoundation
 import AudioToolbox
-import CoreHaptics
 
 @MainActor
 public protocol AlertEngineProtocol {
@@ -74,15 +73,22 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     private let playerNode = AVAudioPlayerNode()
     private var toneBuffer: AVAudioPCMBuffer?
     
-    // MARK: - Haptics
-    private var hapticEngine: CHHapticEngine?
-    
     // MARK: - Init
     public init(speedEngine: SpeedEngine) {
         self.speedEngine = speedEngine
-        setupAudioSession()
+        // NOTE: No direct AVAudioSession configuration here. All audio
+        // session ownership lives in AudioSessionCoordinator (single
+        // process-wide owner) so the nav-voice announcer and this tone
+        // engine stop fighting over category/mode/activation — the root
+        // cause of the glitchy CarPlay audio. The coordinator configures
+        // lazily on first use and ref-counts activations.
+        //
+        // Warm up the single haptic engine now so the first speeding
+        // alert doesn't pay CHHapticEngine() creation on the alert path
+        // (the engine would otherwise be lazily built on the first
+        // `triggerAlert()` -> `fireIfEnabled()` call).
+        _ = HapticAlertManager.shared
         setupToneEngine()
-        setupHaptics()
         observeAudioInterruptions()
         
         statusCancellable = speedEngine.$status
@@ -323,16 +329,12 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             wasInterrupted = true
             DebugLogger.shared.log("AlertEngine: audio interrupted by another app")
         case .ended:
-            // The interruption ended. Re-activate the session and restart
-            // the audio engine so the next beep plays correctly.
+            // The interruption ended. Re-activate the shared session and
+            // restart the audio engine so the next beep plays correctly.
             wasInterrupted = false
-            do {
-                try AVAudioSession.sharedInstance().setActive(true)
-                restartAudioEngine()
-                DebugLogger.shared.log("AlertEngine: audio session resumed after interruption")
-            } catch {
-                DebugLogger.shared.log("AlertEngine: failed to resume audio session: \(error.localizedDescription)")
-            }
+            AudioSessionCoordinator.shared.ensureActive()
+            restartAudioEngine()
+            DebugLogger.shared.log("AlertEngine: audio session resumed after interruption")
         @unknown default:
             break
         }
@@ -342,86 +344,38 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         NotificationCenter.default.removeObserver(self)
     }
     
-    /// Activates the audio session with `.duckOthers` to lower other
-    /// audio (YouTube, Music, Spotify) for the entire duration the user
-    /// is speeding. Called once when status changes to `.over`.
-    /// The ducking persists until `deactivateAudioDucking()`, which is
-    /// called when the user slows down below the limit.
+    /// Acquires the shared audio session (with ducking) for the ENTIRE
+    /// duration the user is speeding, so music/YouTube stays lowered until
+    /// `deactivateAudioDucking()`. Delegates to the single process-wide
+    /// `AudioSessionCoordinator` — it never changes category/mode here, so
+    /// a speeding alert can no longer yank the session out of the
+    /// navigation-voice `.spokenAudio` mode (the glitchy-audio bug).
     private func activateAudioDucking() {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(
-                .playback,
-                mode: .default,
-                options: [
-                    .mixWithOthers,
-                    .interruptSpokenAudioAndMixWithOthers,
-                    .duckOthers
-                ]
-            )
-            try session.setActive(true)
-            DebugLogger.shared.log("AlertEngine: audio ducking activated (speeding)")
-        } catch {
-            DebugLogger.shared.log("AlertEngine: activateAudioDucking failed: \(error.localizedDescription)")
-        }
+        AudioSessionCoordinator.shared.beginAlertDucking()
+        DebugLogger.shared.log("AlertEngine: audio ducking activated (speeding)")
     }
-    
-    /// Deactivates the audio session, allowing other apps' audio
-    /// (YouTube, Music, Spotify) to return to full volume.
-    /// Called when the user slows down below the speed limit.
+
+    /// Releases the alert's slot on the shared session, allowing other
+    /// apps' audio (YouTube, Music, Spotify) to return to full volume.
+    /// The coordinator only deactivates the session when NO other
+    /// subsystem (e.g. active navigation voice) still holds it, and uses
+    /// `.notifyOthersOnDeactivation` so the previously-ducked app restores
+    /// its volume.
     private func deactivateAudioDucking() {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            // `.notifyOthersOnDeactivation` tells the system to notify
-            // the previously-interrupted app (YouTube, Music) that it can
-            // restore its volume to normal.
-            try session.setActive(false, options: .notifyOthersOnDeactivation)
-            DebugLogger.shared.log("AlertEngine: audio ducking deactivated (speed normal)")
-        } catch {
-            DebugLogger.shared.log("AlertEngine: deactivateAudioDucking failed: \(error.localizedDescription)")
-        }
+        AudioSessionCoordinator.shared.endAlertDucking()
+        DebugLogger.shared.log("AlertEngine: audio ducking deactivated (speed normal)")
     }
     
-    /// Re-activates the audio session and restarts the engine.
-    /// Called before every beep if we were interrupted, and after
-    /// interruptions end.
-    ///
-    /// ── Silent deactivation fix ─────────────────────────────────────
-    /// DriveViewModel.announce() sets the session to `.spokenAudio` mode,
-    /// and its `speechSynthesizer(_:didFinish:)` delegate calls
-    /// `setActive(false)` after each utterance to restore music volume.
-    /// This deactivates the session WITHOUT posting an
-    /// `AVAudioSession.interruptionNotification` (because `announce()` uses
-    /// `.mixWithOthers`), so `wasInterrupted` never gets set. The original
-    /// guards returned early when monitoring was active and no interruption
-    /// occurred — causing subsequent beeps to stay silent even though the
-    /// `AVAudioEngine` was still running.
-    ///
-    /// Fix: always attempt `setActive(true)` before each beep. Calling
-    /// `setActive(true)` on an already-active session is a harmless no-op;
-    /// when the session was silently deactivated (e.g. by navigation
-    /// speech ending), it reliably re-activates it. This is simpler and
-    /// more robust than checking `session.isActive` (which is not exposed
-    /// in Swift by AVAudioSession).
+    /// Ensures the shared session is active before each beep. Delegates to
+    /// `AudioSessionCoordinator` — calling `setActive(true)` on an
+    /// already-active session is a harmless no-op; when the session was
+    /// silently deactivated (e.g. by navigation speech ending or an
+    /// interruption), it reliably re-activates it. No category re-apply
+    /// here: re-applying the category per beep was what interrupted
+    /// ongoing navigation speech (glitchy-audio bug, TestFlight 71).
     private func ensureAudioSessionActive() {
-        let session = AVAudioSession.sharedInstance()
-        
-        // FIX: Do NOT re-apply the audio category here. Re-applying
-        // category with .interruptSpokenAudioAndMixWithOthers before
-        // every beep interrupts ongoing navigation speech, causing the
-        // "glitchy audio" reported in TestFlight feedback 71.
-        //
-        // The category is already set correctly by setupAudioSession()
-        // and activateAudioDucking(). Just ensure the session is active.
-        // Calling setActive(true) on an already-active session is a
-        // harmless no-op; when the session was silently deactivated
-        // (e.g. by navigation speech ending), this re-activates it.
-        do {
-            try session.setActive(true)
-            wasInterrupted = false
-        } catch {
-            DebugLogger.shared.log("AlertEngine: audio session reactivate failed: \(error.localizedDescription)")
-        }
+        AudioSessionCoordinator.shared.ensureActive()
+        wasInterrupted = false
     }
     
     /// Restarts the AVAudioEngine after it was stopped by an interruption.
@@ -439,28 +393,10 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     }
     
     // MARK: - Audio Session
-    private func setupAudioSession() {
-        do {
-            let session = AVAudioSession.sharedInstance()
-            
-            try session.setCategory(
-                .playback,
-                mode: .default,
-                options: [
-                    .mixWithOthers,
-                    .interruptSpokenAudioAndMixWithOthers,
-                    .duckOthers
-                ]
-            )
-            
-            try session.setActive(true)
-            
-            DebugLogger.shared.log("Audio session configured OK")
-            
-        } catch {
-            DebugLogger.shared.log("Audio session error: \(error.localizedDescription)")
-        }
-    }
+    // No direct session setup here — all ownership lives in
+    // AudioSessionCoordinator (Core/AudioSessionCoordinator.swift) so the
+    // nav-voice announcer and this tone engine share ONE stable session
+    // policy instead of fighting over category/mode/activation.
     
     // MARK: - Tone Engine
     private func setupToneEngine() {
@@ -533,125 +469,21 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts)
     }
     
-    // MARK: - HAPTICS SETUP
-    private func setupHaptics() {
-    guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else {
-        DebugLogger.shared.log("No advanced haptics support")
-        return
-    }
+    // MARK: - Haptics
     
-    do {
-        hapticEngine = try CHHapticEngine()
-        
-        // Restart if engine stops
-        hapticEngine?.stoppedHandler = { reason in
-            DebugLogger.shared.log("Haptics stopped: \(reason.rawValue)")
-        }
-        
-        // Reset handler (CRITICAL)
-        hapticEngine?.resetHandler = { [weak self] in
-            DebugLogger.shared.log("Haptics reset → restarting engine")
-            do {
-                try self?.hapticEngine?.start()
-            } catch {
-                DebugLogger.shared.log("Haptics restart failed: \(error.localizedDescription)")
-            }
-        }
-        
-        try hapticEngine?.start()
-        DebugLogger.shared.log("Haptic engine started OK")
-        
-    } catch {
-        DebugLogger.shared.log("Haptics setup error: \(error.localizedDescription)")
-    }
-}
-    
-    // MARK: - HAPTIC PATTERNS
-    
-    // Note: The previous `hapticSpeedingAlert()` private method (an
-    // aggressive 12-events-per-second continuous barrage) was removed in
-    // TestFlight v2.2.0 b366. Speeding haptics are now delegated entirely
-    // to `HapticAlertManager.shared.fireIfEnabled()`, which honors the
-    // user's master toggle + style pick from Settings → ALERTS.
+    // Speeding haptics are delegated entirely to
+    // `HapticAlertManager.shared.fireIfEnabled()` (called from
+    // `triggerAlert()`), which owns the single CHHapticEngine for the
+    // process and honors the user's master toggle + style pick from
+    // Settings → ALERTS.
     //
-    // The `hapticExplosion / hapticLeft / hapticRight` helpers below remain
-    // because they are called by CarPlayNavigationManager / SmartSpeedLive
-    // Activity / DriveViewModel voice prompts — those are NOT speed-alert
-    // haptic signals and live in a separate vocabulary.
-    
-    // Explosion / cloud feel
-    public func hapticExplosion() {
-        guard let _ = hapticEngine else { return }
-        
-        let events = [
-            CHHapticEvent(
-                eventType: .hapticTransient,
-                parameters: [
-                    .init(parameterID: .hapticIntensity, value: 1.0),
-                    .init(parameterID: .hapticSharpness, value: 1.0)
-                ],
-                relativeTime: 0
-            ),
-            CHHapticEvent(
-                eventType: .hapticContinuous,
-                parameters: [
-                    .init(parameterID: .hapticIntensity, value: 0.4),
-                    .init(parameterID: .hapticSharpness, value: 0.1)
-                ],
-                relativeTime: 0.05,
-                duration: 0.4
-            )
-        ]
-        
-        playHaptic(events)
-    }
-    
-    // LEFT
-    public func hapticLeft() {
-        playHaptic([
-            .init(eventType: .hapticTransient,
-                  parameters: [.init(parameterID: .hapticIntensity, value: 0.6)],
-                  relativeTime: 0),
-            .init(eventType: .hapticTransient,
-                  parameters: [.init(parameterID: .hapticIntensity, value: 1.0)],
-                  relativeTime: 0.15)
-        ])
-    }
-    
-    // RIGHT
-    public func hapticRight() {
-        playHaptic([
-            .init(eventType: .hapticTransient,
-                  parameters: [.init(parameterID: .hapticIntensity, value: 1.0)],
-                  relativeTime: 0),
-            .init(eventType: .hapticTransient,
-                  parameters: [.init(parameterID: .hapticIntensity, value: 0.6)],
-                  relativeTime: 0.15)
-        ])
-    }
-    
-    // MARK: - Haptic Player
-    private func playHaptic(_ events: [CHHapticEvent]) {
-        guard let engine = hapticEngine else {
-            // FALLBACK (guaranteed vibration)
-            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
-            return
-        }
-        
-        do {
-            // Fix: Start the engine directly. If it's already started, 
-            // this call is essentially a no-op or resumes it.
-            try engine.start()
-            
-            let pattern = try CHHapticPattern(events: events, parameters: [])
-            let player = try engine.makePlayer(with: pattern)
-            try player.start(atTime: 0)
-            
-        } catch {
-            DebugLogger.shared.log("AlertEngine: Haptic Error: \(error.localizedDescription)")
-            // Fallback to basic vibration if the complex pattern fails
-            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
-        }
-    }
+    // NOTE: AlertEngine previously created its own CHHapticEngine here
+    // (plus `hapticExplosion` / `hapticLeft` / `hapticRight` helpers).
+    // That duplicate engine fought HapticAlertManager's engine over the
+    // single-process haptic resource — each engine's resetHandler
+    // restarted itself and tore the other one down, so speeding
+    // vibrations silently stopped firing (TestFlight feedback:
+    // "vibrations are not coming when speeding"). The redundant engine
+    // and its dead helpers were removed.
 }
 

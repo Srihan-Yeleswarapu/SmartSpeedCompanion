@@ -37,6 +37,12 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     @MainActor private var startStopButton: CPMapButton!
     @MainActor private var muteButton: CPMapButton!
     @MainActor private var snoozeButton: CPMapButton!
+    // CarPlay Audio App (com.apple.developer.carplay-audio): the Now
+    // Playing template is required for the audio-app category, so the map
+    // gets a dedicated button that pushes CPNowPlayingTemplate with live
+    // drive state (speed / road / status) rendered via
+    // CarPlayNowPlayingController.
+    @MainActor private var nowPlayingButton: CPMapButton!
     @MainActor private var wasSnoozeVisible: Bool = false
     // Incremented on every + category tap; results only push if they belong
     // to the latest request, so a slow earlier search can't overwrite a
@@ -141,6 +147,9 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         self.mapTemplate = CPMapTemplate()
         super.init()
         self.navigationManager = CarPlayNavigationManager(viewModel: viewModel, mapTemplate: mapTemplate)
+        // Keep the Now Playing controller fed with live drive state so the
+        // template (if on screen) always mirrors speed/road/status.
+        CarPlayNowPlayingController.shared.bind(viewModel: viewModel)
         setupTemplate()
         bindViewModel()
     }
@@ -250,9 +259,15 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         snoozeButton.image = CarPlayUI.circleBadge(systemName: "hand.raised.fill", color: CarPlayUI.alertRed)
         snoozeButton.focusedImage = CarPlayUI.circleBadge(systemName: "hand.raised.fill", color: CarPlayUI.alertRed, size: 52)
 
+        nowPlayingButton = CPMapButton { [weak self] _ in
+            Task { @MainActor in self?.presentNowPlaying() }
+        }
+        nowPlayingButton.image = CarPlayUI.circleBadge(systemName: "music.note", color: CarPlayUI.purple)
+        nowPlayingButton.focusedImage = CarPlayUI.circleBadge(systemName: "music.note", color: CarPlayUI.purple, size: 52)
+
         mapTemplate.mapButtons = [
             searchButton, addStopButton, savedPlacesButton,
-            muteButton, startStopButton
+            muteButton, startStopButton, nowPlayingButton
         ]
 
         Task { @MainActor in
@@ -311,8 +326,31 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         let displayLimit = SpeedFormatting.displayLimit(forMph: limit, measurementSystem: system)
         speedButton.title = "\(Int(speed)) \(unitShort)"
         limitButton.title = limit == 0 ? "LIMIT --" : "LIMIT \(displayLimit) \(unitShort)"
-        limitButton.image = CarPlayUI.statusPill(color: CarPlayUI.statusColor(status))
+        // Keep the limit button text-only so CarPlay shows the posted speed
+        // limit instead of a green status capsule in the top-right HUD.
+        limitButton.image = nil
         roadNameButton.title = (roadName?.isEmpty == false) ? roadName! : ""
+        // Mirror the same snapshot to the CarPlay Now Playing screen so it
+        // never shows a stale speed/road/status while the driver glances at
+        // it. Cheap when the template isn't visible.
+        CarPlayNowPlayingController.shared.refresh()
+    }
+
+    /// CarPlay audio apps must expose the Now Playing template. Push
+    /// `CPNowPlayingTemplate` (singleton) with live drive state — a music
+    /// note button on the map. Uses the same single-flight push guard as
+    /// the other flows so a double-tap cannot stack a second copy.
+    @MainActor
+    private func presentNowPlaying() {
+        clearInactiveAddStopTemplates()
+        guard !isTemplatePushInFlight,
+              !isTemplateOnStack(CPNowPlayingTemplate.shared),
+              let interfaceController else { return }
+        isTemplatePushInFlight = true
+        CarPlayNowPlayingController.shared.prepareForPresentation()
+        interfaceController.pushTemplate(CPNowPlayingTemplate.shared, animated: true) { [weak self] _, _ in
+            Task { @MainActor in self?.isTemplatePushInFlight = false }
+        }
     }
 
     @MainActor
