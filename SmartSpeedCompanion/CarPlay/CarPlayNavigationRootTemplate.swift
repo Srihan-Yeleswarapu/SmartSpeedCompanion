@@ -896,8 +896,8 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             // navigation. tearDownNavigation() already finishes the
             // CarPlay session cleanly; this callback should only fire
             // when the user explicitly stops navigation while connected.
-            guard interfaceController != nil else { return }
-            if viewModel.isNavigating { await viewModel.navigationCoordinator.endNavigation() }
+            guard self.interfaceController != nil else { return }
+            if self.viewModel.isNavigating { await self.viewModel.navigationCoordinator.endNavigation() }
         }
     }
 }

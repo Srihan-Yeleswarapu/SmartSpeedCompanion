@@ -270,6 +270,9 @@ public final class NavigationCoordinator: ObservableObject {
     /// Invalidates in-flight multi-stop calculations when stops or the
     /// destination changes while MapKit is awaiting a leg response.
     private var multiStopStateGeneration: UInt64 = 0
+    /// Read-only edit token for callers that need to roll back only their own
+    /// failed stop mutation. A later edit invalidates the token.
+    public var routeStopsEditGeneration: UInt64 { multiStopStateGeneration }
     /// Map items for each calculated leg, parallel to `routeLegs`. The
     /// coordinator follows one leg at a time; CarPlay uses this to present the
     /// current stop rather than claiming the final destination is the active
@@ -464,8 +467,13 @@ public final class NavigationCoordinator: ObservableObject {
     /// The caller uses this only for the same user edit that initiated the
     /// failed calculation, so the active route and its legs remain aligned.
     @discardableResult
-    public func restoreRouteStops(_ stops: [RouteStop], ifCurrentIDsMatch expectedIDs: [UUID]) -> Bool {
-        guard routeStops.map(\.id) == expectedIDs else { return false }
+    public func restoreRouteStops(
+        _ stops: [RouteStop],
+        ifCurrentIDsMatch expectedIDs: [UUID],
+        expectedGeneration: UInt64? = nil
+    ) -> Bool {
+        guard routeStops.map(\.id) == expectedIDs,
+              expectedGeneration.map({ routeStopsEditGeneration == $0 }) ?? true else { return false }
         routeStops = stops
         multiStopStateGeneration &+= 1
         // The preserved routeLegs/multiStopLegDestinations still belong to

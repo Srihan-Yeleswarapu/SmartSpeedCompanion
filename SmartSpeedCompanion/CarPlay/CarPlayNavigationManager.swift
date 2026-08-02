@@ -49,6 +49,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     /// navigation. Called by CarPlaySceneDelegate when the user disconnects
     /// from CarPlay so the system framework doesn't leak the session.
     public func finishCurrentSession() {
+        navigationGeneration &+= 1
         locationCancellable?.cancel()
         locationCancellable = nil
         navigationSession?.finishTrip()
@@ -62,16 +63,16 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         navigationSession?.finishTrip()
     }
 
-    /// Stops the old progress stream before NavigationCoordinator publishes a
-    /// replacement leg. This closes the mixed-route window during a stop
-    /// transition; `startNavigation(route:destination:)` installs the new
-    /// session immediately afterward.
+    /// Invalidates the old progress stream before NavigationCoordinator
+    /// publishes a replacement leg. Keep the CPNavigationSession alive: the
+    /// CPMapTemplate stop callback has no session identity, so finishing the
+    /// old session here could make a delayed callback look like a real user
+    /// stop on the replacement session.
     public func prepareForRouteTransition() {
         navigationGeneration &+= 1
         locationCancellable?.cancel()
         locationCancellable = nil
-        navigationSession?.finishTrip()
-        navigationSession = nil
+        navigationSession?.upcomingManeuvers = []
         currentManeuver = nil
     }
     
@@ -195,13 +196,15 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     
     // MARK: - Navigation Control
     public func startNavigation(route: MKRoute, destination: MKMapItem) {
+        // Reroutes and multi-stop leg transitions reuse the active CarPlay
+        // session. A CPMapTemplate stop callback has no session identity, so
+        // finishing and immediately recreating the session can make a delayed
+        // old callback end the phone's new directions. Keep the session and
+        // replace its maneuver stream instead.
         navigationGeneration &+= 1
-        // Reroutes and multi-stop leg transitions replace the active CarPlay
-        // session. Finish the old session before installing the new one so
-        // CarPlay does not retain two progress streams and stale maneuvers.
         locationCancellable?.cancel()
-        navigationSession?.finishTrip()
-        navigationSession = nil
+        locationCancellable = nil
+        navigationSession?.upcomingManeuvers = []
         currentManeuver = nil
 
         viewModel.isNavigating = true
@@ -233,11 +236,19 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
             additionalInformationVariants: [],
             selectionSummaryVariants: ["Fastest"]
         )
-        let activeDestination = viewModel.navigationCoordinator.activeMultiStopDestination ?? destination
-        let trip = CPTrip(origin: MKMapItem.forCurrentLocation(), destination: activeDestination, routeChoices: [routeChoice])
-        self.currentTrip = trip
+        // Keep the CPTrip destination stable at the final endpoint. The
+        // CPNavigationSession's trip is immutable; using the active stop here
+        // would leave stale stop metadata after a route transition because
+        // the existing session is intentionally reused to avoid an ambiguous
+        // delayed stop callback. The maneuver stream below still follows the
+        // active leg and the phone coordinator owns the complete stop plan.
+        let tripDestination = viewModel.navigationCoordinator.destination ?? destination
+        let trip = CPTrip(origin: MKMapItem.forCurrentLocation(), destination: tripDestination, routeChoices: [routeChoice])
         
-        navigationSession = mapTemplate.startNavigationSession(for: trip)
+        if navigationSession == nil {
+            self.currentTrip = trip
+            navigationSession = mapTemplate.startNavigationSession(for: trip)
+        }
         
         currentSteps = route.steps
         
@@ -264,8 +275,9 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     /// coordinator flow so speed HUD, turn-by-turn, and drive recording all
     /// reflect the active trip. CarPlay's `CPMapTemplateDelegate.startedTrip`
     /// fires before this method is called; `startNavigationSession(for:)`
-    /// (called by `startNavigation`) ends any previous session first, so our
-    /// properly-configured trip replaces the CarPlay-created one cleanly.
+    /// (called by `startNavigation`) installs the app-managed session when
+    /// CarPlay has not already provided one, so the existing session remains
+    /// the single source of CarPlay navigation callbacks.
     public func handleCarPlayStartedTrip(_ trip: CPTrip) async {
         let destination = trip.destination
 
@@ -289,6 +301,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     }
 
     public func endNavigation() {
+        navigationGeneration &+= 1
         navigationSession?.finishTrip()
         navigationSession = nil
         currentTrip = nil

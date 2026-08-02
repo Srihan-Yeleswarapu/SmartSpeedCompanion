@@ -1462,6 +1462,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     @discardableResult
     public func addStopToRoute(_ mapItem: MKMapItem, at index: Int? = nil, presentRouteStopsSheet: Bool = true) async -> Bool {
         let previousStops = routeStops
+        let editGeneration = navigationCoordinator.routeStopsEditGeneration
         let stop = RouteStop(
             name: mapItem.name ?? "Stop",
             address: mapItem.placemark.title,
@@ -1481,11 +1482,26 @@ public final class DriveViewModel: NSObject, ObservableObject {
         guard isNavigating else { return true }
 
         if let route = await navigationCoordinator.calculateMultiStopRoute() {
-            await startNavigation(with: route, isReroute: true)
-            return true
+            let adopted = await startNavigation(with: route, isReroute: true)
+            if adopted {
+                return true
+            }
+            // Route calculation can succeed while lifecycle validation rejects
+            // adoption (for example, a newer CarPlay transition took over).
+            // Do not leave the new stop published against the old directions.
+            _ = navigationCoordinator.restoreRouteStops(
+                previousStops,
+                ifCurrentIDsMatch: editedStopIDs,
+                expectedGeneration: editGeneration &+ 1
+            )
+            return false
         }
 
-        _ = navigationCoordinator.restoreRouteStops(previousStops, ifCurrentIDsMatch: editedStopIDs)
+        _ = navigationCoordinator.restoreRouteStops(
+            previousStops,
+            ifCurrentIDsMatch: editedStopIDs,
+            expectedGeneration: editGeneration &+ 1
+        )
         return false
     }
 
