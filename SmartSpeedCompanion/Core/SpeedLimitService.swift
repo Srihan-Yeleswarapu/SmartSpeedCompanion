@@ -4,8 +4,9 @@
 // Decision tree (live-first; SQLite only as last-resort fallback):
 //   1. Spatial-grid cache lookup -> hit short-circuits everything below.
 //   2. If NetworkReachability.isConnected:
-//        Walk liveProviders in order (ArcGIS HPMS -> Overpass) -- first non-nil
-//        response wins. On network/parse failure for a provider, drop and try the next.
+//        Walk liveProviders in order (HERE REST -> ArcGIS HPMS -> Overpass) -- first
+//        non-nil response wins. On network/parse failure for a provider, drop and
+//        try the next.
 //   3. SQLite fallback (offline, or all live providers missed) -- with ExpandedSearch
 //        retry and miss-grace window before dropping state to "No Data".
 //   4. SQLite miss raises missCount; at missThresholdBeforeClear consecutive misses
@@ -161,17 +162,15 @@ public class SmartSpeedLimitService: ObservableObject {
     ///   driving.
     static let PHYSICS_PRIOR_MARGIN_MPH: Int = 15
 
-    // MARK: - HERE REST intentionally disabled
+    // MARK: - Live provider chain
     //
-    // HERE REST is implemented on disk, but its current 35 m eastward
-    // self-loop is heading-agnostic. At intersections and parallel roads,
-    // HERE can therefore return the speed limit for an adjacent segment.
-    // Keep the provider out of the authoritative chain until it can use a
-    // heading-aligned destination and validate the matched segment identity.
-    // ArcGIS, Overpass, and the road-name-aware Arizona SQLite fallback have
-    // the safer road-selection behavior needed for the live driving path.
+    // HERE REST remains the primary live provider. It is followed by ArcGIS and
+    // Overpass when HERE has no credentials, no heading, no coverage, or fails.
+    // The HERE provider aligns its short probe with the vehicle course whenever
+    // one is available, avoiding the old eastward-only probe at intersections.
     private init() {
         self.liveProviders = [
+            HERERestSpeedLimitProvider(),
             ArcGISHPMSSpeedLimitProvider(),
             OverpassSpeedLimitProvider(),
         ]

@@ -59,8 +59,12 @@ public struct LiveMapView: UIViewRepresentable {
         // `map.showsUserTrackingButton = true` here, otherwise the system
         // would add a duplicate at its default location.
 
-        // Use native tracking with heading for best centering reliability.
-        map.userTrackingMode = .followWithHeading
+        // Use plain follow mode while free-driving. MapKit's heading tracker
+        // continuously reacts to compass noise; the custom CameraAnimator owns
+        // pitch/altitude, so combining that tracker with camera updates makes
+        // the map appear to zoom/settle repeatedly. Navigation switches to
+        // `.followWithHeading` below when turn-by-turn guidance needs heading.
+        map.userTrackingMode = .follow
 
         // Add gesture detection for manual mode.
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleManualInteraction(_:)))
@@ -248,21 +252,19 @@ public struct LiveMapView: UIViewRepresentable {
             return
         }
 
-        // Re-engage native tracking if it was released.
-        // IMPORTANT: animated:false is critical here. Using animated:true tells
-        // MapKit to animate the camera to its DEFAULT altitude/pitch for the
-        // follow-with-heading mode, which immediately conflicts with the camera
-        // system's setCamera call below — creating a tug-of-war that manifests
-        // as rapid zooming in/out. With animated:false the tracking mode snaps
-        // to the user location silently, and the camera system below takes full
-        // ownership of altitude/pitch on this same update pass.
-        if uiView.userTrackingMode == .none {
+        // Re-engage native tracking if it was released, and keep compass
+        // tracking out of free-drive camera updates. The custom animator owns
+        // altitude/pitch; MapKit should only own centering unless navigation
+        // explicitly needs heading-following.
+        let desiredTrackingMode: MKUserTrackingMode =
+            viewModel.isNavigating ? .followWithHeading : .follow
+        if uiView.userTrackingMode != desiredTrackingMode {
             #if DEBUG || DEVELOPER_BUILD
             if !viewModel.locationManager.isMockMode {
-                uiView.setUserTrackingMode(.followWithHeading, animated: false)
+                uiView.setUserTrackingMode(desiredTrackingMode, animated: false)
             }
             #else
-            uiView.setUserTrackingMode(.followWithHeading, animated: false)
+            uiView.setUserTrackingMode(desiredTrackingMode, animated: false)
             #endif
         }
 
@@ -318,8 +320,13 @@ public struct LiveMapView: UIViewRepresentable {
 
         // Camera system: build context and let the decision engine + animator
         // smoothly update altitude and pitch without breaking tracking mode.
+        // Camera tuning tables are expressed in MPH, while the published HUD
+        // speed is KM/H when the user selects Metric.
+        let cameraSpeedMph = SpeedFormatting.isMetric(SpeedFormatting.measurementSystem())
+            ? viewModel.speed * 0.621371
+            : viewModel.speed
         let cameraCtx = CameraContext(
-            speed: viewModel.speed,
+            speed: cameraSpeedMph,
             speedLimit: viewModel.limit,
             isNavigating: viewModel.isNavigating,
             isRecording: viewModel.isRecording,

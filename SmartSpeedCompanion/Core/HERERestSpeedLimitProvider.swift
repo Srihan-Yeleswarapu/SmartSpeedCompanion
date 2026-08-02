@@ -34,9 +34,10 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
     private var _lastFailureAt: Date?
     private let successMinDistance: CLLocationDistance = 100
     private let failureRetryInterval: TimeInterval = 10
-    // ~35 m offset. 5 m is too tight — HERE sometimes returned the speed of an
-    // adjacent street segment. 35 m is large enough for HERE to unambiguously
-    // resolve the segment containing the origin.
+    // ~35 m probe. 5 m is too tight — HERE sometimes returned the speed of an
+    // adjacent street segment. The probe follows the vehicle course whenever
+    // one is available, so it samples the road ahead instead of an arbitrary
+    // eastward segment at intersections.
     private let selfLoopMeters: Double = 35
 
     public init() {}
@@ -70,13 +71,20 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             return nil
         }
 
-        // Offset the destination ~35 m east-ish (heading-agnostic). 0.00032 deg
-        // latitude ≈ 35 m. For lon we scale by cos(lat) so the resulting great-
-        // circle distance is ~35 m regardless of latitude.
+        // Probe the road ahead by ~35 m. HERE's routing endpoint uses the
+        // origin/destination pair to choose a segment, so an eastward-only
+        // probe can jump to a parallel road or cross street. A CLLocation
+        // course is degrees clockwise from true north; fall back to east only
+        // when the GPS has no usable course yet.
         let meterDegLat = 1.0 / 111_111.0
         let meterDegLon = 1.0 / (111_111.0 * max(0.000001, cos(coordinate.latitude * .pi / 180)))
-        let dLat = 35.0 * meterDegLat
-        let dLon = 35.0 * meterDegLon
+        let course = heading.flatMap { value in
+            value.isFinite && value >= 0 && value < 360 ? value : nil
+        } ?? 90.0
+        let normalizedCourse = course
+        let headingRadians = normalizedCourse * .pi / 180.0
+        let dLat = selfLoopMeters * cos(headingRadians) * meterDegLat
+        let dLon = selfLoopMeters * sin(headingRadians) * meterDegLon
         let origin = String(format: "%.6f,%.6f", coordinate.latitude, coordinate.longitude)
         let dest = String(format: "%.6f,%.6f",
                           coordinate.latitude + dLat, coordinate.longitude + dLon)
