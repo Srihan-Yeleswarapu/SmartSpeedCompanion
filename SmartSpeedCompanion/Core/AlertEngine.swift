@@ -211,6 +211,16 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // we deactivate (when the user slows down). Every beep that
         // fires while in this state will be clearly audible.
         activateAudioDucking()
+        
+        // ── Sustained speeding vibration ──────────────────────────
+        // Start the repeating 3s-on / 0.5s-off pulse NOW (not on the
+        // 2 s beep cooldown), so the driver feels the vibration the
+        // moment they cross the limit. It keeps looping until
+        // `stopMonitoringState()` fires when they slow back down.
+        // Idempotent — safe to re-call on every monitor tick.
+        HapticAlertManager.shared.startSpeedingPulse(
+            severity: computedSeverity()
+        )
 
         timerCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
@@ -232,6 +242,19 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 // an objectWillChange so Timer-driven countdowns re-render.
                 if self.isSnoozed {
                     self.objectWillChange.send()
+                }
+                
+                // ── Sustained vibration lifecycle ───────────────────
+                // Keep the 3s-on / 0.5s-off pulse alive while speeding,
+                // but pause it while snoozed or when the user toggles
+                // haptics off mid-drive. The pulse resumes automatically
+                // on the next tick once snooze expires / haptics return.
+                if self.isSnoozed || !self.isHapticAlertsEnabled {
+                    HapticAlertManager.shared.stopSpeedingPulse()
+                } else {
+                    HapticAlertManager.shared.startSpeedingPulse(
+                        severity: self.computedSeverity()
+                    )
                 }
 
                 if self.consecutiveSeconds >= 1 {
@@ -259,6 +282,12 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         timerCancellable = nil
         cancelSnooze()
         
+        // ── Stop the sustained speeding vibration ─────────────────
+        // User is back inside the limit (or alerts fully disabled):
+        // kill the looping pulse immediately so the phone stops
+        // vibrating.
+        HapticAlertManager.shared.stopSpeedingPulse()
+        
         // ── Restore music volume ───────────────────────────────────
         // User has slowed down and status is no longer `.over`.
         // Deactivate our audio session so the other app's (YouTube,
@@ -271,33 +300,30 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     }
     
     // MARK: - ALERT
+    
+    /// How far over the limit the user is, normalized 0.1–1.0 (0.5 when no
+    /// limit data). Used to modulate the sustained speeding pulse's
+    /// intensity: +1 mph over ≈ 0.15, +20 mph over ≈ 1.0 (metric: +1.6 km/h
+    /// ≈ 0.15, +32 km/h ≈ 1.0).
+    private func computedSeverity() -> Double {
+        guard let engine = speedEngine, engine.limit > 0 else { return 0.5 }
+        // speed and limit are in the active display unit (mph or km/h).
+        let threshold = Double(engine.limit + engine.userBuffer)
+        let overspeedAmount = max(0, engine.speed - threshold)
+        return min(1.0, max(0.1, overspeedAmount / 20.0))
+    }
+    
     private func triggerAlert() {
-        // Compute severity based on how far over the limit the user is
-        var severity: Double = 0.5
-        if let engine = speedEngine, engine.limit > 0 {
-            // speed and limit are in the active display unit (mph or km/h).
-            // Calculate the raw overspeed amount relative to limit + buffer.
-            let threshold = Double(engine.limit + engine.userBuffer)
-            let overspeedAmount = max(0, engine.speed - threshold)
-            // Map overspeed to severity 0.1–1.0: +1 mph over = 0.15, +20 mph over = 1.0
-            // In metric (+1.6 km/h = 0.15, +32 km/h = 1.0)
-            severity = min(1.0, max(0.1, overspeedAmount / 20.0))
-        }
-        
         // Audio half: only fires when the audio toggle is on. Independent
         // of the haptic toggle so users can silence the audio while keeping
         // vibration alerts.
         if isAudioAlertsEnabled {
             playTone()
         }
-        // Haptic half: HapticAlertManager owns its own master toggle + style
-        // picker + deviceSupportsHaptics guard, so we just delegate. Pass
-        // severity + consecutiveSeconds so patterns modulate their intensity
-        // based on how badly / long the user is speeding.
-        HapticAlertManager.shared.fireIfEnabled(
-            severity: severity,
-            consecutiveSeconds: consecutiveSeconds
-        )
+        // Haptic half: handled by the sustained speeding pulse started in
+        // `startMonitoring()` and stopped in `stopMonitoringState()` — the
+        // looping 3s-on / 0.5s-off vibration replaces the old per-beep
+        // one-shot `fireIfEnabled()` haptic. No per-tick haptic needed here.
     }
     
     // MARK: - Audio Session Interruption Handling
@@ -466,11 +492,15 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - Haptics
     
-    // Speeding haptics are delegated entirely to
-    // `HapticAlertManager.shared.fireIfEnabled()` (called from
-    // `triggerAlert()`), which owns the single CHHapticEngine for the
-    // process and honors the user's master toggle + style pick from
-    // Settings → ALERTS.
+    // Speeding haptics are owned entirely by `HapticAlertManager.shared`
+    // (the single CHHapticEngine for the process), driven from the monitor
+    // lifecycle here:
+    //   • `startMonitoring()` starts the sustained 3s-on / 0.5s-off looping
+    //     pulse the moment the user crosses the limit.
+    //   • The 1 s monitor tick keeps it alive (idempotent) and pauses it
+    //     while snoozed or when haptics are toggled off mid-drive.
+    //   • `stopMonitoringState()` stops it the instant the user is back
+    //     inside the limit.
     //
     // NOTE: AlertEngine previously created its own CHHapticEngine here
     // (plus `hapticExplosion` / `hapticLeft` / `hapticRight` helpers).

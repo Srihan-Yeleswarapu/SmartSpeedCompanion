@@ -253,6 +253,117 @@ public final class HapticAlertManager: ObservableObject {
         playPattern(pattern)
     }
 
+    // MARK: - Sustained speeding pulse
+
+    /// Advanced player driving the repeating speeding vibration — 3 s of
+    /// continuous vibration, 0.5 s break, repeat — for as long as the user
+    /// stays over the limit. Replaces the old per-beep one-shot haptic
+    /// (single transient on the 2 s audio cooldown) with a vibration that
+    /// genuinely runs until the driver is back inside the speed limit
+    /// (TestFlight feedback: "I also want the vibrations to run for more
+    /// than 1 second… up until the user is back inside the speed limit").
+    ///
+    /// The loop is implemented with `CHHapticAdvancedPatternPlayer`: a
+    /// `hapticContinuous` event of duration `onDuration`, with `loopEnd`
+    /// pushed out to `onDuration + offDuration` so the 0.5 s gap after each
+    /// 3 s burst plays as silence before the pattern restarts.
+    private var speedingPlayer: CHHapticAdvancedPatternPlayer?
+    /// True once the system-vibrate fallback has fired for the current
+    /// episode, so a persistently failing engine can't buzz the phone every
+    /// 1 s tick. Reset on successful start and on stop.
+    private var speedingFallbackVibrated = false
+
+    /// How long each vibration burst runs (seconds).
+    private let speedingOnDuration: TimeInterval = 3.0
+    /// Silence gap between bursts (seconds).
+    private let speedingOffDuration: TimeInterval = 0.5
+
+    /// Start (or keep alive) the repeating speeding vibration.
+    ///
+    /// Idempotent: if a pulse is already playing at the same intensity it
+    /// returns immediately, so AlertEngine can safely call this on every
+    /// 1 s monitor tick without stacking players. Intensity is modulated by
+    /// `severity` (0.1–1.0) so the burst feels stronger the farther over the
+    /// limit the user is.
+    ///
+    /// Honors the same gates as `fireIfEnabled()`: master toggle, style
+    /// picker (`.off` = silence), and haptic hardware capability.
+    public func startSpeedingPulse(severity: Double = 0.5) {
+        guard isEnabled else { return }
+        guard style != .off else { return }
+        guard deviceSupportsHaptics, let engine = engine else { return }
+
+        let clampedSeverity = min(1.0, max(0.1, severity))
+        let intensity = Float(0.6 + 0.4 * clampedSeverity)
+
+        // One pulse per `.over` episode: once the loop is running we never
+        // tear it down and rebuild — rebuilding would restart the 3 s burst
+        // mid-vibration on every small severity drift (acceleration) and
+        // break the steady 3s-on / 0.5s-off cadence the user asked for.
+        // Intensity is fixed at the onset severity for the whole episode.
+        if speedingPlayer != nil {
+            // If the engine itself died mid-episode (backgrounding, audio
+            // interruption, hardware reset), the old player is dead too —
+            // tear it down so this call rebuilds a fresh one next time.
+            if engine.isRunning {
+                return
+            }
+            speedingPlayer = nil
+        }
+
+        do {
+            let pattern = try CHHapticPattern(events: [
+                CHHapticEvent(
+                    eventType: .hapticContinuous,
+                    parameters: [
+                        .init(parameterID: .hapticIntensity, value: intensity),
+                        .init(parameterID: .hapticSharpness, value: 0.5)
+                    ],
+                    relativeTime: 0,
+                    duration: speedingOnDuration
+                )
+            ], parameters: [])
+
+            try engine.start()
+            let player = try engine.makeAdvancedPlayer(with: pattern)
+            player.loopEnabled = true
+            // Loop restarts at on+off (3.5 s): the 3 s burst ends at 3.0 s,
+            // so 3.0→3.5 s is silence = the break, then the cycle repeats.
+            player.loopEnd = speedingOnDuration + speedingOffDuration
+            try player.start(atTime: CHHapticTimeImmediate)
+            // Guard guarantees `speedingPlayer` is nil here, so no prior
+            // player to tear down — no overlap / double-vibration risk.
+            speedingPlayer = player
+            speedingFallbackVibrated = false
+        } catch {
+            DebugLogger.shared.log("HapticAlertManager speeding pulse error: \(error.localizedDescription)")
+            // Fallback so the driver still feels something — but only ONCE
+            // per episode; don't buzz the phone every 1 s tick while the
+            // engine keeps failing.
+            if !speedingFallbackVibrated {
+                speedingFallbackVibrated = true
+                AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+            }
+        }
+    }
+
+    /// Stop the repeating speeding vibration — called when the user is back
+    /// inside the limit, when alerts are snoozed, or when haptics are
+    /// toggled off mid-drive.
+    public func stopSpeedingPulse() {
+        guard let player = speedingPlayer else {
+            speedingFallbackVibrated = false
+            return
+        }
+        speedingPlayer = nil
+        speedingFallbackVibrated = false
+        do {
+            try player.stop(atTime: CHHapticTimeImmediate)
+        } catch {
+            DebugLogger.shared.log("HapticAlertManager speeding pulse stop error: \(error.localizedDescription)")
+        }
+    }
+
     /// Build a CHHapticPattern for the current style, optionally modulated by
     /// severity (0.0–1.0) and an escalation factor (0.0–1.0).
     private func buildPattern(severity: Double = 0.5, escalationFactor: Double = 0.0) -> CHHapticPattern? {
