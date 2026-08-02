@@ -465,17 +465,17 @@ public struct LiveMapView: UIViewRepresentable {
 
         // Overlay state tracking to avoid redundant remove/add cycles
         private var lastRoutePolylineCount: Int = 0
-        private var lastHistoryCounts: (safeCount: Int, overCount: Int) = (0, 0)
         private var lastIsNavigating: Bool = false
         private var lastRouteDistance: Double = 0
         /// Geometry fingerprint catches a reroute that has the same distance
         /// as the previous route. Distance-only invalidation left old route
         /// lines on screen, which looked like random trailing geometry.
         private var lastRouteFingerprint: Int? = nil
-        private var lastSessionReadingCount: Int = 0
-        private var lastHistorySessionID: UUID?
         private var hasAutoFramedRoute: Bool = false
         private var lastStopFingerprint: Int = 0
+        /// Forces one cleanup pass after history-trail rendering was disabled,
+        /// so a map instance cannot retain trails created by an older code path.
+        private var hasClearedDisabledHistoryOverlays = false
 
         #if DEBUG || DEVELOPER_BUILD
         private var simulatedCarAnnotation: MKPointAnnotation?
@@ -561,34 +561,17 @@ public struct LiveMapView: UIViewRepresentable {
             let vm = viewModel
             let currentRouteDistance = vm.currentRoute?.distance ?? 0
             let currentRouteFingerprint = vm.currentRoute.map(Self.routeFingerprint(for:))
-            let currentSession = vm.sessionRecorder.currentSession
-            let currentSessionID = currentSession?.id
-            let currentReadingCount = currentSession?.readings.count ?? 0
             let isNavigating = vm.isNavigating
             let currentStopFP = Self.stopFingerprint(for: vm.routeStops)
 
             let routeChanged = isNavigating != lastIsNavigating
                 || abs(currentRouteDistance - lastRouteDistance) > 1.0
                 || currentRouteFingerprint != lastRouteFingerprint
-            // Throttling: only rebuild history every 5 points to save battery.
-            // SAFETY: never trigger a history-based rebuild while navigating
-            // or selecting a route. During these states we draw route
-            // polylines (not history), so rebuilding overlays every 5 GPS
-            // ticks is pure waste — and worse, the removeOverlays() call
-            // at the top of rebuildOverlays creates a brief flicker where
-            // stale history polylines from the pre-navigation recording
-            // phase flash on-screen before the route polyline is redrawn.
-            //
-            // A session identity change is also a rebuild trigger. Count-only
-            // tracking misses a reset to zero, and it cannot distinguish a
-            // newly-created session with the same number of readings. Both
-            // cases previously left the old session's lines on the map.
-            let previousReadingCount = lastHistoryCounts.safeCount + lastHistoryCounts.overCount
-            let historyChanged = !isNavigating && !vm.isSelectingRoute && (
-                currentSessionID != lastHistorySessionID
-                || currentReadingCount < previousReadingCount
-                || currentReadingCount >= previousReadingCount + 5
-            )
+            // The historical GPS trail is intentionally disabled. It was
+            // rendered as free-form polylines and could look like random
+            // lines or triangular shading on the live drive map. Keep the
+            // recorded readings and dormant renderer below so the feature can
+            // be reintroduced safely behind an explicit setting later.
             let stopsChanged = currentStopFP != lastStopFingerprint
 
             // Detect when the user dismissed the route picker (isSelectingRoute
@@ -601,7 +584,7 @@ public struct LiveMapView: UIViewRepresentable {
             // rebuild fires (new routes from a fresh search).
             let routePickerOpened = !lastIsSelectingRoute && vm.isSelectingRoute
 
-            guard routeChanged || historyChanged || stopsChanged || (isNavigating && lastRouteDistance == 0) || routePickerDismissed || routePickerOpened else {
+            guard routeChanged || stopsChanged || (isNavigating && lastRouteDistance == 0) || routePickerDismissed || routePickerOpened || !hasClearedDisabledHistoryOverlays else {
                 // ALTERNATIVE-ROUTE FINGERPRINT: rebuild when availableRoutes
                 // count changes during the route-selection step. We hash
                 // count + a stable signature (sum of distances) so the check
@@ -610,6 +593,7 @@ public struct LiveMapView: UIViewRepresentable {
                 if vm.isSelectingRoute && fp != lastAltRouteFingerprint {
                     rebuildOverlays(mapView, viewModel: vm)
                     lastAltRouteFingerprint = fp
+                    hasClearedDisabledHistoryOverlays = true
                 }
                 // Always sync lastIsSelectingRoute even when the guard
                 // short-circuits, otherwise the dismissed-picker detection
@@ -620,6 +604,7 @@ public struct LiveMapView: UIViewRepresentable {
 
             // Perform the overlay rebuild only when data changed
             rebuildOverlays(mapView, viewModel: vm)
+            hasClearedDisabledHistoryOverlays = true
 
             // Update tracking state
             lastIsNavigating = isNavigating
@@ -627,11 +612,6 @@ public struct LiveMapView: UIViewRepresentable {
             lastRouteDistance = currentRouteDistance
             lastRouteFingerprint = currentRouteFingerprint
             lastStopFingerprint = currentStopFP
-            let readings = vm.sessionRecorder.currentSession?.readings ?? []
-            let safeCount = readings.filter { !$0.overLimit }.count
-            let overCount = readings.filter { $0.overLimit }.count
-            lastHistoryCounts = (safeCount, overCount)
-            lastHistorySessionID = currentSessionID
         }
 
         private func rebuildOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
@@ -860,17 +840,10 @@ public struct LiveMapView: UIViewRepresentable {
                 maneuverAnnotation = nil
             }
 
-            // History line (color-coded by speed status).
-            // DEFENSE-IN-DEPTH: skip the call entirely when navigating or
-            // selecting a route. The inner guard in buildHistoryOverlays
-            // already checks isNavigating, but during reroute flows there
-            // can be a transient window where isNavigating flips false
-            // briefly — if historyChanged fires in that gap the full
-            // session trail gets drawn as red over-limit polylines.
-            // Gating here eliminates that race.
-            if !viewModel.isNavigating && !viewModel.isSelectingRoute {
-                buildHistoryOverlays(mapView, viewModel: viewModel)
-            }
+            // Historical GPS trails are intentionally not rendered. The
+            // recorded readings and renderer remain below as dormant code so
+            // the feature can be restored behind an explicit setting without
+            // changing route/navigation overlays.
         }
 
         /// Renders ALL of `routes` as map polylines during the route-selection
