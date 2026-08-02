@@ -375,7 +375,7 @@ fileprivate struct SearchBarView: View {
                         }
                     }
                 
-                if !searchText.isEmpty {
+                if isSearchActive || !searchText.isEmpty {
                     Button(action: {
                         searchText = ""
                         driveViewModel.updateSearchQuery("")
@@ -401,6 +401,7 @@ fileprivate struct SearchBarView: View {
                             .foregroundColor(.white.opacity(0.4))
                             .font(.system(size: 12))
                     }
+                    .accessibilityLabel("Cancel search")
                 }
             }
             .padding(.horizontal, isLandscape ? 10 : 12)
