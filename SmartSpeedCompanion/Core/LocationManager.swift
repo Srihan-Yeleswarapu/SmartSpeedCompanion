@@ -19,8 +19,12 @@ public final class LocationManager: NSObject, ObservableObject {
         super.init()
         manager.delegate = self
         manager.distanceFilter = kCLDistanceFilterNone
-        manager.allowsBackgroundLocationUpdates = true // Requires 'location' in UIBackgroundModes
-        manager.showsBackgroundLocationIndicator = true
+        // Location is demand-driven: no GPS or background indicator is enabled
+        // until a recording/navigation session explicitly starts. The app still
+        // declares the location background mode because an active session must
+        // continue safely while the phone is locked or the app is backgrounded.
+        manager.allowsBackgroundLocationUpdates = false
+        manager.showsBackgroundLocationIndicator = false
 
         // Navigation-grade heading
         manager.headingFilter = 2.0 // Update every 2 degrees
@@ -107,7 +111,8 @@ public final class LocationManager: NSObject, ObservableObject {
     
     public func stopUpdatingLocation() {
         manager.stopUpdatingLocation()
-        DebugLogger.shared.log("LocationManager: Stopped updating location.")
+        manager.stopUpdatingHeading()
+        DebugLogger.shared.log("LocationManager: Stopped updating location and heading.")
     }
     
     /// Dynamically enables or disables background location updates.

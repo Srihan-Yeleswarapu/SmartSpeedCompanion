@@ -883,22 +883,29 @@ public final class DriveViewModel: NSObject, ObservableObject {
         // 5. SCENE PHASE MANAGEMENT: Background/foreground location
         // ════════════════════════════════════════════════════════════════
         //
-        // When the app backgrounds without an active session, stop GPS
-        // so the iOS location indicator (orange pill / Dynamic Island)
-        // does NOT appear. When foregrounded, restart GPS so the HUD
-        // shows live speed even without a session.
-        
+        // Location is demand-driven. A foreground/background transition must
+        // never restart GPS unless a recording or navigation session is active.
         NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                self.locationManager.startUpdatingLocation()
                 if self.isRecording || self.isNavigating {
                     self.locationManager.setBackgroundUpdates(true)
+                    self.locationManager.startUpdatingLocation()
+                    DebugLogger.shared.log("DriveViewModel: app foregrounded - active session, location restarted")
+                } else {
+                    self.locationManager.setBackgroundUpdates(false)
+                    self.locationManager.stopUpdatingLocation()
+                    DebugLogger.shared.log("DriveViewModel: app foregrounded - no session, location remains stopped")
                 }
-                DebugLogger.shared.log("DriveViewModel: app foregrounded - location restarted")
             }
             .store(in: &cancellables)
+        // 6. LOCATION STARTUP
+        // Intentionally do not start location here. DriveViewModel is created
+        // eagerly by AppDelegate, so starting GPS in this initializer caused
+        // background location use before the user began a drive. Location is
+        // started only by `startSession()` (including navigation's automatic
+        // session start) and stopped by `endSession()`.
         
         NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
             .receive(on: RunLoop.main)
@@ -915,16 +922,6 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 }
             }
             .store(in: &cancellables)
-        
-        // 6. START FOREGROUND LOCATION TRACKING
-        // Begin location updates immediately so the HUD shows speed on
-        // launch (if permission was already granted in a previous session).
-        // We deliberately do NOT call requestWhenInUseAuthorization() here
-        // because the DriveViewModel is created at app launch (static in
-        // AppDelegate), before the onboarding flow. The existing
-        // LocationPermissionView and startSession() handle authorization.
-        // Without permission, startUpdatingLocation() is a silent no-op.
-        locationManager.startUpdatingLocation()
     }
     
     // MARK: - Drive Session Management
@@ -933,6 +930,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     public func startSession() {
         DebugLogger.shared.log("Drive session STARTED")
         locationManager.requestAuthorization()
+        locationManager.setBackgroundUpdates(true)
         locationManager.startUpdatingLocation()
         
         var destID: String? = nil
