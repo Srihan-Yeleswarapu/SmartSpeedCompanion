@@ -12,7 +12,8 @@
 //     lat         REAL NOT NULL,
 //     lon         REAL NOT NULL,
 //     source      TEXT NOT NULL DEFAULT 'here',
-//     cached_at   TEXT NOT NULL DEFAULT (datetime('now'))
+//     cached_at   TEXT NOT NULL DEFAULT (datetime('now')),
+//     pinned      INTEGER NOT NULL DEFAULT 0   -- 1 = never expires (Downloaded Limits)
 //   )
 //
 // Indexes on (road_name, direction) for fast name-first lookups and on (lat, lon)
@@ -45,14 +46,18 @@ public struct CachedRoad: Sendable, Equatable {
     public let latitude: Double
     public let longitude: Double
     public let source: String        // "here"
+    /// When true, this row is exempt from the 30-day TTL cleanup (Downloaded
+    /// Limits zones that the user pinned to "keep forever").
+    public let pinned: Bool
 
-    public init(roadName: String, direction: String = "", speedLimitMph: Int, latitude: Double, longitude: Double, source: String = "here") {
+    public init(roadName: String, direction: String = "", speedLimitMph: Int, latitude: Double, longitude: Double, source: String = "here", pinned: Bool = false) {
         self.roadName = roadName
         self.direction = direction
         self.speedLimitMph = speedLimitMph
         self.latitude = latitude
         self.longitude = longitude
         self.source = source
+        self.pinned = pinned
     }
 }
 
@@ -227,9 +232,17 @@ public final class HERELocalBatchCache: @unchecked Sendable {
                 lat         REAL NOT NULL,
                 lon         REAL NOT NULL,
                 source      TEXT NOT NULL DEFAULT 'here',
-                cached_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                cached_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                pinned      INTEGER NOT NULL DEFAULT 0
             )
         """)
+        // Migrate pre-`pinned` databases (schema version 2) in place: add the
+        // column if it is missing. This preserves HERE batch rows the user
+        // already cached instead of wiping the store like the old version-3
+        // reset would have done.
+        if !columnExists("pinned") {
+            exec("ALTER TABLE cached_roads ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        }
         exec("CREATE INDEX IF NOT EXISTS idx_roads_name_dir ON cached_roads(road_name, direction)")
         // Composite spatial index: SQLite can only use one index per table,
         // so separate (lat) + (lon) indexes meant the spatial query in
@@ -244,8 +257,27 @@ public final class HERELocalBatchCache: @unchecked Sendable {
         // Across batch fetches, re-fetching an area REPLACES the old row
         // (updating cached_at) rather than inserting a duplicate.
         exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_roads_unique ON cached_roads(road_name, direction, lat, lon)")
-        // Clean up expired entries on startup
-        exec("DELETE FROM cached_roads WHERE cached_at < datetime('now', '-\(ttlDays) days')")
+        // Clean up expired entries on startup. Pinned rows (Downloaded Limits
+        // zones the user chose to "keep forever") are exempt from the 30-day
+        // TTL; unpinned rows follow the default cleanup.
+        exec("DELETE FROM cached_roads WHERE cached_at < datetime('now', '-\(ttlDays) days') AND pinned = 0")
+    }
+
+    /// True when the `cached_roads` table already has the given column.
+    /// Used by the in-place `pinned` migration so an upgrade never wipes the
+    /// user's existing HERE batch rows.
+    private func columnExists(_ name: String) -> Bool {
+        guard let db = db else { return false }
+        var stmt: OpaquePointer?
+        let sql = "PRAGMA table_info(cached_roads)"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let col = sqlite3_column_text(stmt, 1) {
+                if String(cString: col) == name { return true }
+            }
+        }
+        return false
     }
 
     // MARK: - Public API
@@ -415,7 +447,8 @@ public final class HERELocalBatchCache: @unchecked Sendable {
 
     /// Store multiple road segments from a batch API response.
     /// Each row occupies ~80 bytes; 5000 rows ≈ 400KB (trivially small).
-    public func store(roads: [CachedRoad]) {
+    /// Rows written with `pinned: true` are exempt from the 30-day TTL cleanup.
+    public func store(roads: [CachedRoad], pinned: Bool = false) {
         guard isReady, !roads.isEmpty else { return }
 
         queue.sync {
@@ -425,8 +458,8 @@ public final class HERELocalBatchCache: @unchecked Sendable {
 
             let sql = """
                 INSERT OR REPLACE INTO cached_roads
-                    (road_name, direction, speed_limit, lat, lon, source)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (road_name, direction, speed_limit, lat, lon, source, pinned)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """
 
             var stmt: OpaquePointer?
@@ -443,6 +476,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
                 sqlite3_bind_double(stmt, 4, road.latitude)
                 sqlite3_bind_double(stmt, 5, road.longitude)
                 sqlite3_bind_text(stmt, 6, (road.source as NSString).utf8String, -1, nil)
+                sqlite3_bind_int(stmt, 7, road.pinned ? 1 : 0)
 
                 if sqlite3_step(stmt) != SQLITE_DONE {
                     DebugLogger.shared.log("HERELocalBatchCache: insert failed: \(errmsg)")
@@ -489,6 +523,121 @@ public final class HERELocalBatchCache: @unchecked Sendable {
             sqlite3_finalize(stmt)
         }
         return result
+    }
+
+    /// Number of cached road rows inside a circular zone (used for the
+    /// Downloaded Limits size readout and delete confirmation).
+    public func countInZone(center: CLLocationCoordinate2D, radiusMeters: Double) -> Int {
+        guard isReady else { return 0 }
+        var result = 0
+        queue.sync {
+            guard let db = self.db else { return }
+            let latDegree = radiusMeters / 111_111.0
+            let lonCos = cos(center.latitude * .pi / 180)
+            let lonDegree = radiusMeters / (111_111.0 * max(0.000001, lonCos))
+            let minLat = center.latitude - latDegree
+            let maxLat = center.latitude + latDegree
+            let minLon = center.longitude - lonDegree
+            let maxLon = center.longitude + lonDegree
+            let bearingScale = lonCos * lonCos
+            let maxDist2 = latDegree * latDegree
+            let sql = """
+                SELECT COUNT(*) FROM cached_roads
+                WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+                  AND (lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ? <= ?
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            sqlite3_bind_double(stmt, 1, minLat)
+            sqlite3_bind_double(stmt, 2, maxLat)
+            sqlite3_bind_double(stmt, 3, minLon)
+            sqlite3_bind_double(stmt, 4, maxLon)
+            sqlite3_bind_double(stmt, 5, center.latitude)
+            sqlite3_bind_double(stmt, 6, center.latitude)
+            sqlite3_bind_double(stmt, 7, center.longitude)
+            sqlite3_bind_double(stmt, 8, bearingScale)
+            sqlite3_bind_double(stmt, 9, maxDist2)
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                result = Int(sqlite3_column_int(stmt, 0))
+            }
+            sqlite3_finalize(stmt)
+        }
+        return result
+    }
+
+    /// Delete every cached row inside a circular zone. Used when the user
+    /// deletes a Downloaded Limits zone from the Offline list.
+    public func deleteZone(center: CLLocationCoordinate2D, radiusMeters: Double) {
+        guard isReady else { return }
+        queue.sync {
+            guard let db = self.db else { return }
+            let latDegree = radiusMeters / 111_111.0
+            let lonCos = cos(center.latitude * .pi / 180)
+            let lonDegree = radiusMeters / (111_111.0 * max(0.000001, lonCos))
+            let minLat = center.latitude - latDegree
+            let maxLat = center.latitude + latDegree
+            let minLon = center.longitude - lonDegree
+            let maxLon = center.longitude + lonDegree
+            let bearingScale = lonCos * lonCos
+            let maxDist2 = latDegree * latDegree
+            let sql = """
+                DELETE FROM cached_roads
+                WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+                  AND (lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ? <= ?
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            sqlite3_bind_double(stmt, 1, minLat)
+            sqlite3_bind_double(stmt, 2, maxLat)
+            sqlite3_bind_double(stmt, 3, minLon)
+            sqlite3_bind_double(stmt, 4, maxLon)
+            sqlite3_bind_double(stmt, 5, center.latitude)
+            sqlite3_bind_double(stmt, 6, center.latitude)
+            sqlite3_bind_double(stmt, 7, center.longitude)
+            sqlite3_bind_double(stmt, 8, bearingScale)
+            sqlite3_bind_double(stmt, 9, maxDist2)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
+        DebugLogger.shared.log("HERELocalBatchCache: deleted zone (r=\(Int(radiusMeters))m)")
+    }
+
+    /// Set the `pinned` flag on every row inside a zone (Downloaded Limits
+    /// pin / unpin toggle in the Offline list). Pinned rows survive the
+    /// 30-day TTL cleanup.
+    public func setPinned(_ pinned: Bool, center: CLLocationCoordinate2D, radiusMeters: Double) {
+        guard isReady else { return }
+        queue.sync {
+            guard let db = self.db else { return }
+            let latDegree = radiusMeters / 111_111.0
+            let lonCos = cos(center.latitude * .pi / 180)
+            let lonDegree = radiusMeters / (111_111.0 * max(0.000001, lonCos))
+            let minLat = center.latitude - latDegree
+            let maxLat = center.latitude + latDegree
+            let minLon = center.longitude - lonDegree
+            let maxLon = center.longitude + lonDegree
+            let bearingScale = lonCos * lonCos
+            let maxDist2 = latDegree * latDegree
+            let sql = """
+                UPDATE cached_roads SET pinned = ?
+                WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+                  AND (lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ? <= ?
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            sqlite3_bind_int(stmt, 1, pinned ? 1 : 0)
+            sqlite3_bind_double(stmt, 2, minLat)
+            sqlite3_bind_double(stmt, 3, maxLat)
+            sqlite3_bind_double(stmt, 4, minLon)
+            sqlite3_bind_double(stmt, 5, maxLon)
+            sqlite3_bind_double(stmt, 6, center.latitude)
+            sqlite3_bind_double(stmt, 7, center.latitude)
+            sqlite3_bind_double(stmt, 8, center.longitude)
+            sqlite3_bind_double(stmt, 9, bearingScale)
+            sqlite3_bind_double(stmt, 10, maxDist2)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
     }
 
     /// Remove all cached data.

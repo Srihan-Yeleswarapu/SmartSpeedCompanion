@@ -429,6 +429,152 @@ public final class DriveViewModel: NSObject, ObservableObject {
             UserDefaults.standard.set(data, forKey: "savedOfflineRegions")
         }
     }
+
+    // MARK: - Downloaded Speed Limit Zones (Offline "Download Limits")
+    /// Saved offline speed-limit download zones. Persisted as JSON in
+    /// UserDefaults under `savedLimitsZones`. Each zone corresponds to a
+    /// bulk Overpass download whose rows live in HERELocalBatchCache.
+    @Published public var savedLimitsZones: [DownloadedLimitsZone] = []
+    /// True while a bulk download is in flight (drives the progress UI).
+    @Published public var isDownloadingLimits: Bool = false
+    /// Fraction 0...1 of the current bulk download.
+    @Published public var limitsDownloadProgress: Double = 0
+    /// Live estimate shown while the user drags the radius slider.
+    @Published public var limitsEstimate: OfflineLimitsEstimate?
+    /// Handle to the in-flight download task so the UI can cancel it.
+    private var limitsDownloadTask: Task<Void, Never>?
+    /// Generation guard so a slow estimate can't overwrite a newer one.
+    private var limitsEstimateGeneration: UInt64 = 0
+
+    /// Loads saved speed-limit zones from UserDefaults.
+    public func loadLimitsZones() {
+        guard let data = UserDefaults.standard.data(forKey: "savedLimitsZones"),
+              let zones = try? JSONDecoder().decode([DownloadedLimitsZone].self, from: data) else {
+            savedLimitsZones = []
+            return
+        }
+        savedLimitsZones = zones
+    }
+
+    /// Computes a fresh download estimate for the given radius (real Overpass
+    /// count when online; heuristic fallback otherwise). Generation-guarded so
+    /// only the newest slider position publishes.
+    public func refreshLimitsEstimate(radiusMiles: Double) async {
+        limitsEstimateGeneration &+= 1
+        let generation = limitsEstimateGeneration
+        guard let coordinate = locationManager.latestLocation?.coordinate else {
+            limitsEstimate = OfflineLimitsDownloader.shared.heuristicEstimate(radiusMiles: radiusMiles)
+            return
+        }
+        let estimate = await OfflineLimitsDownloader.shared.estimate(
+            center: coordinate, radiusMiles: radiusMiles
+        )
+        guard generation == limitsEstimateGeneration else { return }
+        limitsEstimate = estimate
+    }
+
+    /// Kicks off a bulk speed-limit download for the radius around the user's
+    /// current location. Updates `limitsDownloadProgress` as cells complete and
+    /// saves a `DownloadedLimitsZone` when done. The current task can be
+    /// cancelled via `cancelLimitsDownload()`.
+    public func startLimitsDownload(radiusMiles: Double, pinned: Bool) {
+        guard !isDownloadingLimits,
+              let coordinate = locationManager.latestLocation?.coordinate else { return }
+        limitsDownloadTask?.cancel()
+        isDownloadingLimits = true
+        limitsDownloadProgress = 0
+
+        limitsDownloadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await OfflineLimitsDownloader.shared.download(
+                center: coordinate,
+                radiusMiles: radiusMiles,
+                pinned: pinned,
+                onProgress: { [weak self] fraction in
+                    Task { @MainActor in
+                        self?.limitsDownloadProgress = fraction
+                    }
+                },
+                // The download executes inside `limitsDownloadTask`, so the
+                // static `Task.isCancelled` reflects its cancellation without
+                // touching MainActor-isolated state from a @Sendable closure
+                // (and without breaking when cancelLimitsDownload nils the
+                // task reference).
+                isCancelled: { Task.isCancelled }
+            )
+            // A cancelled download returns a partial result — never save a
+            // partial zone the user chose to abort. The guard runs BEFORE
+            // any state reset: `cancelLimitsDownload()` already cleared
+            // `isDownloadingLimits`, so a cancelled task must not touch the
+            // flag afterward (that would stomp a newly-started download's
+            // in-flight state if the user cancels and immediately retries).
+            guard !Task.isCancelled, result.roadCount > 0 else {
+                DebugLogger.shared.log("startLimitsDownload: skipped (\(result.roadCount) rows, cancelled=\(Task.isCancelled))")
+                return
+            }
+            self.isDownloadingLimits = false
+            self.limitsDownloadProgress = 1
+            let zone = DownloadedLimitsZone(
+                label: "\(Int(radiusMiles.rounded())) mi radius",
+                lat: coordinate.latitude,
+                lon: coordinate.longitude,
+                radiusMiles: radiusMiles,
+                roadCount: result.roadCount,
+                sizeBytes: result.sizeBytes,
+                isPinned: result.isPinned
+            )
+            // Re-downloading the same radius at the same location replaces the
+            // old zone (identical `id`) instead of appending a duplicate row
+            // with the same identity — `ForEach` identity collisions would
+            // otherwise be undefined behavior.
+            self.savedLimitsZones.removeAll { $0.id == zone.id }
+            self.savedLimitsZones.append(zone)
+            self.persistLimitsZones()
+            DebugLogger.shared.log("startLimitsDownload: saved zone (\(result.roadCount) rows)")
+        }
+    }
+
+    /// Cancels an in-flight bulk download (already-written cells stay cached).
+    public func cancelLimitsDownload() {
+        limitsDownloadTask?.cancel()
+        limitsDownloadTask = nil
+        isDownloadingLimits = false
+    }
+
+    /// Removes a saved zone: deletes its cached rows from the SQLite batch
+    /// cache and drops it from the saved list. The SQLite mutation runs off the
+    /// main actor so a large zone delete never stalls the UI.
+    public func removeLimitsZone(_ zone: DownloadedLimitsZone) {
+        let center = CLLocationCoordinate2D(latitude: zone.lat, longitude: zone.lon)
+        let radiusMeters = zone.radiusMiles * 1609.344
+        savedLimitsZones.removeAll { $0.id == zone.id }
+        persistLimitsZones()
+        Task.detached(priority: .utility) {
+            HERELocalBatchCache.shared.deleteZone(center: center, radiusMeters: radiusMeters)
+        }
+    }
+
+    /// Toggles a zone's pinned flag (pinned rows never expire). The SQLite
+    /// mutation runs off the main actor.
+    public func toggleLimitsZonePin(_ zone: DownloadedLimitsZone) {
+        guard let idx = savedLimitsZones.firstIndex(where: { $0.id == zone.id }) else { return }
+        let newPinned = !savedLimitsZones[idx].isPinned
+        savedLimitsZones[idx].isPinned = newPinned
+        persistLimitsZones()
+        let center = CLLocationCoordinate2D(latitude: zone.lat, longitude: zone.lon)
+        let radiusMeters = zone.radiusMiles * 1609.344
+        Task.detached(priority: .utility) {
+            HERELocalBatchCache.shared.setPinned(
+                newPinned, center: center, radiusMeters: radiusMeters
+            )
+        }
+    }
+
+    private func persistLimitsZones() {
+        if let data = try? JSONEncoder().encode(savedLimitsZones) {
+            UserDefaults.standard.set(data, forKey: "savedLimitsZones")
+        }
+    }
     
     // MARK: - Deletion States
     /// Controls the UI prompt that asks to delete drives shorter than 90 seconds.

@@ -289,23 +289,10 @@ public final class OverpassSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
 
     // MARK: - Parsing
 
-    /// Parse an OSM `maxspeed` value into mph. Handles "mph", "km/h", "kmh" suffixes
-    /// and bare numeric values (treated as mph by convention). Also tolerates
-    /// parenthetical context like "30 mph (truck)" or "ROAD TYPE: 30 mph" — we
-    /// only consume the leading numeric prefix.
+    /// Parse an OSM `maxspeed` value into mph. Delegates to the shared parser
+    /// in `OfflineLimitsDownloader` (also used by the bulk "Download Limits"
+    /// feature) so both Overpass consumers stay numerically consistent.
     private func parseMaxspeed(_ raw: String) -> Int? {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces).lowercased()
-        let isKmh = trimmed.contains("km/h") || trimmed.contains("kmh") || trimmed.contains("kph")
-        let numericPrefix: Int? = {
-            var digits = ""
-            for ch in trimmed {
-                if ch.isNumber || ch == "." { digits.append(ch) }
-                else if !digits.isEmpty { break }
-                // Skip leading non-digits until a digit appears.
-            }
-            guard let n = Double(digits), n > 0, n <= 200 else { return nil }
-            return isKmh ? Int((n * 0.621371).rounded()) : Int(n.rounded())
-        }()
-        return numericPrefix
+        OfflineLimitsDownloader.mph(fromMaxspeed: raw)
     }
 }

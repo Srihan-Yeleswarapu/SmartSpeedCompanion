@@ -49,6 +49,9 @@ public struct SettingsView: View {
     @State private var showingNetworkHelp = false
     @State private var showingHapticRecorder = false
     @State private var showingAlertProfiles = false
+    // Bulk "Download Limits" + Offline list sheets (OFFLINE section).
+    @State private var showingLimitsDownload = false
+    @State private var showingOfflineRegions = false
 
     // NOTE: Previously this view hosted a deletion-flow (notice alert,
     // typed-DELETE confirm, optional reauth sheet, destructive spinner
@@ -287,6 +290,52 @@ public struct SettingsView: View {
                 }
                 .listRowBackground(DesignSystem.bgPanel)
 
+                // MARK: - OFFLINE section
+                // Bulk "Download Limits" — cache every speed limit in a radius
+                // around the current location for offline driving.
+                Section(header: Text("OFFLINE").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                    Button(action: {
+                        showingLimitsDownload = true
+                    }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "square.and.arrow.down")
+                                .foregroundColor(DesignSystem.cyan)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Download Speed Limits")
+                                    .foregroundColor(.white)
+                                Text("Cache limits in a radius around you for offline use")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.white.opacity(0.4))
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+
+                    Button(action: {
+                        showingOfflineRegions = true
+                    }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "map")
+                                .foregroundColor(DesignSystem.cyan)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Offline Maps & Downloads")
+                                    .foregroundColor(.white)
+                                Text("\(driveViewModel.savedLimitsZones.count) downloaded zone\(driveViewModel.savedLimitsZones.count == 1 ? "" : "s")")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.white.opacity(0.4))
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                }
+                .listRowBackground(DesignSystem.bgPanel)
+
                 // MARK: - SUPPORT section (always visible)
                 // Report Issue and Replay Tutorial are useful regardless of auth
                 // state, so they're surfaced to every user.
@@ -345,6 +394,24 @@ public struct SettingsView: View {
                         .presentationCornerRadius(24)
                         .preferredColorScheme(.dark)
                 }
+                // Bulk speed-limit download sheet (slider + estimate + confirm).
+                .sheet(isPresented: $showingLimitsDownload) {
+                    DownloadLimitsView()
+                        .environmentObject(driveViewModel)
+                        .presentationDetents([.large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(24)
+                        .preferredColorScheme(.dark)
+                }
+                // Offline list: saved map regions + downloaded limit zones.
+                .sheet(isPresented: $showingOfflineRegions) {
+                    OfflineRegionsListView()
+                        .environmentObject(driveViewModel)
+                        .presentationDetents([.large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(24)
+                        .preferredColorScheme(.dark)
+                }
                 // Full-screen tap-to-record modal for the “Custom” haptic.
                 // Implemented in HapticRecordingView.swift.
                 .fullScreenCover(isPresented: $showingHapticRecorder) {
@@ -362,6 +429,7 @@ public struct SettingsView: View {
                 }
                 .onAppear {
                     driveViewModel.loadAlertProfiles(context: modelContext)
+                    driveViewModel.loadLimitsZones()
                 }
         }
     }
