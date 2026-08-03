@@ -304,7 +304,10 @@ public class SmartSpeedLimitService: ObservableObject {
         //    within 50m of the user's coordinate.
         //    Checked BEFORE the live chain so a cached road segment
         //    returns instantly with zero network cost.
-        if let cached = await batchCache.lookup(
+        //    Like the response cache above, skip this when `forceRefresh`
+        //    is true so the user's tap runs the live provider chain and
+        //    can override a wrong batch-cached limit.
+        if !forceRefresh, let cached = await batchCache.lookup(
             coordinate: coordinate,
             roadName: roadName,
             bearing: heading
