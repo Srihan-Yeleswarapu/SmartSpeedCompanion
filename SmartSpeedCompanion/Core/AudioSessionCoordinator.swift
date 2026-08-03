@@ -111,6 +111,15 @@ public final class AudioSessionCoordinator {
         guard !isConfigured else { return }
         let session = AVAudioSession.sharedInstance()
         do {
+            // CARPLAY TTS FIX v2: prefer 44.1 kHz so AVSpeechSynthesizer's
+            // native render rate matches the hardware, avoiding live
+            // resampling of the speech stream over CarPlay's digital link.
+            // `preferredSampleRate` is a preference — the system uses the
+            // closest supported rate, so this is a safe no-op on devices
+            // that only accept 48 kHz. The alert-tone buffer already reads
+            // the negotiated session rate, so beeps are unaffected (and were
+            // always clean through the same session).
+            session.preferredSampleRate = 44100
             try session.setCategory(.playback, mode: .spokenAudio, options: Self.sessionOptions)
             isConfigured = true
             DebugLogger.shared.log("Audio Session configured (playback / spokenAudio)")

@@ -119,17 +119,21 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
         let utterance = AVSpeechUtterance(string: expandedMessage)
         utterance.preUtteranceDelay = 0.05
         utterance.postUtteranceDelay = 0.1
-        // CARPLAY-AUDIO FIX: the `.enhanced`-quality voice is a documented
-        // AVSpeechSynthesizer stutter source on some CarPlay head units
-        // (speech breaks into syllable fragments over the car speakers while
-        // the phone stays clean). When routed to a car, prefer the reliable
-        // default-quality en-US voice; keep `.enhanced` on the phone where
-        // it sounds better.
+        // CARPLAY-AUDIO FIX v2: v1 was BUGGED — the CarPlay branch used
+        // `AVSpeechSynthesisVoice(language: "en-US")`, which returns the
+        // device's DEFAULT en-US voice. On iOS 16+ that default is a
+        // premium/enhanced neural voice — a reported stutter source on some
+        // CarPlay head units (speech breaks into syllable fragments over the
+        // car speakers while the phone stays clean, and while our own
+        // AVAudioEngine beeps through the SAME session stay perfect). v2
+        // explicitly enumerates voices and selects a `.default`-quality
+        // (compact) en-US voice over CarPlay; the premium `.enhanced` voice
+        // is only used on the phone where it sounds better.
         if !isCarPlayRouted,
            let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
             utterance.voice = premiumVoice
         } else {
-            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+            utterance.voice = Self.carPlayReliableVoice()
         }
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.volume = 1.0
@@ -143,6 +147,21 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     /// known CarPlay stutter source (see `announce`).
     private var isCarPlayRouted: Bool {
         AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .carAudio }
+    }
+
+    /// A reliable, compact-quality en-US voice for CarPlay. Premium and
+    /// enhanced neural voices are a reported stutter source on some head
+    /// units (syllable-chopped TTS over the car speakers, clean on the
+    /// phone); compact (`.default`-quality) voices render from a smaller,
+    /// stable model that survives the CarPlay audio pipeline intact. Prefer
+    /// `.default` quality explicitly — `AVSpeechSynthesisVoice(language:)`
+    /// returns the premium system-default on iOS 16+, which is what v1 of
+    /// this fix accidentally kept using.
+    private static func carPlayReliableVoice() -> AVSpeechSynthesisVoice? {
+        let enUS = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == "en-US" }
+        return enUS.first(where: { $0.quality == .default })
+            ?? enUS.first(where: { $0.identifier.contains("compact") })
+            ?? AVSpeechSynthesisVoice(language: "en-US")
     }
 
     /// Release the shared audio session. Called when navigation ends so the
