@@ -403,19 +403,32 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         AudioSessionCoordinator.shared.ensureActive()
     }
     
-    /// Rebuilds the tone-engine graph after an interruption. The engine is
-    /// deliberately NOT started here — CARPLAY TTS FIX: the engine must not
-    /// run 24/7; the next `playTone()` starts it fresh per-beep. Also resets
-    /// the beep counter in case an interruption swallowed a completion
-    /// handler for an in-flight buffer.
+    /// Rebuilds the tone-engine graph after an interruption. A phone call
+    /// / Siri / another app's playback stops the engine underneath us, so
+    /// this restarts it so the next beep plays. BEEP-REGRESSION FIX: this
+    /// is a SYSTEM stop, not our own per-beep stop — the per-beep
+    /// stop()/start() cycle (CARPLAY TTS experiment) was what silently
+    /// killed every beep after the first; engine start after a genuine
+    /// interruption is the documented recovery path.
     private func restartAudioEngine() {
         // LAUNCH-HANG FIX: if no beep has fired yet the tone engine may
         // never have been built (it is lazily created on first alert).
         // Build it before anything else so a mid-session interruption
         // can't hit an un-initialized graph.
         ensureToneEngine()
-        scheduledBeeps = 0
-        DebugLogger.shared.log("AlertEngine: tone engine ready after interruption")
+        guard !audioEngine.isRunning else {
+            DebugLogger.shared.log("AlertEngine: tone engine still running after interruption")
+            return
+        }
+        do {
+            try audioEngine.start()
+            if !playerNode.isPlaying {
+                playerNode.play()
+            }
+            DebugLogger.shared.log("AlertEngine: audio engine restarted after interruption")
+        } catch {
+            DebugLogger.shared.log("AlertEngine: audio engine restart failed: \(error.localizedDescription)")
+        }
     }
     
     // MARK: - Audio Session
@@ -430,25 +443,25 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// first actual alert (LAUNCH-HANG FIX — see `init` note).
     private var toneEngineReady = false
 
-    /// Beeps currently scheduled on the player node but not yet finished.
-    /// Used by the buffer completion handler to decide when the engine can
-    /// be suspended again (see `suspendToneEngine`).
-    private var scheduledBeeps = 0
-
     /// Builds the tone-engine graph (buffer + node wiring) on first use.
     /// Deliberately NOT called from `init`: starting AVAudioEngine
     /// synchronously during app launch was one of the main-thread launch
     /// hangs in TestFlight build 549.
     ///
-    /// CARPLAY TTS FIX: the engine is NO LONGER started here. It used to
-    /// start on the first beep and then run 24/7 for the rest of the drive.
-    /// An always-running AVAudioEngine with an active player node renders
-    /// audio hardware continuously, and over CarPlay's digital link that
-    /// contention starved AVSpeechSynthesizer's engine, chopping nav voice
-    /// into syllable fragments on the car speakers (phone clean, Apple Maps
-    /// clean — Apple Maps runs no tone engine). The engine is now started
-    /// per-beep in `playTone()` and suspended the moment the beep finishes
-    /// (`suspendToneEngine()`).
+    /// BEEP-REGRESSION FIX (2026-08-07): the engine is STARTED here and
+    /// left running for the rest of the drive. The previous per-beep
+    /// stop()/start() cycle from the CarPlay TTS experiment was based on
+    /// the wrong theory — the user's own diagnostic (recorded in the
+    /// 814d1c3 commit) confirmed the beeps were ALWAYS clean over CarPlay
+    /// and the nav-voice choppiness was specific to AVSpeechSynthesizer's
+    /// own pipeline (fixed by the compact-voice selection + session
+    /// options + Now Playing dedup). The stop()/start() cycle, however,
+    /// silently killed every beep after the first: after `stop()`, calling
+    /// `start()` again without `reset()` throws -10851 or starts an engine
+    /// that produces no output, and the error fallback was a vibration,
+    /// not a sound — testers reported "no sound coming out at all when you
+    /// speed." Restoring the once-started, always-running engine (the
+    /// behavior proven clean by the user's diagnostic).
     ///
     /// The tone buffer is also built at the session's negotiated sample
     /// rate (CarPlay links are typically 48 kHz) instead of a hard-coded
@@ -482,17 +495,22 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         
         audioEngine.attach(playerNode)
         audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
-        // NOTE: engine deliberately NOT started here — see CARPLAY TTS FIX.
+        
+        do {
+            try audioEngine.start()
+            DebugLogger.shared.log("Tone engine started OK")
+        } catch {
+            DebugLogger.shared.log("Tone engine error: \(error.localizedDescription)")
+        }
+        if !playerNode.isPlaying {
+            playerNode.play()
+        }
     }
     
     /// Plays the alert tone with proper audio session management.
     /// Fixes the bug where beeps are inaudible when YouTube/Music is playing:
     ///   1. Re-activates the audio session (YouTube may have deactivated it)
-    ///   2. Starts the tone engine ONLY for this beep — CARPLAY TTS FIX:
-    ///      the engine used to start on the first beep and run 24/7, and its
-    ///      always-on render thread fought AVSpeechSynthesizer over CarPlay,
-    ///      chopping nav voice into syllable fragments. It is now suspended
-    ///      the instant the beep finishes.
+    ///   2. Restarts the audio engine if needed
     ///   3. Schedules the buffer WITHOUT stopping the player node first
     ///   4. Falls back to system sound if AVAudioEngine fails entirely
     private func playTone() {
@@ -507,15 +525,23 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         ensureToneEngine()
         guard let buffer = toneBuffer else { return }
         
-        // Step 2: Start the engine for this beep (no-op if already running).
+        // Step 2: If the engine stopped (e.g. due to interruption),
+        // restart it. BEEP-REGRESSION FIX: this is only needed after a
+        // SYSTEM interruption (not after our own beeps — we no longer stop
+        // the engine between beeps, which was silently killing every beep
+        // after the first).
         if !audioEngine.isRunning {
             do {
                 try audioEngine.start()
-                DebugLogger.shared.log("AlertEngine: audio engine started for beep")
+                DebugLogger.shared.log("AlertEngine: audio engine restarted for beep")
             } catch {
-                DebugLogger.shared.log("AlertEngine: audio engine start failed: \(error.localizedDescription)")
-                // Step 4: Fallback — use system sound
-                AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+                DebugLogger.shared.log("AlertEngine: audio engine restart failed: \(error.localizedDescription)")
+                // Step 4: Fallback — play a real system alert SOUND (not
+                // just vibration). The tester report was "no sound coming
+                // out at all when you speed" — AudioServices uses its own
+                // independent audio path, so it stays audible even when
+                // AVAudioEngine can't start.
+                AudioServicesPlaySystemSound(kSystemSoundID_UserPreferredAlert)
                 return
             }
         }
@@ -528,33 +554,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         if !playerNode.isPlaying {
             playerNode.play()
         }
-        scheduledBeeps += 1
-        playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts) { [weak self] in
-            // The completion fires on the render thread; hop back to main
-            // before touching the engine. When the last scheduled beep has
-            // finished, suspend the engine so AVSpeechSynthesizer has the
-            // audio hardware to itself (CARPLAY TTS FIX).
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.scheduledBeeps = max(0, self.scheduledBeeps - 1)
-                if self.scheduledBeeps == 0 {
-                    self.suspendToneEngine()
-                }
-            }
-        }
-    }
-
-    /// Suspends the tone engine once the last beep finishes, returning the
-    /// audio hardware to AVSpeechSynthesizer. Beeps are ≥2 s apart, so the
-    /// per-beep `start()` cost is invisible. Stopping the node first (from
-    /// the main thread, outside the render callback) is the safe teardown
-    /// order.
-    private func suspendToneEngine() {
-        playerNode.stop()
-        if audioEngine.isRunning {
-            audioEngine.stop()
-            DebugLogger.shared.log("AlertEngine: tone engine suspended (beep finished)")
-        }
+        playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts)
     }
     
     // MARK: - Haptics

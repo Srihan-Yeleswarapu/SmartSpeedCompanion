@@ -35,6 +35,14 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         self.mapTemplate = mapTemplate
         super.init()
         self.viewModel.navigationDelegate = self
+        // CRITICAL: the navigation loop now lives in NavigationCoordinator
+        // (extracted from DriveViewModel), and the COORDINATOR has its own
+        // `navigationDelegate` used for startNavigationTrigger /
+        // endNavigationTrigger / prepareForRouteTransition. If it is not
+        // wired here, CarPlay navigation silently does nothing — the head
+        // unit never receives the start trigger, so startNavigationSession
+        // is never called and turn-by-turn never begins.
+        self.viewModel.navigationCoordinator.navigationDelegate = self
     }
     
     public func setMuted(_ muted: Bool) {

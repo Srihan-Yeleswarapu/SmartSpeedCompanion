@@ -119,8 +119,13 @@ public final class AudioSessionCoordinator {
             // no-op on devices that only accept 48 kHz. The alert-tone
             // buffer already reads the negotiated session rate, so beeps are
             // unaffected (and were always clean through the same session).
-            try? session.setPreferredSampleRate(44100)
+            //
+            // ORDER MATTERS: setCategory must come FIRST — changing the
+            // category resets the preferred sample rate back to the hardware
+            // default, which silently discarded the 44.1 kHz preference when
+            // it was applied before the category (SAMPLE-RATE-FIX).
             try session.setCategory(.playback, mode: .spokenAudio, options: Self.sessionOptions)
+            try? session.setPreferredSampleRate(44100)
             isConfigured = true
             DebugLogger.shared.log("Audio Session configured (playback / spokenAudio)")
         } catch {
