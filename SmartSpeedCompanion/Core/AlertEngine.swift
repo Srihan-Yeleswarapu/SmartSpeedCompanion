@@ -72,6 +72,10 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     private let audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private var toneBuffer: AVAudioPCMBuffer?
+    /// AudioServices sound ID built from the tone buffer, used by the
+    /// fallback alert path (plays through AudioServices' own audio path,
+    /// which works even when AVAudioEngine cannot start).
+    private var fallbackAlertSoundID: SystemSoundID = 0
     
     // MARK: - Init
     public init(speedEngine: SpeedEngine) {
@@ -368,6 +372,9 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     deinit {
         NotificationCenter.default.removeObserver(self)
+        if fallbackAlertSoundID != 0 {
+            AudioServicesDisposeSystemSoundID(fallbackAlertSoundID)
+        }
     }
     
     /// Acquires the shared audio session (with ducking) for the ENTIRE
@@ -507,6 +514,72 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         }
     }
     
+    /// Builds a `SystemSoundID` from the tone buffer (written once to a
+    /// temp WAV) so the engine-failure fallback plays a REAL audible tone
+    /// through AudioServices — an audio path entirely independent of
+    /// AVAudioEngine. `kSystemSoundID_UserPreferredAlert` is macOS-only and
+    /// undocumented numeric system-sound IDs can silently no-op on newer
+    /// iOS, so a file-based sound is the only guaranteed-audible option.
+    private func prepareFallbackAlertSound() {
+        guard fallbackAlertSoundID == 0,
+              let buffer = toneBuffer,
+              let channel = buffer.floatChannelData?[0] else { return }
+
+        let frameCount = Int(buffer.frameLength)
+        guard frameCount > 0 else { return }
+        let sampleRate = Int(buffer.format.sampleRate)
+
+        // 16-bit PCM mono WAV (44-byte header).
+        func le16(_ v: UInt16) -> [UInt8] {
+            [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF)]
+        }
+        func le32(_ v: UInt32) -> [UInt8] {
+            [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF),
+             UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)]
+        }
+
+        let dataSize = UInt32(frameCount * 2)
+        var wav = Data()
+        wav.append(contentsOf: Array("RIFF".utf8))
+        wav.append(contentsOf: le32(36 + dataSize))
+        wav.append(contentsOf: Array("WAVE".utf8))
+        wav.append(contentsOf: Array("fmt ".utf8))
+        wav.append(contentsOf: le32(16))
+        wav.append(contentsOf: le16(1))  // PCM
+        wav.append(contentsOf: le16(1))  // mono
+        wav.append(contentsOf: le32(UInt32(sampleRate)))
+        wav.append(contentsOf: le32(UInt32(sampleRate) * 2))  // byte rate
+        wav.append(contentsOf: le16(2))  // block align
+        wav.append(contentsOf: le16(16))  // bits per sample
+        wav.append(contentsOf: Array("data".utf8))
+        wav.append(contentsOf: le32(dataSize))
+
+        var samples = [UInt8](repeating: 0, count: frameCount * 2)
+        for i in 0..<frameCount {
+            let value = max(-1.0, min(1.0, Double(channel[i])))
+            let int16 = Int16(value * 32767.0)
+            samples[i * 2] = UInt8(int16 & 0xFF)
+            samples[i * 2 + 1] = UInt8((int16 >> 8) & 0xFF)
+        }
+        wav.append(contentsOf: samples)
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("speedsense-fallback-alert.wav")
+        do {
+            try wav.write(to: url)
+            var soundID: SystemSoundID = 0
+            let status = AudioServicesCreateSystemSoundID(url as CFURL, &soundID)
+            if status == noErr && soundID != 0 {
+                fallbackAlertSoundID = soundID
+                DebugLogger.shared.log("AlertEngine: fallback alert sound prepared")
+            } else {
+                DebugLogger.shared.log("AlertEngine: fallback alert sound creation failed: \(status)")
+            }
+        } catch {
+            DebugLogger.shared.log("AlertEngine: fallback alert WAV write failed: \(error.localizedDescription)")
+        }
+    }
+
     /// Plays the alert tone with proper audio session management.
     /// Fixes the bug where beeps are inaudible when YouTube/Music is playing:
     ///   1. Re-activates the audio session (YouTube may have deactivated it)
@@ -536,12 +609,20 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 DebugLogger.shared.log("AlertEngine: audio engine restarted for beep")
             } catch {
                 DebugLogger.shared.log("AlertEngine: audio engine restart failed: \(error.localizedDescription)")
-                // Step 4: Fallback — play a real system alert SOUND (not
-                // just vibration). The tester report was "no sound coming
-                // out at all when you speed" — AudioServices uses its own
-                // independent audio path, so it stays audible even when
-                // AVAudioEngine can't start.
-                AudioServicesPlaySystemSound(kSystemSoundID_UserPreferredAlert)
+                // Step 4: Fallback — play the alert tone through
+                // AudioServices, which uses its own audio path independent
+                // of AVAudioEngine. The tester report was "no sound coming
+                // out at all when you speed" — the old fallback was
+                // vibration only, which is silent. kSystemSoundID_UserPreferredAlert
+                // is macOS-only, and undocumented numeric system-sound IDs
+                // can silently no-op on newer iOS, so we build a WAV from
+                // the tone buffer and play THAT (guaranteed audible).
+                prepareFallbackAlertSound()
+                if fallbackAlertSoundID != 0 {
+                    AudioServicesPlaySystemSound(fallbackAlertSoundID)
+                } else {
+                    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+                }
                 return
             }
         }
