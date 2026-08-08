@@ -283,7 +283,7 @@ public class SmartSpeedLimitService: ObservableObject {
                 source: .batchCache,
                 roadKey: cached.roadName + (cached.direction.isEmpty ? "" : " \(cached.direction)"),
                 providerName: "HERE Batch",
-                detail: roadName.map { "Batch cache on \($0)" } ?? "Batch cache near coord",
+                detail: "Batch cache on \(roadName)",
                 isMiss: false
             )
         }
