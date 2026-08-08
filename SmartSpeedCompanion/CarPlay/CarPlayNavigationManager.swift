@@ -24,11 +24,10 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
     private var currentSteps: [MKRoute.Step] = []
     private var currentStepIndex: Int = 0
     private var locationCancellable: AnyCancellable?
-    /// Exponential moving average of `location.speed` used by the ETA
-    /// estimator to prevent flickering from noisy GPS speed readings.
-    private var smoothedSpeed: Double = 0
+    private var estimateCancellable: AnyCancellable?
     /// Invalidates progress callbacks from a replaced CarPlay session.
     private var navigationGeneration: UInt64 = 0
+    private var lastMatchedRemainingDistance: CLLocationDistance = 0
     
     public init(viewModel: DriveViewModel, mapTemplate: CPMapTemplate) {
         self.viewModel = viewModel
@@ -43,6 +42,44 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         // unit never receives the start trigger, so startNavigationSession
         // is never called and turn-by-turn never begins.
         self.viewModel.navigationCoordinator.navigationDelegate = self
+        // The coordinator owns the single traffic-aware ETA source for both
+        // phone and CarPlay. Push changes immediately instead of waiting for
+        // the next CarPlay GPS callback, especially after a 90-second traffic
+        // refresh completes while the head unit is rendering.
+        estimateCancellable = viewModel.navigationCoordinator.$eta
+            .combineLatest(viewModel.navigationCoordinator.$distanceToDestination)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _, distance in
+                guard let self, self.navigationSession != nil else { return }
+                let fallback = self.viewModel.navigationCoordinator.proportionalRemainingTravelTime
+                let time = self.viewModel.navigationCoordinator.trafficAwareRemainingTime(
+                    forRemainingDistance: distance,
+                    fallback: fallback
+                )
+                self.updateTripEstimates(distanceRemaining: distance, timeRemaining: time)
+                if let maneuver = self.currentManeuver {
+                    let maneuverDistance = max(0, self.viewModel.navigationCoordinator.distanceToNextTurn)
+                    let route = self.viewModel.navigationCoordinator.currentRoute
+                    let routeDistance = route?.distance ?? 0
+                    let maneuverFallback = routeDistance > 0
+                        ? (route?.expectedTravelTime ?? fallback) * min(1, maneuverDistance / routeDistance)
+                        : (route?.expectedTravelTime ?? fallback)
+                    let maneuverTime = self.viewModel.navigationCoordinator.trafficAwareRemainingTime(
+                        forRemainingDistance: maneuverDistance,
+                        fallback: maneuverFallback
+                    )
+                    self.navigationSession?.updateEstimates(
+                        CPTravelEstimates(
+                            distanceRemaining: SpeedFormatting.navigationDistanceMeasurement(
+                                forMeters: maneuverDistance,
+                                measurementSystem: SpeedFormatting.measurementSystem()
+                            ),
+                            timeRemaining: max(1, maneuverTime)
+                        ),
+                        for: maneuver
+                    )
+                }
+            }
     }
     
     public func setMuted(_ muted: Bool) {
@@ -63,11 +100,13 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         navigationSession?.finishTrip()
         navigationSession = nil
         currentManeuver = nil
+        lastMatchedRemainingDistance = 0
     }
 
     /// Defensive cleanup in case `finishCurrentSession()` was not called
     /// before deallocation (crash path, unexpected teardown order).
     deinit {
+        estimateCancellable?.cancel()
         navigationSession?.finishTrip()
     }
 
@@ -82,6 +121,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         locationCancellable = nil
         navigationSession?.upcomingManeuvers = []
         currentManeuver = nil
+        lastMatchedRemainingDistance = 0
     }
     
     public func searchDestination(query: String, completion: @escaping ([MKMapItem]) -> Void) {
@@ -214,6 +254,9 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         locationCancellable = nil
         navigationSession?.upcomingManeuvers = []
         currentManeuver = nil
+        // A replacement route has a new geometry. Never carry a lower
+        // remaining-distance snapshot from the previous route into it.
+        lastMatchedRemainingDistance = route.distance
 
         viewModel.isNavigating = true
         viewModel.navigationCoordinator.currentRoute = route
@@ -331,6 +374,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         currentTrip = nil
         currentManeuver = nil
         locationCancellable?.cancel()
+        lastMatchedRemainingDistance = 0
 
         viewModel.isNavigating = false
         viewModel.navigationCoordinator.currentRoute = nil
@@ -339,10 +383,6 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         viewModel.navigationCoordinator.distanceToNextTurn = 0
         viewModel.navigationCoordinator.distanceToDestination = 0
         viewModel.navigationCoordinator.eta = nil
-        // Reset the smoothed-speed EMA so the next navigation starts from
-        // a clean slate instead of fading from the previous drive's last
-        // reading (which would briefly produce an inaccurate ETA).
-        smoothedSpeed = 0
     }
     
     private func monitorProgress() {
@@ -401,23 +441,25 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         // (CoreLocation-smoothed with an exponential moving average) for
         // a real-time speed-based estimate that converges within seconds.
 
-        var remainingDist = actualRemainingDistance(route: currentRoute, location: location)
+        let measuredRemainingDistance = actualRemainingDistance(route: currentRoute, location: location)
+        let locallyMatchedDistance = lastMatchedRemainingDistance > 0
+            ? min(measuredRemainingDistance, lastMatchedRemainingDistance)
+            : measuredRemainingDistance
+        // NavigationCoordinator receives the same GPS stream and is the
+        // canonical phone + CarPlay distance publisher. Only use the local
+        // match as a cold-start fallback while that publisher has not emitted.
+        let coordinatorDistance = viewModel.navigationCoordinator.distanceToDestination
+        var remainingDist = coordinatorDistance > 0 ? coordinatorDistance : locallyMatchedDistance
+        lastMatchedRemainingDistance = locallyMatchedDistance
 
-        // Smooth the speed reading with an exponential moving average to
-        // prevent the ETA from visibly bouncing between values on noisy
-        // GPS ticks. alpha = 0.3 gives ~70 % weight to the last 3 readings.
-        let rawSpeed = location.speed
-        if smoothedSpeed == 0, rawSpeed >= 0 {
-                // CoreLocation returns -1.0 when speed is unavailable
-                // (GPS lock lost, tunnel). Never seed the EMA with -1 —
-                // it would contaminate the average for several ticks.
-                smoothedSpeed = rawSpeed
-            } else if rawSpeed >= 0 {
-                smoothedSpeed = 0.3 * rawSpeed + 0.7 * smoothedSpeed
-            }
-            // If rawSpeed < 0, keep the previous smoothed value unchanged.
-        var expectedRemainingTime = currentRoute.expectedTravelTime *
-            min(1.0, max(0.0, remainingDist / max(currentRoute.distance, 1)))
+        // Apple's traffic-aware route estimate is the source of truth. Do
+        // not replace it with instantaneous GPS speed while stopped or in
+        // noisy urban GPS conditions.
+        let activeLegDistance = coordinatorDistance > 0
+            ? min(coordinatorDistance, currentRoute.distance)
+            : min(remainingDist, currentRoute.distance)
+        let expectedRemainingTime = currentRoute.expectedTravelTime *
+            min(1.0, max(0.0, activeLegDistance / max(currentRoute.distance, 1)))
         // The active CarPlay leg is only part of a multi-stop journey.
         // Include every later leg in the lower ETA/distance banner so it
         // cannot collapse to the next stop's small route or show zero.
@@ -430,25 +472,13 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
             }
         }
         let proportionalEstimate = max(0, expectedRemainingTime)
-        // Core Location reports -1 while a fix is unavailable and reports
-        // near-zero while stopped. In both cases the live speed estimate is
-        // not useful; keep Apple's route-time estimate instead of exploding
-        // the ETA or collapsing it to a bogus zero-minute value.
-        let timeRemaining: TimeInterval
-        if smoothedSpeed > 3.0 {
-            let liveEstimate = remainingDist / smoothedSpeed
-            // Bound GPS-derived estimates so one noisy sample cannot replace
-            // a valid MapKit traffic estimate with an absurd value.
-            timeRemaining = min(max(liveEstimate, proportionalEstimate * 0.5),
-                                max(proportionalEstimate * 2.0, 60))
-        } else {
-            timeRemaining = proportionalEstimate
-        }
+        let timeRemaining = viewModel.navigationCoordinator.trafficAwareRemainingTime(
+            forRemainingDistance: remainingDist,
+            fallback: proportionalEstimate
+        )
 
-        // Mirror the polyline-matched distance onto the ViewModel so Siri
-        // `GetDistanceToDestinationIntent` and the phone-side HUD both see
-        // the same accurate value (in meters).
-        viewModel.navigationCoordinator.distanceToDestination = remainingDist
+        // The coordinator already publishes this canonical distance to Siri
+        // and the phone HUD. CarPlay only renders the same value here.
         updateTripEstimates(distanceRemaining: remainingDist, timeRemaining: timeRemaining)
         
         if let maneuver = currentManeuver {
@@ -458,9 +488,13 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
                 forMeters: maneuverDistance,
                 measurementSystem: SpeedFormatting.measurementSystem()
             )
-            let maneuverTime = currentRoute.distance > 0
-                ? timeRemaining * min(1, maneuverDistance / currentRoute.distance)
-                : timeRemaining
+            let maneuverFallback = currentRoute.distance > 0
+                ? currentRoute.expectedTravelTime * min(1, maneuverDistance / currentRoute.distance)
+                : currentRoute.expectedTravelTime
+            let maneuverTime = viewModel.navigationCoordinator.trafficAwareRemainingTime(
+                forRemainingDistance: maneuverDistance,
+                fallback: maneuverFallback
+            )
             session.updateEstimates(
                 CPTravelEstimates(distanceRemaining: maneuverMeasurement,
                                   timeRemaining: max(1, maneuverTime)),

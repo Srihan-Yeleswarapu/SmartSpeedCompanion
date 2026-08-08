@@ -267,7 +267,7 @@ public final class NavigationCoordinator: ObservableObject {
         }
     }
     /// The destination as a MapItem mirror of `destination` for reroute paths
-    /// (e.g. `checkForFasterRoute` and the 35m off-route detector).
+    /// and the 35m off-route detector.
     @Published public var destinationItem: MKMapItem? = nil
 
     /// Indicates if the system is currently calculating a reroute.
@@ -326,11 +326,27 @@ public final class NavigationCoordinator: ObservableObject {
 
     /// Index of the current MKRoute.Step being guided through.
     private var currentStepIndex: Int = 0
-    /// Exponential moving average of `location.speed` used by the ETA
-    /// estimator to prevent flickering from noisy GPS speed readings.
-    private var smoothedSpeed: Double = 0
-    /// Periodic 5-minute traffic-awareneness timer; runs only during nav.
+    /// Most recent navigation fix used to refresh Apple's traffic-aware ETA.
+    private var lastNavigationLocation: CLLocation?
+    /// Last matched remaining distance. GPS can briefly snap to an earlier
+    /// parallel segment; never let that turn make the ETA jump backward.
+    private var lastMatchedRemainingDistance: CLLocationDistance = 0
+    /// Invalidates a traffic refresh that was suspended across a route change
+    /// or navigation teardown.
+    private var trafficRefreshGeneration: UInt64 = 0
+    /// Prevents a stale GPS fix from lowering the refresh baseline after a
+    /// route transition while retaining the active route's canonical geometry.
+    private var lastTrafficRefreshDistance: CLLocationDistance = 0
+    /// Apple MapKit's latest traffic-aware remaining journey snapshot.
+    /// We scale this snapshot by the live remaining route distance between
+    /// refreshes, rather than replacing it with a noisy GPS-speed estimate.
+    private var trafficReferenceDistance: CLLocationDistance = 0
+    private var trafficReferenceTime: TimeInterval = 0
+    /// Periodic traffic refresh timer; MapKit directions are one-shot and do
+    /// not push traffic changes automatically. 90 seconds keeps ETA current
+    /// without hammering Apple's directions service.
     private var rerouteTimer: Timer?
+    private var trafficRefreshInFlight = false
     /// Per-step announcement gating: key is step index, value is a set of
     /// stage flags ("initial", "approaching", "immediate") so each cue
     /// fires AT MOST ONCE per step.
@@ -389,12 +405,6 @@ public final class NavigationCoordinator: ObservableObject {
     private let liveActivityStart: (Date) -> Void
     /// Ends the active Live Activity. Same simulator-gate caveat.
     private let liveActivityEnd: () -> Void
-    /// Wall-clock start time of the active recording session, or `nil`
-    /// before one is started. Used by `checkForFasterRoute()` for the
-    /// original "remaining travel time" heuristic so the 2-minute
-    /// reroute-savings threshold matches the previous byte-for-byte
-    /// behavior. Injected because sessionStartTime lives on the host VM.
-    private let sessionStartTimeProvider: () -> Date?
 
     /// Voice/TTS — default is the production `DefaultVoiceAnnouncer`
     /// (real AVSpeechSynthesizer + AVAudioSession). Tests pass a spy.
@@ -435,7 +445,6 @@ public final class NavigationCoordinator: ObservableObject {
         endSession: @escaping () -> Void = { },
         liveActivityStart: @escaping (Date) -> Void = { _ in },
         liveActivityEnd: @escaping () -> Void = { },
-        sessionStartTimeProvider: @escaping () -> Date? = { nil },
         voiceAnnouncer: VoiceAnnouncer? = nil
     ) {
         self.isRecordingProvider = isRecordingProvider
@@ -448,7 +457,6 @@ public final class NavigationCoordinator: ObservableObject {
         self.endSession = endSession
         self.liveActivityStart = liveActivityStart
         self.liveActivityEnd = liveActivityEnd
-        self.sessionStartTimeProvider = sessionStartTimeProvider
         // Lazily construct the production announcer; tests override via
         // `voiceAnnouncer:` and that wins.
         self.voiceAnnouncer = voiceAnnouncer ?? DefaultVoiceAnnouncer()
@@ -588,8 +596,10 @@ public final class NavigationCoordinator: ObservableObject {
 
         // Update ETA to reflect the total multi-stop journey.
         let totalTime = computedLegs.reduce(0) { $0 + $1.travelTime }
+        let totalDistance = computedLegs.reduce(0) { $0 + $1.distance }
+        self.setTrafficReference(distance: totalDistance, time: totalTime)
         self.eta = Date().addingTimeInterval(totalTime)
-        self.distanceToDestination = computedLegs.reduce(0) { $0 + $1.distance }
+        self.distanceToDestination = totalDistance
 
         return overallRoute
     }
@@ -758,6 +768,11 @@ public final class NavigationCoordinator: ObservableObject {
         navigationDelegate?.prepareForRouteTransition()
         activeMultiStopLegIndex += 1
         currentRoute = nextRoute
+        // Invalidate a traffic request that may still be calculating the
+        // completed leg. Its result must never overwrite this new leg's ETA.
+        trafficRefreshGeneration &+= 1
+        lastMatchedRemainingDistance = nextRoute.distance
+        lastTrafficRefreshDistance = nextRoute.distance
         currentStepIndex = 0
         // The published route snapshot remains valid while moving between its
         // legs. Do not advance the edit/calculation generation here: doing so
@@ -784,6 +799,7 @@ public final class NavigationCoordinator: ObservableObject {
         let remainingLegs = routeLegs[activeMultiStopLegIndex...]
         let remainingTime = remainingLegs.reduce(0) { $0 + $1.travelTime }
         let remainingDistance = remainingLegs.reduce(0) { $0 + $1.distance }
+        setTrafficReference(distance: remainingDistance, time: remainingTime)
         eta = Date().addingTimeInterval(remainingTime)
         distanceToDestination = remainingDistance
         return (nextRoute, nextDestination)
@@ -1103,6 +1119,11 @@ public final class NavigationCoordinator: ObservableObject {
         }
         // When routeStops is non-empty and multi-stop data is present,
         // we keep the total ETA / distance untouched.
+        let initialTrafficDistance = routeStops.isEmpty ? route.distance : max(distanceToDestination, route.distance)
+        let initialTrafficTime = routeStops.isEmpty
+            ? route.expectedTravelTime
+            : max(eta?.timeIntervalSinceNow ?? 0, route.expectedTravelTime)
+        self.setTrafficReference(distance: initialTrafficDistance, time: initialTrafficTime)
 
         // Automatically start recording the drive session if it hasn't been started manually.
         // This is committed only after the route generation survives cache warming.
@@ -1111,6 +1132,9 @@ public final class NavigationCoordinator: ObservableObject {
         // passed. This prevents stale starts from leaving a route, timer, or
         // recording session partially active.
         self.currentRoute = route
+        self.trafficRefreshGeneration &+= 1
+        self.lastMatchedRemainingDistance = route.distance
+        self.lastTrafficRefreshDistance = route.distance
         self.currentStepIndex = 0
         self.isCompletingNavigation = false
         self.navigationTeardownInProgress = false
@@ -1259,6 +1283,13 @@ public final class NavigationCoordinator: ObservableObject {
         navigationLifecycleGeneration &+= 1
         let teardownGeneration = navigationLifecycleGeneration
         self.currentRoute = nil
+        self.lastNavigationLocation = nil
+        self.lastMatchedRemainingDistance = 0
+        self.lastTrafficRefreshDistance = 0
+        self.trafficRefreshGeneration &+= 1
+        self.trafficReferenceDistance = 0
+        self.trafficReferenceTime = 0
+        self.trafficRefreshInFlight = false
         self.isCompletingNavigation = true
         self.destination = nil
         self.destinationItem = nil
@@ -1281,11 +1312,6 @@ public final class NavigationCoordinator: ObservableObject {
         // Drop maneuver scratch state so the next navigation starts clean.
         // (Look Around scratch state removed in TestFlight 2.2.0 / FB10.)
         self.nextManeuverCoordinate = nil
-        // Reset the smoothed-speed EMA so the next navigation starts from
-        // a clean slate instead of fading from the previous drive's last
-        // reading (which would briefly produce an inaccurate ETA).
-        smoothedSpeed = 0
-
         // Deactivate the navigation voice audio session so media can
         // resume on the CarPlay audio channel. This is the ONLY place
         // the session is torn down — NOT between individual announcements
@@ -1318,6 +1344,7 @@ public final class NavigationCoordinator: ObservableObject {
     /// step progression, voice announcements, and ETA refresh.
     public func updateNavigationProgress(at location: CLLocation) {
         guard !isCompletingNavigation, let route = currentRoute else { return }
+        lastNavigationLocation = location
         let steps = route.steps
 
         // Arrival must not depend on the driver still moving. A final GPS fix
@@ -1447,27 +1474,17 @@ public final class NavigationCoordinator: ObservableObject {
             lastDistanceToTurn = distanceToTurn
         }
 
-        // 4. ETA REFRESH: Speed-based estimate using polyline-matched
-        //    remaining distance + real-time speed from CoreLocation.
-        //
-        //    The OLD formula used a proportional estimate:
-        //      remainingDist = steps[currentStepIndex...].reduce(0, +)
-        //      eta = now + max(30, expectedTravelTime × remainingDist/totalDist)
-        //
-        //    BUG #1 (Step-index lag): currentStepIndex only advances when
-        //    the user is within 15 m of the NEXT step's start coordinate.
-        //    "Completed" distance lags actual travel by potentially several
-        //    km, overstating remainingDist and inflating the ETA.
-        //
-        //    BUG #2 (No speed feedback): The proportion assumes constant
-        //    expected speed forever. A driver on an open highway sees the
-        //    same ETA as if stuck in traffic.
-        //
-        //    FIX: Walk the route polyline to find the user's actual
-        //    position, compute remaining distance along the geometry, and
-        //    use location.speed with an exponential moving average for a
-        //    smooth live speed-based estimate that converges within seconds.
-        let activeRemainingDist = actualRemainingDistance(route: route, location: location)
+        // 4. ETA REFRESH: Use the latest Apple traffic-aware snapshot,
+        //    scaled to the monotonically matched distance on the active
+        //    route geometry. Never substitute instantaneous GPS speed.
+        let measuredRemainingDistance = actualRemainingDistance(route: route, location: location)
+        let activeRemainingDist: CLLocationDistance
+        if lastMatchedRemainingDistance > 0 {
+            activeRemainingDist = min(measuredRemainingDistance, lastMatchedRemainingDistance)
+        } else {
+            activeRemainingDist = measuredRemainingDistance
+        }
+        lastMatchedRemainingDistance = activeRemainingDist
         var remainingDist = activeRemainingDist
         var expectedRemainingTime = route.expectedTravelTime *
             (activeRemainingDist / max(route.distance, 1))
@@ -1482,29 +1499,13 @@ public final class NavigationCoordinator: ObservableObject {
             expectedRemainingTime += laterLegs.reduce(0) { $0 + $1.travelTime }
         }
 
-        // Exponential moving average (alpha = 0.3) to dampen GPS speed
-        // noise and prevent the ETA from visibly bouncing between values.
-        let rawSpeed = location.speed
-        if smoothedSpeed == 0, rawSpeed >= 0 {
-            // CoreLocation returns -1.0 when speed is unavailable
-            // (GPS lock lost, tunnel). Never seed the EMA with -1 —
-            // it would contaminate the average for several ticks.
-            smoothedSpeed = rawSpeed
-        } else if rawSpeed >= 0 {
-            smoothedSpeed = 0.3 * rawSpeed + 0.7 * smoothedSpeed
-        }
-        // If rawSpeed < 0, keep the previous smoothed value unchanged.
-        let speed = max(smoothedSpeed, 1.0) // m/s, floor at walking speed (3.6 km/h)
-        let liveEstimate = remainingDist / speed // seconds
-
-        // Sanity clamp: cap the live estimate at 3× the expected
-        // proportional remaining time so stop-and-go traffic doesn't
-        // produce absurdly pessimistic ETAs (e.g. 83 min for 10 km at
-        // 2 m/s when Apple expected 20 min).
         let proportionalEstimate = max(0, expectedRemainingTime)
-        let timeRemaining = min(liveEstimate, 3.0 * proportionalEstimate)
+        let timeRemaining = max(0, trafficAwareRemainingTime(
+            forRemainingDistance: remainingDist,
+            fallback: proportionalEstimate
+        ))
 
-        self.eta = Date().addingTimeInterval(max(30, timeRemaining))
+        self.eta = Date().addingTimeInterval(max(5, timeRemaining))
         // Mirror the polyline-matched distance onto @Published so Siri
         // `GetDistanceToDestinationIntent` reads the same accurate value.
         self.distanceToDestination = remainingDist
@@ -1970,48 +1971,138 @@ public final class NavigationCoordinator: ObservableObject {
     /// options. The 5-minute cadence runs while a route is active.
     private func startRerouteTimer() {
         rerouteTimer?.invalidate()
-        // Check for a faster route every 5 minutes during navigation
-        rerouteTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+        // MKDirections returns a one-shot traffic snapshot. Refresh it every
+        // 90 seconds while navigating so congestion changes reach both the
+        // phone ETA and CarPlay without replacing the active route geometry.
+        rerouteTimer = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                await self?.checkForFasterRoute()
+                await self?.refreshTrafficEstimate()
             }
         }
     }
 
-    private func checkForFasterRoute() async {
-        // A faster direct route would discard the ordered intermediate-leg
-        // plan. Multi-stop traffic updates must be recalculated as a complete
-        // snapshot instead of entering the single-destination path below.
-        guard routeStops.isEmpty,
-              let dest = destinationItem,
-              let current = currentRoute else { return }
+    /// Refreshes the current journey's ETA from Apple's live traffic-aware
+    /// directions service without replacing the driver's active geometry.
+    private func refreshTrafficEstimate() async {
+        guard !trafficRefreshInFlight,
+              let location = lastNavigationLocation,
+              let target = activeMultiStopDestination ?? destination else { return }
 
-        let request = MKDirections.Request()
-        request.source = MKMapItem.forCurrentLocation()
-        request.destination = dest
-        request.transportType = .automobile
+        trafficRefreshInFlight = true
+        let refreshGeneration = trafficRefreshGeneration
+        let refreshPlanGeneration = multiStopStateGeneration
+        let refreshLegIndex = activeMultiStopLegIndex
+        let refreshDestination = target
+        defer { trafficRefreshInFlight = false }
 
-        do {
-            let directions = MKDirections(request: request)
-            let response = try await directions.calculate()
-            if let fastest = response.routes.first {
-                // Mirror the original (VM-owned) heuristic: remaining
-                // time = expectedTravelTime − (now − sessionStartTime).
-                // Falls back to ETA-derived estimate when no recording
-                // session is in flight (matches the `sessionStartTime ?? Date()`
-                // original behavior in the most natural way).
-                let sessionStart = sessionStartTimeProvider() ?? Date()
-                let remainingTime = current.expectedTravelTime
-                    - Date().timeIntervalSince(sessionStart)
-                // If the new route saves more than 2 minutes, reroute
-                if fastest.expectedTravelTime < remainingTime - 120 {
-                    DebugLogger.shared.log("TRAFFIC ALERT: Faster route found.")
-                    await startNavigation(to: dest)
-                }
+        let source = MKMapItem(placemark: MKPlacemark(coordinate: location.coordinate))
+        var refreshedDistance: CLLocationDistance = 0
+        var refreshedTime: TimeInterval = 0
+
+        if routeStops.isEmpty {
+            guard let refreshedRoute = await calculateRouteBetween(source: source, destination: target),
+                  refreshGeneration == trafficRefreshGeneration,
+                  refreshPlanGeneration == multiStopStateGeneration,
+                  currentRoute != nil else { return }
+            refreshedDistance = refreshedRoute.distance
+            refreshedTime = refreshedRoute.expectedTravelTime
+        } else {
+            // Refresh every remaining leg, not only the active leg. Traffic
+            // on a later stop-to-stop segment is just as capable of making
+            // the final ETA wrong as traffic immediately ahead.
+            guard activeMultiStopLegIndex < multiStopLegDestinations.count else { return }
+            for legIndex in activeMultiStopLegIndex..<multiStopLegDestinations.count {
+                let legSource = legIndex == activeMultiStopLegIndex
+                    ? source
+                    : multiStopLegDestinations[legIndex - 1]
+                let legDestination = multiStopLegDestinations[legIndex]
+                guard let refreshedLeg = await calculateRouteBetween(
+                    source: legSource,
+                    destination: legDestination
+                ),
+                refreshGeneration == trafficRefreshGeneration,
+                refreshPlanGeneration == multiStopStateGeneration,
+                currentRoute != nil else { return }
+                refreshedDistance += refreshedLeg.distance
+                refreshedTime += refreshedLeg.expectedTravelTime
             }
-        } catch {
-            // Silently fail traffic checks to avoid interrupting the drive
         }
+
+        guard refreshedDistance > 0, refreshedTime > 0,
+              refreshGeneration == trafficRefreshGeneration,
+              refreshPlanGeneration == multiStopStateGeneration,
+              refreshLegIndex == activeMultiStopLegIndex,
+              mapItemsMatch(refreshDestination, activeMultiStopDestination ?? destination) else { return }
+
+        // Keep the active route geometry as the canonical distance source.
+        // The refreshed MKRoute is a traffic snapshot, not the route being
+        // rendered or matched by the guidance loop. Publishing its distance
+        // here caused the next GPS tick to jump back to the old polyline and
+        // make phone and CarPlay disagree. Use the live distance on the
+        // current geometry as the reference denominator, and use Apple's
+        // refreshed travel time as the traffic numerator.
+        let measuredLiveDistance = liveRemainingDistance(at: location)
+        let liveReferenceDistance = lastTrafficRefreshDistance > 0
+            ? min(measuredLiveDistance, lastTrafficRefreshDistance)
+            : measuredLiveDistance
+        guard liveReferenceDistance > 0 else { return }
+        lastTrafficRefreshDistance = liveReferenceDistance
+        setTrafficReference(distance: liveReferenceDistance, time: refreshedTime)
+        eta = Date().addingTimeInterval(refreshedTime)
+        DebugLogger.shared.log("Traffic ETA refreshed: \(Int(refreshedTime))s / \(Int(liveReferenceDistance))m")
+    }
+
+    private func setTrafficReference(distance: CLLocationDistance, time: TimeInterval) {
+        guard distance > 0, time > 0 else { return }
+        trafficReferenceDistance = distance
+        trafficReferenceTime = time
+        lastTrafficRefreshDistance = distance
+    }
+
+    /// Computes the remaining distance on the route geometry currently being
+    /// followed, including all later precomputed multi-stop legs. This is used
+    /// only as the canonical progress denominator; traffic refresh responses
+    /// must not replace the active geometry.
+    private func liveRemainingDistance(at location: CLLocation) -> CLLocationDistance {
+        guard let route = currentRoute else { return 0 }
+        let measured = actualRemainingDistance(route: route, location: location)
+        let remainingOnActiveLeg = lastMatchedRemainingDistance > 0
+            ? min(measured, lastMatchedRemainingDistance)
+            : measured
+        var remaining = remainingOnActiveLeg
+        if !routeStops.isEmpty,
+           activeMultiStopLegIndex + 1 < routeLegs.count {
+            let laterLegs = routeLegs[(activeMultiStopLegIndex + 1)...]
+            remaining += laterLegs.reduce(0) { $0 + $1.distance }
+        }
+        return max(0, remaining)
+    }
+
+    /// Fallback travel time from the active geometry and all later legs.
+    /// Used by CarPlay before the first traffic refresh completes.
+    public var proportionalRemainingTravelTime: TimeInterval {
+        guard let route = currentRoute else { return 0 }
+        var total = route.expectedTravelTime
+        if !routeStops.isEmpty,
+           activeMultiStopLegIndex + 1 < routeLegs.count {
+            total += routeLegs[(activeMultiStopLegIndex + 1)...]
+                .reduce(0) { $0 + $1.travelTime }
+        }
+        return max(0, total)
+    }
+
+    /// Scales the most recent Apple traffic-aware journey snapshot to the
+    /// distance remaining on the live route. The fallback is used before a
+    /// traffic reference exists.
+    public func trafficAwareRemainingTime(
+        forRemainingDistance distance: CLLocationDistance,
+        fallback: TimeInterval
+    ) -> TimeInterval {
+        guard trafficReferenceDistance > 0, trafficReferenceTime > 0 else {
+            return fallback
+        }
+        let ratio = min(max(distance / trafficReferenceDistance, 0), 1)
+        return trafficReferenceTime * ratio
     }
 
     // MARK: - Route Segment Caching

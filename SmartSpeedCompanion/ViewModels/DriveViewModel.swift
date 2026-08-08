@@ -778,7 +778,6 @@ public final class DriveViewModel: NSObject, ObservableObject {
     // Timer properties
     private var sessionStartTime: Date? = nil
     private var sessionTimer: AnyCancellable? = nil
-    private var rerouteTimer: Timer?
     /// Live Activity updates are intentionally coalesced. The location
     /// heartbeat is 500 ms, but ActivityKit does not need a new snapshot on
     /// every GPS fix and frequent updates add heat on a real device.
@@ -789,21 +788,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// serialization, and server work during a drive.
     private var lastCloudLocationSyncAt: Date = .distantPast
     private let cloudLocationSyncInterval: TimeInterval = 10.0
-    private var currentStepIndex: Int = 0
     private var cancellables = Set<AnyCancellable>()
     
     // A weak reference or delegate will handle actual logic in CarPlay layer
     public var navigationDelegate: NavigationActionDelegate?
     
-    // Voice Navigation Tracking
-    private var stepStageFlags: [Int: Set<String>] = [:]
-    private var lastDistanceToTurn: CLLocationDistance? = nil
-    /// Set<String> keys = "lat,lon" rounded to 4 decimals (~11 m precision)
-    /// so the speed-camera voice alert fires ONCE per physical camera
-    /// location even if the backend reconstructs the `SpeedCamera` struct
-    /// repeatedly across location ticks. Reset in `startNavigation(...)`
-    /// and `endNavigation()` so each fresh drive starts clean.
-    private var spokenCameraKeys: Set<String> = []
     /// Wall-clock throttle for `manualRefetchSpeedLimit()` taps on the
     /// LimitSignView. Two back-to-back taps within a 600 ms window collapse
     /// to a single refetch so a double-tap from a frustrated user doesn't
@@ -941,8 +930,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 #if !targetEnvironment(simulator)
                 LiveActivityManager.shared.endActivity()
                 #endif
-            },
-            sessionStartTimeProvider: { [weak self] in self?.sessionStartTime }
+            }
         )
         navigationCoordinator.objectWillChange
             .sink { [weak self] in self?.objectWillChange.send() }
@@ -1971,9 +1959,10 @@ public final class DriveViewModel: NSObject, ObservableObject {
         return await navigationDelegate?.searchDestinationTrigger(query) ?? []
     }
     
-    // MARK: - Core Navigation Loop (Apple Maps Parity)
-    
-    /// The main "heartbeat" of navigation. Runs every location update to check for steps, turns, and reroutes.
+    // MARK: - Legacy Navigation Helpers
+
+    /// Navigation progress is owned by `NavigationCoordinator`.
+    /*
     private func updateNavigationProgress(at location: CLLocation) {
         guard let route = currentRoute else { return }
         let steps = route.steps
@@ -2307,6 +2296,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
         return "\(intPart) point \(fracPart)"
     }
     
+
+    */
+
     // MARK: - Native MapKit Feature Helpers
 
     // TestFlight 2.2.0 (FB10): Look Around removed.
@@ -2698,44 +2690,8 @@ public final class DriveViewModel: NSObject, ObservableObject {
         return lower.contains("proceed to route") || lower.contains("starting route") || lower.contains("you have arrived")
     }
 
-    // MARK: - Dynamic Rerouting (Traffic Awareness)
-    
-    /// Starts a recurring monitor that checks for more efficient route options.
-    private func startRerouteTimer() {
-        rerouteTimer?.invalidate()
-        // Check for a faster route every 5 minutes during navigation
-        rerouteTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.checkForFasterRoute()
-            }
-        }
-    }
-
-    private func checkForFasterRoute() async {
-        guard let dest = destinationItem, let current = currentRoute else { return }
-        
-        let request = MKDirections.Request()
-        request.source = MKMapItem.forCurrentLocation()
-        request.destination = dest
-        request.transportType = .automobile
-        
-        do {
-            let directions = MKDirections(request: request)
-            let response = try await directions.calculate()
-            if let fastest = response.routes.first {
-                let remainingTime = current.expectedTravelTime - (Date().timeIntervalSince(sessionStartTime ?? Date()))
-                // If the new route saves more than 2 minutes, reroute
-                if fastest.expectedTravelTime < remainingTime - 120 {
-                    DebugLogger.shared.log("TRAFFIC ALERT: Faster route found.")
-                    await startNavigation(to: dest) 
-                }
-            }
-        } catch {
-            // Silently fail traffic checks to avoid interrupting the drive
-        }
-    }
-
     // MARK: - Rerouting Logic
+
     // NOTE: checkOffRouteStatus and distanceToPolyline were moved to
     // NavigationCoordinator. The private copies that lived here referenced
     // isCalculatingReroute and lastRerouteTime which are now owned by the
