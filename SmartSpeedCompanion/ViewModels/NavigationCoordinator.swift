@@ -69,10 +69,9 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     /// Keep the newest pending cue instead of dropping it or asking AVSpeechSynthesizer
     /// to overlap utterances, which is a common source of chopped CarPlay TTS.
     private var pendingMessages: [String] = []
-    /// True once the shared AVAudioSession has been acquired for the
-    /// current navigation, so `announce()` doesn't re-begin (and re-count)
-    /// the session for every utterance. Cleared by `deactivateSession()`.
-    private var sessionHeld = false
+    /// True while the current utterance owns one audio-focus cue. The cue is
+    /// released from the speech delegate after the audio actually finishes.
+    private var cueHeld = false
 
     var isSpeaking: Bool {
         synthesizer.isSpeaking || synthesizer.isPaused
@@ -87,17 +86,23 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
         // delegate ref to strong — it would leak this whole subtree for
         // the app lifetime once the navigation graph grows.
         synthesizer.delegate = self
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     /// Speak the given navigation message.
     ///
-    /// The shared AVAudioSession is acquired ONCE on the first accepted cue
-    /// and held until `deactivateSession()` — see `AudioSessionCoordinator`.
-    /// Previously each utterance (re)configured the session, forcing
-    /// CarPlay's audio pipeline to re-negotiate between announcements and
-    /// stutter.
-    /// Also reduced `preUtteranceDelay` from 0.5 to 0.05 to eliminate
-    /// the unnatural half-second gap before each announcement.
+    /// Audio focus is acquired for this utterance only. The coordinator
+    /// briefly debounces release so adjacent prompts do not renegotiate the
+    /// CarPlay route between words.
     func announce(_ message: String) {
         guard UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool ?? true else { return }
         // Never ask AVSpeechSynthesizer to overlap utterances. Queue a small
@@ -117,17 +122,11 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     }
 
     private func speakNow(_ expandedMessage: String) {
-        // Acquire the session lazily on the first accepted cue. This avoids
-        // activating and ducking other audio at app launch; the session
-        // remains stable until navigation ends. After a phone call or Siri
-        // interruption, reactivation is performed here without changing the
-        // category or route policy.
-        if sessionHeld {
-            AudioSessionCoordinator.shared.ensureActive()
-        } else {
-            AudioSessionCoordinator.shared.beginNavigation()
-            sessionHeld = true
-        }
+        // Acquire focus immediately before handing the utterance to iOS.
+        // This asks interruptible media to pause; the coordinator falls back
+        // to ducking if the current route refuses exclusive activation.
+        AudioSessionCoordinator.shared.beginCue()
+        cueHeld = true
 
         let utterance = AVSpeechUtterance(string: expandedMessage)
         utterance.preUtteranceDelay = 0.05
@@ -183,47 +182,56 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
             ?? AVSpeechSynthesisVoice(language: "en-US")
     }
 
-    /// Release the shared audio session. Called when navigation ends so the
-    /// CarPlay audio pipeline is freed and media can resume normally.
-    /// NOT called between individual announcements — that caused the
-    /// glitchy teardown-and-rebuild cycle. The coordinator only deactivates
-    /// the session when no other subsystem (e.g. a speeding alert) still
-    /// holds it.
+    /// Stop navigation speech and release any cue still in flight. Media is
+    /// restored by the coordinator after its short debounce window.
     func deactivateSession() {
         pendingMessages.removeAll()
         synthesizer.stopSpeaking(at: .immediate)
-        if sessionHeld {
-            AudioSessionCoordinator.shared.endNavigation()
-            sessionHeld = false
-        }
+        releaseCurrentCue()
         DebugLogger.shared.log("Audio Session Deactivated (navigation ended)")
+    }
+
+    private func releaseCurrentCue() {
+        guard cueHeld else { return }
+        cueHeld = false
+        AudioSessionCoordinator.shared.endCue()
+    }
+
+    /// A phone call, Siri, or another system owner can interrupt speech
+    /// without reliably delivering a speech delegate callback. Release the
+    /// cue immediately so the previous media app is not left suppressed.
+    @objc private func handleAudioInterruption(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+
+        switch type {
+        case .began:
+            synthesizer.stopSpeaking(at: .immediate)
+            releaseCurrentCue()
+        case .ended:
+            drainPendingMessage()
+        @unknown default:
+            break
+        }
     }
 
     // MARK: - AVSpeechSynthesizerDelegate
 
-    /// FIX: Do NOT deactivate the audio session between utterances.
-    /// Deactivation was causing CarPlay's audio pipeline to tear down
-    /// and re-negotiate on every announcement, producing the severe
-    /// stutter/glitch. The session is kept alive for the entire
-    /// navigation and only deactivated in `deactivateSession()`.
-    ///
-    /// FIX: Do NOT deactivate the audio session between utterances.
-    /// Deactivation was causing CarPlay's audio pipeline to tear down
-    /// and re-negotiate on every announcement, producing the severe
-    /// stutter/glitch. The session is kept alive for the entire
-    /// navigation and only deactivated in `deactivateSession()`.
-    ///
-    /// Uses `print()` instead of `DebugLogger.shared.log()` to avoid
-    /// Swift 6 data-race safety errors on non-Sendable utterance
-    /// properties accessed from a nonisolated delegate context.
+    /// Delegate callbacks are nonisolated in the SDK; hop back to the main
+    /// actor before changing the cue lease or draining the next prompt.
+    /// Releasing here lets the interrupted media source resume after the
+    /// spoken audio has actually completed.
     nonisolated func speechSynthesizer(_: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
+            self?.releaseCurrentCue()
             self?.drainPendingMessage()
         }
     }
 
     nonisolated func speechSynthesizer(_: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
+            self?.releaseCurrentCue()
             self?.drainPendingMessage()
         }
     }

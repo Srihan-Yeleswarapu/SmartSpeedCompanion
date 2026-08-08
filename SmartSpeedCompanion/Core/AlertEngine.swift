@@ -72,14 +72,12 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     private let audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private var toneBuffer: AVAudioPCMBuffer?
+    /// True while the current overspeed episode owns the shared audio cue.
+    private var alertSessionHeld = false
     /// AudioServices sound ID built from the tone buffer, used by the
     /// fallback alert path (plays through AudioServices' own audio path,
     /// which works even when AVAudioEngine cannot start).
     private var fallbackAlertSoundID: SystemSoundID = 0
-    /// True while the speeding monitor owns the coordinator's alert holder.
-    /// Beeps must not call `setActive(true)` repeatedly: that can steal audio
-    /// focus from an in-flight CarPlay speech prompt and chop it.
-    private var alertSessionHeld = false
     
     // MARK: - Init
     public init(speedEngine: SpeedEngine) {
@@ -217,13 +215,13 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     private func startMonitoring() {
         consecutiveSeconds = 0
         
-        // ── Duck other audio for the ENTIRE speeding duration ──────
-        // Activate our session with `.duckOthers`. This lowers the
-        // volume of YouTube/Music/Spotify and keeps it lowered until
-        // we deactivate (when the user slows down). Every beep that
-        // fires while in this state will be clearly audible.
-        activateAudioDucking()
-        
+        // Keep media interrupted for the whole speeding episode. The user
+        // must not miss the next warning while the car remains over the
+        // limit; focus is released only when status returns to safe/warning.
+        if isAudioAlertsEnabled {
+            beginAlertAudioFocus()
+        }
+
         // ── Sustained speeding vibration ──────────────────────────
         // Start the repeating 3s-on / 0.5s-off pulse NOW (not on the
         // 2 s beep cooldown), so the driver feels the vibration the
@@ -244,6 +242,15 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 guard self.isAudioAlertsEnabled || self.isHapticAlertsEnabled else {
                     self.stopMonitoringState()
                     return
+                }
+
+                // Reconcile audio focus when the setting changes during an
+                // overspeed episode: disabling audio must restore media now,
+                // while enabling it must acquire focus before the next tone.
+                if self.isAudioAlertsEnabled {
+                    self.beginAlertAudioFocus()
+                } else {
+                    self.endAlertAudioFocus()
                 }
 
                 self.consecutiveSeconds += 1
@@ -284,6 +291,25 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                         }
                     }
                 }
+
+                // ── Background vibration fallback ─────────────────
+                // iOS forbids driving the haptic engine while the app is
+                // backgrounded (another app like YouTube in the foreground,
+                // or the phone locked in a holder), so the CHHapticEngine
+                // pulse above goes silent even though GPS keeps running.
+                // When haptic alerts are on and the user is over the limit,
+                // deliver a SILENT-sound local notification instead — the
+                // system vibration that accompanies it is the only
+                // sanctioned way to buzz a backgrounded app. The bridge
+                // self-gates on background state + toggle + 10 s throttle,
+                // so this call is safe on every 1 s monitor tick.
+                if !self.isSnoozed {
+                    BackgroundHapticBridge.shared.handleSpeedingTick(
+                        hapticsEnabled: self.isHapticAlertsEnabled,
+                        speed: self.speedEngine?.speed ?? 0,
+                        limit: self.speedEngine?.limit ?? 0
+                    )
+                }
             }
     }
     
@@ -299,12 +325,15 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // kill the looping pulse immediately so the phone stops
         // vibrating.
         HapticAlertManager.shared.stopSpeedingPulse()
+        // Reset the background-buzz throttle too, so the NEXT speeding
+        // episode delivers its first notification immediately instead of
+        // waiting out a stale 10 s cooldown from the previous episode.
+        BackgroundHapticBridge.shared.reset()
         
-        // ── Restore music volume ───────────────────────────────────
-        // User has slowed down and status is no longer `.over`.
-        // Deactivate our audio session so the other app's (YouTube,
-        // Music, Spotify) volume comes back to normal.
-        deactivateAudioDucking()
+        // Restore the previous media app as soon as the user is no longer
+        // over the limit. Navigation speech can keep its own independent
+        // cue lease if a direction is being spoken at the same time.
+        endAlertAudioFocus()
     }
     
     private func cancelTimer() {
@@ -364,8 +393,11 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
             // needed.
             DebugLogger.shared.log("AlertEngine: audio interrupted by another app")
         case .ended:
-            // The interruption ended. Re-activate the shared session and
-            // restart the audio engine so the next beep plays correctly.
+            // Only recover a tone engine that was actually used by an active
+            // speeding alert. Navigation speech also generates interruption
+            // notifications, and it must not lazily construct/start a tone
+            // graph in response.
+            guard alertSessionHeld, toneEngineReady else { return }
             AudioSessionCoordinator.shared.ensureActive()
             restartAudioEngine()
             DebugLogger.shared.log("AlertEngine: audio session resumed after interruption")
@@ -381,47 +413,23 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         }
     }
     
-    /// Acquires the shared audio session (with ducking) for the ENTIRE
-    /// duration the user is speeding, so music/YouTube stays lowered until
-    /// `deactivateAudioDucking()`. Delegates to the single process-wide
-    /// `AudioSessionCoordinator` — it never changes category/mode here, so
-    /// a speeding alert can no longer yank the session out of the
-    /// navigation-voice `.voicePrompt` mode (the glitchy-audio bug).
-    private func activateAudioDucking() {
+    /// Keeps the session focused for the entire overspeed episode. The
+    /// coordinator requests a real interruption first and uses ducking only
+    /// when exclusive activation is rejected by the current route.
+    private func beginAlertAudioFocus() {
         guard !alertSessionHeld else { return }
-        AudioSessionCoordinator.shared.beginAlertDucking()
+        AudioSessionCoordinator.shared.beginCue()
         alertSessionHeld = true
-        DebugLogger.shared.log("AlertEngine: audio ducking activated (speeding)")
+        DebugLogger.shared.log("AlertEngine: audio focus acquired for speeding episode")
     }
 
-    /// Releases the alert's slot on the shared session, allowing other
-    /// apps' audio (YouTube, Music, Spotify) to return to full volume.
-    /// The coordinator only deactivates the session when NO other
-    /// subsystem (e.g. active navigation voice) still holds it, and uses
-    /// `.notifyOthersOnDeactivation` so the previously-ducked app restores
-    /// its volume.
-    private func deactivateAudioDucking() {
+    private func endAlertAudioFocus() {
         guard alertSessionHeld else { return }
-        AudioSessionCoordinator.shared.endAlertDucking()
         alertSessionHeld = false
-        DebugLogger.shared.log("AlertEngine: audio ducking deactivated (speed normal)")
+        AudioSessionCoordinator.shared.endCue()
+        DebugLogger.shared.log("AlertEngine: audio focus released after speeding episode")
     }
-    
-    /// Ensures the shared session is active before each beep. Delegates to
-    /// `AudioSessionCoordinator` — calling `setActive(true)` on an
-    /// already-active session is a harmless no-op; when the session was
-    /// silently deactivated (e.g. by navigation speech ending or an
-    /// interruption), it reliably re-activates it. No category re-apply
-    /// here: re-applying the category per beep was what interrupted
-    /// ongoing navigation speech (glitchy-audio bug, TestFlight 71).
-    private func ensureAudioSessionActive() {
-        // The speeding monitor already holds an active alert slot for the
-        // entire over-limit interval. Re-activating before every beep makes
-        // CarPlay renegotiate focus in the middle of navigation speech.
-        guard !alertSessionHeld else { return }
-        AudioSessionCoordinator.shared.ensureActive()
-    }
-    
+
     /// Rebuilds the tone-engine graph after an interruption. A phone call
     /// / Siri / another app's playback stops the engine underneath us, so
     /// this restarts it so the next beep plays. BEEP-REGRESSION FIX: this
@@ -599,11 +607,9 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     ///   3. Schedules the buffer WITHOUT stopping the player node first
     ///   4. Falls back to system sound if AVAudioEngine fails entirely
     private func playTone() {
-        // Step 1: Ensure the audio session is active FIRST so
-        // `ensureToneEngine()` reads the correct negotiated sample rate
-        // (CarPlay links negotiate 48 kHz; reading before activation can
-        // return the device default and force a resample).
-        ensureAudioSessionActive()
+        // `startMonitoring()` already owns audio focus for the entire
+        // overspeed episode. Do not activate/deactivate per beep: that would
+        // churn the CarPlay route and could resume media between warnings.
         
         // LAUNCH-HANG FIX: build the tone engine on the first actual beep
         // (see `ensureToneEngine` / `init` note) instead of at launch.
