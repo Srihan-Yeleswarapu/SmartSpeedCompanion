@@ -2197,17 +2197,17 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     /// Formats distance conversationally (e.g., "in half a mile" instead of "0.5 miles").
     private func formatDistance(_ meters: Double) -> String {
-        let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
+        let isMetric = SpeedFormatting.isMetric(SpeedFormatting.measurementSystem())
         if isMetric {
-            if meters >= 1000 {
-                let km = meters / 1000.0
+            if meters >= SpeedFormatting.metersPerKilometer {
+                let km = meters / SpeedFormatting.metersPerKilometer
                 return formatDecimalForSpeech(km) + " kilometers"
             } else {
                 // Round to nearest 50m for more natural speech
                 return "\(Int(meters / 50) * 50) meters"
             }
         } else {
-            let miles = meters / 1609.34
+            let miles = meters / SpeedFormatting.metersPerMile
             if miles >= 2.0 {
                 return formatDecimalForSpeech(miles) + " miles"
             } else if miles >= 1.0 {
@@ -2225,7 +2225,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
             } else if miles >= 0.2 {
                 return "a quarter mile"
             } else {
-                let feet = meters * 3.28084
+                let feet = meters * SpeedFormatting.feetPerMeter
                 // Round to nearest 100ft
                 return "\(Int(feet / 100) * 100) feet"
             }

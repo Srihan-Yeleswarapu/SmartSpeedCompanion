@@ -535,13 +535,15 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         let unitShort = SpeedFormatting.unitLabelShort(measurementSystem: system)
         let t = Int(viewModel.sessionDuration)
         let durStr = t >= 3600 ? String(format: "%d h %02d m", t/3600, (t%3600)/60) : String(format: "%d min %02d s", t/60, t%60)
-        let distMi = viewModel.sessionDuration > 0 ? viewModel.speed * (viewModel.sessionDuration / 3600.0) : 0
-        let distStr: String
-        if SpeedFormatting.isMetric(SpeedFormatting.measurementSystem()) {
-            distStr = String(format: "%.1f km", distMi * 1.60934)
-        } else {
-            distStr = String(format: "%.1f mi", distMi)
-        }
+        // `viewModel.speed` is already in the active display unit. Convert
+        // the estimated session distance into the same unit without treating
+        // metric km/h as mph.
+        let distanceInDisplayUnits = viewModel.sessionDuration > 0
+            ? viewModel.speed * (viewModel.sessionDuration / 3600.0)
+            : 0
+        let distStr = SpeedFormatting.isMetric(system)
+            ? String(format: "%.1f km", distanceInDisplayUnits)
+            : String(format: "%.1f mi", distanceInDisplayUnits)
         let items: [CPInformationItem] = [
             CPInformationItem(title: "Duration", detail: durStr),
             CPInformationItem(title: "Distance", detail: distStr),
@@ -741,15 +743,10 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     /// (e.g. "0.4 mi" / "1.2 km" / "800 ft" / "350 m").
     private func distanceLabel(for mapItem: MKMapItem) -> String {
         guard let meters = distanceFromUser(to: mapItem) else { return "" }
-        if SpeedFormatting.isMetric(SpeedFormatting.measurementSystem()) {
-            return meters >= 1000
-                ? String(format: "%.1f km", meters / 1000)
-                : String(format: "%.0f m", meters)
-        }
-        let miles = meters / 1609.344
-        return miles >= 0.1
-            ? String(format: "%.1f mi", miles)
-            : String(format: "%.0f ft", meters * 3.28084)
+        return SpeedFormatting.navigationDistanceLabel(
+            forMeters: meters,
+            measurementSystem: SpeedFormatting.measurementSystem()
+        )
     }
 
     /// Brief confirmation after a stop is added, then back to the map.
@@ -972,25 +969,31 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
                 } else {
                     let system = SpeedFormatting.measurementSystem()
                     choices = routes.enumerated().map { index, route in
-                        let eta = route.expectedTravelTime
-                        let etaStr = eta >= 3600
-                            ? String(format: "%d h %02d min", Int(eta) / 3600, (Int(eta) % 3600) / 60)
-                            : String(format: "%d min", max(1, Int(eta) / 60))
-                        let distMi = route.distance / 1609.34
-                        let distStr = SpeedFormatting.isMetric(system)
-                            ? String(format: "%.1f km", distMi * 1.60934)
-                            : String(format: "%.1f mi", distMi)
+                        let eta = max(1, Int(ceil(route.expectedTravelTime / 60.0)))
+                        let etaStr = route.expectedTravelTime >= 3600
+                            ? String(format: "%d h %02d min", eta / 60, eta % 60)
+                            : String(format: "%d min", eta)
+                        let distanceMeasurement = SpeedFormatting.navigationDistanceMeasurement(
+                            forMeters: route.distance,
+                            measurementSystem: system
+                        )
+                        let distanceValue = distanceMeasurement.value
+                        let distanceUnit = SpeedFormatting.isMetric(system) ? "km" : "mi"
+                        let distStr = String(format: "%.1f %@", distanceValue, distanceUnit)
                         let title = index == 0 ? "Fastest Route" : "Route \(index + 1)"
                         return CPRouteChoice(
                             summaryVariants: [title],
-                            additionalInformationVariants: ["\(etaStr) \u{00B7} \(distStr)"],
+                            additionalInformationVariants: ["\(etaStr) · \(distStr)"],
                             selectionSummaryVariants: [title]
                         )
                     }
                 }
                 let trip = CPTrip(origin: MKMapItem.forCurrentLocation(), destination: destination, routeChoices: choices)
-                let pt = CPTripPreviewTextConfiguration(startButtonTitle: "Start",
-                    additionalRoutesButtonTitle: routes.count > 1 ? "Routes" : nil, overviewButtonTitle: "Overview")
+                let pt = CPTripPreviewTextConfiguration(
+                    startButtonTitle: "Start",
+                    additionalRoutesButtonTitle: routes.count > 1 ? "Routes" : nil,
+                    overviewButtonTitle: "Overview"
+                )
                 self.mapTemplate.showTripPreviews([trip], textConfiguration: pt)
             }
         }

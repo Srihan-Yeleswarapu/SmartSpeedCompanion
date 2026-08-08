@@ -299,9 +299,16 @@ public struct RouteStopsSheet: View {
 
     private var totalDistanceFormatted: String {
         let meters = driveViewModel.routeLegs.reduce(0) { $0 + $1.distance }
-        let miles = meters * 0.000621371
-        if miles < 0.1 { return "\(Int(meters * 3.28084)) ft" }
-        return String(format: "%.1f mi", miles)
+        let system = SpeedFormatting.measurementSystem()
+        if SpeedFormatting.isMetric(system) {
+            return meters >= SpeedFormatting.metersPerKilometer
+                ? String(format: "%.1f km", meters / SpeedFormatting.metersPerKilometer)
+                : "\(Int(meters.rounded())) m"
+        }
+        let miles = meters / SpeedFormatting.metersPerMile
+        return miles < 0.1
+            ? "\(Int(meters * SpeedFormatting.feetPerMeter)) ft"
+            : String(format: "%.1f mi", miles)
     }
 
     // MARK: - Bottom Actions
@@ -481,9 +488,16 @@ fileprivate struct StopRow: View {
     }
 
     private func formatDistance(_ meters: CLLocationDistance) -> String {
-        let miles = meters * 0.000621371
-        if miles < 0.1 { return "\(Int(meters * 3.28084)) ft" }
-        return String(format: "%.1f mi", miles)
+        let system = SpeedFormatting.measurementSystem()
+        if SpeedFormatting.isMetric(system) {
+            return meters >= SpeedFormatting.metersPerKilometer
+                ? String(format: "%.1f km", meters / SpeedFormatting.metersPerKilometer)
+                : "\(Int(meters.rounded())) m"
+        }
+        let miles = meters / SpeedFormatting.metersPerMile
+        return miles < 0.1
+            ? "\(Int(meters * SpeedFormatting.feetPerMeter)) ft"
+            : String(format: "%.1f mi", miles)
     }
 }
 
@@ -799,12 +813,18 @@ fileprivate struct AddStopSearchSheet: View {
         return userLocation.distance(from: itemLocation)
     }
 
-    /// Formats a distance in meters into a human-readable string (miles or feet).
+    /// Formats a distance in meters into a human-readable string honoring
+    /// the user's metric/imperial preference.
     private func formatDistance(_ meters: CLLocationDistance) -> String {
-        let miles = meters / 1609.344
+        let system = SpeedFormatting.measurementSystem()
+        if SpeedFormatting.isMetric(system) {
+            return meters >= SpeedFormatting.metersPerKilometer
+                ? String(format: "%.1f km", meters / SpeedFormatting.metersPerKilometer)
+                : "\(Int(meters.rounded())) m"
+        }
+        let miles = meters / SpeedFormatting.metersPerMile
         if miles < 0.1 {
-            let feet = meters * 3.28084
-            return "\(Int(feet)) ft"
+            return "\(Int(meters * SpeedFormatting.feetPerMeter)) ft"
         }
         return String(format: "%.1f mi", miles)
     }

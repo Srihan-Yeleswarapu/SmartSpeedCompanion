@@ -65,6 +65,10 @@ protocol VoiceAnnouncer: AnyObject {
 final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
     private var voiceEnabled: Bool = true
+    /// Cues can be generated while a previous prompt is still rendering.
+    /// Keep the newest pending cue instead of dropping it or asking AVSpeechSynthesizer
+    /// to overlap utterances, which is a common source of chopped CarPlay TTS.
+    private var pendingMessages: [String] = []
     /// True once the shared AVAudioSession has been acquired for the
     /// current navigation, so `announce()` doesn't re-begin (and re-count)
     /// the session for every utterance. Cleared by `deactivateSession()`.
@@ -76,6 +80,7 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
 
     override init() {
         super.init()
+        synthesizer.usesApplicationAudioSession = true
         // `AVSpeechSynthesizer.delegate` is declared `weak` in the SDK,
         // so this assignment does NOT create a retain cycle between
         // DefaultVoiceAnnouncer and the synthesizer. Don't promote the
@@ -95,20 +100,28 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     /// the unnatural half-second gap before each announcement.
     func announce(_ message: String) {
         guard UserDefaults.standard.object(forKey: "voiceNavEnabled") as? Bool ?? true else { return }
-        // AVSpeechSynthesizer queues utterances by default. Navigation can
-        // produce a new cue before the previous one finishes; queuing those
-        // stale cues makes CarPlay speech arrive late and sound like it is
-        // repeatedly cut off. Let the current cue finish and retry the next
-        // stage on the following GPS tick instead of stacking audio.
-        guard !isSpeaking else { return }
-
+        // Never ask AVSpeechSynthesizer to overlap utterances. Queue a small
+        // number of fresh cues and drain them only after the current render
+        // completes; this prevents the chopped/half-second CarPlay output
+        // caused by overlapping or rapidly replaced speech streams.
         let expandedMessage = NavigationCoordinator.expandAbbreviations(message)
+        if isSpeaking {
+            // Keep only the newest cue. A FIFO can speak a turn that was
+            // already passed while an earlier prompt was rendering; the
+            // latest navigation state is always the useful one.
+            pendingMessages = [expandedMessage]
+            return
+        }
 
+        speakNow(expandedMessage)
+    }
+
+    private func speakNow(_ expandedMessage: String) {
         // Acquire the session lazily on the first accepted cue. This avoids
         // activating and ducking other audio at app launch; the session
-        // remains stable until navigation ends. Subsequent cues only
-        // re-activate (a harmless no-op) in case a phone call / Siri
-        // interruption deactivated the session since the last cue.
+        // remains stable until navigation ends. After a phone call or Siri
+        // interruption, reactivation is performed here without changing the
+        // category or route policy.
         if sessionHeld {
             AudioSessionCoordinator.shared.ensureActive()
         } else {
@@ -142,6 +155,12 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
         DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage) (Voice enabled: \(voiceEnabled))")
     }
 
+    private func drainPendingMessage() {
+        guard !isSpeaking, !pendingMessages.isEmpty else { return }
+        let next = pendingMessages.removeFirst()
+        speakNow(next)
+    }
+
     /// True when audio is routed to a CarPlay head unit. Used to select a
     /// more reliable TTS voice over the car — enhanced-quality voices are a
     /// known CarPlay stutter source (see `announce`).
@@ -171,6 +190,7 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     /// the session when no other subsystem (e.g. a speeding alert) still
     /// holds it.
     func deactivateSession() {
+        pendingMessages.removeAll()
         synthesizer.stopSpeaking(at: .immediate)
         if sessionHeld {
             AudioSessionCoordinator.shared.endNavigation()
@@ -197,15 +217,15 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
     /// Swift 6 data-race safety errors on non-Sendable utterance
     /// properties accessed from a nonisolated delegate context.
     nonisolated func speechSynthesizer(_: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        #if DEBUG
-        print("[SpeedyIO] NAV VOICE finished: \(utterance.speechString)")
-        #endif
+        Task { @MainActor [weak self] in
+            self?.drainPendingMessage()
+        }
     }
 
     nonisolated func speechSynthesizer(_: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        #if DEBUG
-        print("[SpeedyIO] NAV VOICE cancelled: \(utterance.speechString)")
-        #endif
+        Task { @MainActor [weak self] in
+            self?.drainPendingMessage()
+        }
     }
 }
 
@@ -1845,17 +1865,17 @@ public final class NavigationCoordinator: ObservableObject {
     /// Formats distance conversationally (e.g., "in half a mile" instead of
     /// "0.5 miles").
     private func formatDistance(_ meters: Double) -> String {
-        let isMetric = UserDefaults.standard.string(forKey: "measurementSystem") == "Metric"
+        let isMetric = SpeedFormatting.isMetric(SpeedFormatting.measurementSystem())
         if isMetric {
-            if meters >= 1000 {
-                let km = meters / 1000.0
+            if meters >= SpeedFormatting.metersPerKilometer {
+                let km = meters / SpeedFormatting.metersPerKilometer
                 return formatDecimalForSpeech(km) + " kilometers"
             } else {
                 // Round to nearest 50m for more natural speech
                 return "\(Int(meters / 50) * 50) meters"
             }
         } else {
-            let miles = meters / 1609.34
+            let miles = meters / SpeedFormatting.metersPerMile
             if miles >= 2.0 {
                 return formatDecimalForSpeech(miles) + " miles"
             } else if miles >= 1.0 {
@@ -1873,7 +1893,7 @@ public final class NavigationCoordinator: ObservableObject {
             } else if miles >= 0.2 {
                 return "a quarter mile"
             } else {
-                let feet = meters * 3.28084
+                let feet = meters * SpeedFormatting.feetPerMeter
                 // Round to nearest 100ft
                 return "\(Int(feet / 100) * 100) feet"
             }

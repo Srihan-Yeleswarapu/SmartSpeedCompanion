@@ -300,12 +300,15 @@ struct SpeedLiveActivityView: Widget {
 
     // MARK: - Helpers
     private func formatDistance(_ distance: CLLocationDistance) -> String {
-        let miles = distance * 0.000621371
-        if miles < 0.1 {
-            let feet = distance * 3.28084
-            return "\(Int(feet)) ft"
+        let system = SpeedFormatting.measurementSystemFromAppGroup()
+        if SpeedFormatting.isMetric(system) {
+            return distance >= SpeedFormatting.metersPerKilometer
+                ? String(format: "%.1f km", distance / SpeedFormatting.metersPerKilometer)
+                : "\(Int(distance.rounded())) m"
         }
-        return String(format: "%.1f mi", miles)
+        let miles = distance / SpeedFormatting.metersPerMile
+        let feet = distance * SpeedFormatting.feetPerMeter
+        return feet < 1000 ? "\(Int(feet)) ft" : String(format: "%.1f mi", miles)
     }
 
     private func colorForStatus(_ status: String) -> Color {

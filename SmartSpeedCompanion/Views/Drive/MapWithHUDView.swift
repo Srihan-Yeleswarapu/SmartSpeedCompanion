@@ -305,25 +305,21 @@ fileprivate struct NavigationInstructionCard: View {
     }
 
     private func formatDistance(_ distance: CLLocationDistance) -> String {
-        let system = UserDefaults.standard.string(forKey: "measurementSystem") ?? "Imperial"
-        
-        if system == "Metric" {
+        let system = SpeedFormatting.measurementSystem()
+        if SpeedFormatting.isMetric(system) {
             if distance < 1000 {
                 let rounded = Int(round(distance / 50.0) * 50)
                 return "\(max(50, rounded)) m"
-            } else {
-                return String(format: "%.1f km", distance / 1000.0)
             }
-        } else {
-            let feet = distance * 3.28084
-            if feet < 1000 {
-                let rounded = Int(round(feet / 100.0) * 100)
-                return "\(max(100, rounded)) ft"
-            } else {
-                let miles = distance * 0.000621371
-                return String(format: "%.1f mi", miles)
-            }
+            return String(format: "%.1f km", distance / SpeedFormatting.metersPerKilometer)
         }
+
+        let feet = distance * SpeedFormatting.feetPerMeter
+        if feet < 1000 {
+            let rounded = Int(round(feet / 100.0) * 100)
+            return "\(max(100, rounded)) ft"
+        }
+        return String(format: "%.1f mi", distance / SpeedFormatting.metersPerMile)
     }
 }
 
@@ -1140,11 +1136,16 @@ fileprivate struct RouteSelectionCard: View {
                                         .foregroundColor(.white.opacity(0.75))
                                 }
 
-                                Text("\(Int(route.expectedTravelTime / 60)) min")
+                                Text("\(max(1, Int(ceil(route.expectedTravelTime / 60.0)))) min")
                                     .font(.system(size: 22, weight: .black))
                                     .foregroundColor(index == 0 ? DesignSystem.cyan : .white)
 
-                                Text(String(format: "%.1f mi", route.distance * 0.000621371))
+                                let routeDistance = SpeedFormatting.navigationDistanceMeasurement(
+                                    forMeters: route.distance,
+                                    measurementSystem: SpeedFormatting.measurementSystem()
+                                )
+                                let routeUnit = SpeedFormatting.isMetric(SpeedFormatting.measurementSystem()) ? "km" : "mi"
+                                Text(String(format: "%.1f %@", routeDistance.value, routeUnit))
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(.white.opacity(0.6))
                             }

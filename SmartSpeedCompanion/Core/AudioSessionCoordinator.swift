@@ -4,7 +4,7 @@
 //
 // Before this type existed, TWO subsystems configured and tore down the
 // shared session independently:
-//   • DefaultVoiceAnnouncer (nav voice)   → .playback / .spokenAudio
+//   • DefaultVoiceAnnouncer (nav voice)   → .playback / .voicePrompt
 //   • AlertEngine (speed-alert tones)     → .playback / .default with
 //     `.mixWithOthers` AND `.duckOthers` combined
 //
@@ -24,7 +24,7 @@
 // This also pairs with the CarPlay Audio App entitlement
 // (`com.apple.developer.carplay-audio`): a recognized CarPlay audio app
 // keeps its AVAudioSession in a stable, first-class state, so the
-// `.spokenAudio` mode routes prompts through the car's dedicated
+// `.voicePrompt` mode routes prompts through the car's dedicated
 // navigation-voice channel instead of fighting the media pipeline.
 
 import Foundation
@@ -37,22 +37,18 @@ public final class AudioSessionCoordinator {
 
     /// CarPlay-friendly audio session policy.
     ///
-    /// • `.playback` + `.spokenAudio` routes audio through CarPlay's
-    ///   dedicated navigation-voice channel (separate volume control,
-    ///   lower latency) instead of the media A2DP channel — the same
-    ///   configuration Apple Maps uses for turn-by-turn voice.
+    /// • `.playback` + `.voicePrompt` identifies this as short navigation
+    ///   guidance rather than a long-form spoken-audio stream. iOS can then
+    ///   route and duck prompts through the head unit's navigation channel
+    ///   without repeatedly renegotiating the media path.
     /// • `.duckOthers` lowers music volume while our alerts are active.
     /// • NO `.mixWithOthers`, `.interruptSpokenAudioAndMixWithOthers`, or
     ///   `.defaultToSpeaker`:
     ///     - `.mixWithOthers` contradicts `.duckOthers`.
-    ///     - `.interruptSpokenAudioAndMixWithOthers` tells the head unit to
-    ///       treat our audio as mixable spoken audio (podcast-style) instead
-    ///       of ducking-and-cutting-through. Combined with `.duckOthers` the
-    ///       CarPlay DSP oscillated and chopped AVSpeechSynthesizer output
-    ///       into syllable fragments over the car speakers (TestFlight
-    ///       report: nav voice "breaks apart" on the car while the phone is
-    ///       clean; Apple Maps is unaffected, so the car and phone are fine
-    ///       and the defect is this session policy).
+    ///     - `.interruptSpokenAudioAndMixWithOthers` is intentionally omitted:
+    ///       it makes the app compete as a mixable spoken-audio source, which
+    ///       can cause head units to repeatedly re-negotiate during short
+    ///       prompts and chop speech into fragments.
     ///     - `.defaultToSpeaker` is inert on CarPlay (a route always
     ///       exists); pure `.playback` already defaults to the speaker on
     ///       iPhone with no route.
@@ -111,23 +107,14 @@ public final class AudioSessionCoordinator {
         guard !isConfigured else { return }
         let session = AVAudioSession.sharedInstance()
         do {
-            // CARPLAY TTS FIX v2: prefer 44.1 kHz so AVSpeechSynthesizer's
-            // native render rate matches the hardware, avoiding live
-            // resampling of the speech stream over CarPlay's digital link.
-            // `setPreferredSampleRate(_:)` is a throwing preference — the
-            // system uses the closest supported rate, so this is a safe
-            // no-op on devices that only accept 48 kHz. The alert-tone
-            // buffer already reads the negotiated session rate, so beeps are
-            // unaffected (and were always clean through the same session).
-            //
-            // ORDER MATTERS: setCategory must come FIRST — changing the
-            // category resets the preferred sample rate back to the hardware
-            // default, which silently discarded the 44.1 kHz preference when
-            // it was applied before the category (SAMPLE-RATE-FIX).
-            try session.setCategory(.playback, mode: .spokenAudio, options: Self.sessionOptions)
-            try? session.setPreferredSampleRate(44100)
+            // Do not force a sample rate. CarPlay commonly negotiates 48 kHz
+            // while iPhone speaker routes commonly use 44.1 kHz; forcing one
+            // value makes the other route resample live speech/tones. The
+            // tone engine reads the negotiated rate after activation.
+            try session.setCategory(.playback, mode: .voicePrompt, options: Self.sessionOptions)
+
             isConfigured = true
-            DebugLogger.shared.log("Audio Session configured (playback / spokenAudio)")
+            DebugLogger.shared.log("Audio Session configured (playback / voicePrompt)")
         } catch {
             DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
         }

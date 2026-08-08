@@ -76,6 +76,10 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// fallback alert path (plays through AudioServices' own audio path,
     /// which works even when AVAudioEngine cannot start).
     private var fallbackAlertSoundID: SystemSoundID = 0
+    /// True while the speeding monitor owns the coordinator's alert holder.
+    /// Beeps must not call `setActive(true)` repeatedly: that can steal audio
+    /// focus from an in-flight CarPlay speech prompt and chop it.
+    private var alertSessionHeld = false
     
     // MARK: - Init
     public init(speedEngine: SpeedEngine) {
@@ -382,9 +386,11 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// `deactivateAudioDucking()`. Delegates to the single process-wide
     /// `AudioSessionCoordinator` — it never changes category/mode here, so
     /// a speeding alert can no longer yank the session out of the
-    /// navigation-voice `.spokenAudio` mode (the glitchy-audio bug).
+    /// navigation-voice `.voicePrompt` mode (the glitchy-audio bug).
     private func activateAudioDucking() {
+        guard !alertSessionHeld else { return }
         AudioSessionCoordinator.shared.beginAlertDucking()
+        alertSessionHeld = true
         DebugLogger.shared.log("AlertEngine: audio ducking activated (speeding)")
     }
 
@@ -395,7 +401,9 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// `.notifyOthersOnDeactivation` so the previously-ducked app restores
     /// its volume.
     private func deactivateAudioDucking() {
+        guard alertSessionHeld else { return }
         AudioSessionCoordinator.shared.endAlertDucking()
+        alertSessionHeld = false
         DebugLogger.shared.log("AlertEngine: audio ducking deactivated (speed normal)")
     }
     
@@ -407,6 +415,10 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// here: re-applying the category per beep was what interrupted
     /// ongoing navigation speech (glitchy-audio bug, TestFlight 71).
     private func ensureAudioSessionActive() {
+        // The speeding monitor already holds an active alert slot for the
+        // entire over-limit interval. Re-activating before every beep makes
+        // CarPlay renegotiate focus in the middle of navigation speech.
+        guard !alertSessionHeld else { return }
         AudioSessionCoordinator.shared.ensureActive()
     }
     

@@ -257,8 +257,24 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
             self.currentTrip = trip
             navigationSession = mapTemplate.startNavigationSession(for: trip)
         }
-        
+
         currentSteps = route.steps
+
+        // Initialize the overall CarPlay banner before the first location
+        // callback. Without this, CarPlay keeps its own wall-clock/default
+        // values (`8:08`, `0 min`, `-- mi`) until progress arrives. For a
+        // multi-stop route, use the coordinator's already-published total,
+        // not only the active leg.
+        let initialDistance = hasMultiStopState
+            ? viewModel.navigationCoordinator.distanceToDestination
+            : route.distance
+        let initialTime = hasMultiStopState
+            ? max(0, viewModel.navigationCoordinator.eta?.timeIntervalSinceNow ?? route.expectedTravelTime)
+            : route.expectedTravelTime
+        updateTripEstimates(
+            distanceRemaining: initialDistance > 0 ? initialDistance : route.distance,
+            timeRemaining: initialTime
+        )
         
         // Skip initial steps with 0 distance (usually just the starting point)
         currentStepIndex = 0
@@ -385,7 +401,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         // (CoreLocation-smoothed with an exponential moving average) for
         // a real-time speed-based estimate that converges within seconds.
 
-        let remainingDist = actualRemainingDistance(route: currentRoute, location: location)
+        var remainingDist = actualRemainingDistance(route: currentRoute, location: location)
 
         // Smooth the speed reading with an exponential moving average to
         // prevent the ETA from visibly bouncing between values on noisy
@@ -400,27 +416,74 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
                 smoothedSpeed = 0.3 * rawSpeed + 0.7 * smoothedSpeed
             }
             // If rawSpeed < 0, keep the previous smoothed value unchanged.
-        let speed = max(smoothedSpeed, 1.0)                  // m/s, floor at walking speed (3.6 km/h)
-        let liveEstimate = remainingDist / speed              // seconds
+        var expectedRemainingTime = currentRoute.expectedTravelTime *
+            min(1.0, max(0.0, remainingDist / max(currentRoute.distance, 1)))
+        // The active CarPlay leg is only part of a multi-stop journey.
+        // Include every later leg in the lower ETA/distance banner so it
+        // cannot collapse to the next stop's small route or show zero.
+        if !viewModel.routeStops.isEmpty {
+            let activeLegIndex = viewModel.navigationCoordinator.activeMultiStopLegIndexForDisplay
+            if activeLegIndex + 1 < viewModel.routeLegs.count {
+                let laterLegs = viewModel.routeLegs[(activeLegIndex + 1)...]
+                remainingDist += laterLegs.reduce(0) { $0 + $1.distance }
+                expectedRemainingTime += laterLegs.reduce(0) { $0 + $1.travelTime }
+            }
+        }
+        let proportionalEstimate = max(0, expectedRemainingTime)
+        // Core Location reports -1 while a fix is unavailable and reports
+        // near-zero while stopped. In both cases the live speed estimate is
+        // not useful; keep Apple's route-time estimate instead of exploding
+        // the ETA or collapsing it to a bogus zero-minute value.
+        let timeRemaining: TimeInterval
+        if smoothedSpeed > 3.0 {
+            let liveEstimate = remainingDist / smoothedSpeed
+            // Bound GPS-derived estimates so one noisy sample cannot replace
+            // a valid MapKit traffic estimate with an absurd value.
+            timeRemaining = min(max(liveEstimate, proportionalEstimate * 0.5),
+                                max(proportionalEstimate * 2.0, 60))
+        } else {
+            timeRemaining = proportionalEstimate
+        }
 
-        // Sanity clamp: in stop-and-go traffic the live estimate can swing
-        // to absurd values (e.g. 83 min for 10 km at 2 m/s when Apple's
-        // expected time was 20 min). Cap at 3× the expected proportion so
-        // the user never sees a wildly pessimistic jump from a slow patch.
-        let proportion = remainingDist / currentRoute.distance
-        let proportionalEstimate = currentRoute.expectedTravelTime * proportion
-        let timeRemaining = min(liveEstimate, 3.0 * proportionalEstimate)
-
-        // Mirror the polyline-matched distance onto the ViewModel so
-        // Siri `GetDistanceToDestinationIntent` and the phone-side HUD
-        // both see the same accurate value (in meters).
+        // Mirror the polyline-matched distance onto the ViewModel so Siri
+        // `GetDistanceToDestinationIntent` and the phone-side HUD both see
+        // the same accurate value (in meters).
         viewModel.navigationCoordinator.distanceToDestination = remainingDist
-        let remainingMeasurement = Measurement(value: remainingDist, unit: UnitLength.meters)
-        let travelEstimates = CPTravelEstimates(distanceRemaining: remainingMeasurement, timeRemaining: timeRemaining)
+        updateTripEstimates(distanceRemaining: remainingDist, timeRemaining: timeRemaining)
         
         if let maneuver = currentManeuver {
-            session.updateEstimates(travelEstimates, for: maneuver)
+            // The active maneuver gets the next-turn estimate.
+            let maneuverDistance = max(0, viewModel.navigationCoordinator.distanceToNextTurn)
+            let maneuverMeasurement = SpeedFormatting.navigationDistanceMeasurement(
+                forMeters: maneuverDistance,
+                measurementSystem: SpeedFormatting.measurementSystem()
+            )
+            let maneuverTime = currentRoute.distance > 0
+                ? timeRemaining * min(1, maneuverDistance / currentRoute.distance)
+                : timeRemaining
+            session.updateEstimates(
+                CPTravelEstimates(distanceRemaining: maneuverMeasurement,
+                                  timeRemaining: max(1, maneuverTime)),
+                for: maneuver
+            )
         }
+    }
+
+    /// Updates the overall ETA/distance banner for the active trip. Unlike
+    /// `CPNavigationSession.updateEstimates`, this is trip-scoped and belongs
+    /// to the map template.
+    private func updateTripEstimates(distanceRemaining: CLLocationDistance,
+                                     timeRemaining: TimeInterval) {
+        guard let trip = currentTrip else { return }
+        let measurement = SpeedFormatting.navigationDistanceMeasurement(
+            forMeters: max(0, distanceRemaining),
+            measurementSystem: SpeedFormatting.measurementSystem()
+        )
+        let estimates = CPTravelEstimates(
+            distanceRemaining: measurement,
+            timeRemaining: max(0, timeRemaining)
+        )
+        mapTemplate.updateEstimates(estimates, for: trip)
     }
 
     /// Walks the route polyline to find where `location` actually sits on
@@ -492,12 +555,21 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         if let icon = UIImage(systemName: symbolName(for: maneuver)) {
             cpManeuver.symbolImage = icon
         }
-        
-        let distanceMeasure = Measurement(value: maneuver.distance, unit: UnitLength.meters)
-        cpManeuver.initialTravelEstimates = CPTravelEstimates(distanceRemaining: distanceMeasure, timeRemaining: 0)
-        
+        let distanceMeasure = SpeedFormatting.navigationDistanceMeasurement(
+            forMeters: maneuver.distance,
+            measurementSystem: SpeedFormatting.measurementSystem()
+        )
+        let routeTime = viewModel.navigationCoordinator.currentRoute?.expectedTravelTime ?? 0
+        let routeDistance = viewModel.navigationCoordinator.currentRoute?.distance ?? maneuver.distance
+        let maneuverTime = max(1, routeTime * maneuver.distance / max(routeDistance, 1))
+        cpManeuver.initialTravelEstimates = CPTravelEstimates(
+            distanceRemaining: distanceMeasure,
+            timeRemaining: maneuverTime
+        )
+
         self.currentManeuver = cpManeuver
         navigationSession?.upcomingManeuvers = [cpManeuver]
+
         
         // Voice announcement goes through DriveViewModel's single synthesizer (avoids overlaps)
         // Only announce if the step has substance (distance > 0 and non-empty instructions)
@@ -513,7 +585,11 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         guard !currentSteps.isEmpty else { return }
         
         let listItems = currentSteps.enumerated().map { index, step in
-            let item = CPListItem(text: step.instructions, detailText: "\(Int(step.distance * 3.28084)) ft")
+            let distance = SpeedFormatting.navigationDistanceLabel(
+                forMeters: step.distance,
+                measurementSystem: SpeedFormatting.measurementSystem()
+            )
+            let item = CPListItem(text: step.instructions, detailText: distance)
             if let icon = UIImage(systemName: symbolName(for: step)) {
                 item.setImage(icon)
             }

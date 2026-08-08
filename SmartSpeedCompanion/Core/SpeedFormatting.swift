@@ -111,10 +111,7 @@ public enum SpeedFormatting {
     /// 0.12 miles"*.
     public static func distanceDisplay(forMeters meters: Double, measurementSystem: String) -> (value: Double, unit: String) {
         if isMetric(measurementSystem) {
-            if meters >= metersPerKilometer {
-                return (meters / metersPerKilometer, "kilometers")
-            }
-            return (meters, "meters")
+            return (meters / metersPerKilometer, "kilometers")
         }
         // Imperial: see top-of-enum constants. (1/0.3048 == ~3.28084)
         if meters >= metersPerMile {
@@ -137,7 +134,43 @@ public enum SpeedFormatting {
         return isMetric(measurementSystem) ? "km/h" : "mph"
     }
 
-    // MARK: - Combined convenience
+    // MARK: - Navigation distance helpers
+
+    /// Formats a navigation distance using the user's large-distance display
+    /// unit. Metric navigation uses kilometers consistently (including short
+    /// distances) so a route never appears as a large raw-meter count.
+    public static func navigationDistanceLabel(
+        forMeters meters: Double,
+        measurementSystem: String
+    ) -> String {
+        if isMetric(measurementSystem) {
+            return String(format: "%.1f km", meters / metersPerKilometer)
+        }
+        let miles = meters / metersPerMile
+        if miles < 0.1 {
+            return String(format: "%.0f ft", meters * feetPerMeter)
+        }
+        return String(format: "%.1f mi", miles)
+    }
+
+    /// Builds the unit CarPlay should display for a navigation distance.
+    ///
+    /// CarPlay renders the unit carried by `CPTravelEstimates`; passing raw
+    /// meters makes an imperial route appear as `38,619 m` on some head units
+    /// and bypasses the user's app-level units preference. Keep navigation
+    /// values in meters internally, but hand CarPlay a locale-independent
+    /// miles or kilometers measurement at the presentation boundary.
+    public static func navigationDistanceMeasurement(
+        forMeters meters: Double,
+        measurementSystem: String
+    ) -> Measurement<UnitLength> {
+        if isMetric(measurementSystem) {
+            return Measurement(value: meters / metersPerKilometer, unit: .kilometers)
+        }
+        return Measurement(value: meters / metersPerMile, unit: .miles)
+    }
+
+    /// MARK: - Combined convenience
 
     /// Returns `(value, unit)` for a stored mph limit so call sites don't
     /// have to repeat the two conversion calls.
