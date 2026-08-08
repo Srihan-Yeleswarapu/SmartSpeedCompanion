@@ -463,9 +463,12 @@ public struct LiveMapView: UIViewRepresentable {
         // every GPS ping.
         private var maneuverAnnotation: ManeuverAnnotation? = nil
 
-        // Overlay state tracking to avoid redundant remove/add cycles
-        private var lastRoutePolylineCount: Int = 0
+        // Overlay state tracking to avoid redundant remove/add cycles.
+        // Progress is rendered in distance-sized steps instead of every GPS
+        // tick so splitting the route never causes visible overlay churn.
         private var lastIsNavigating: Bool = false
+        private var lastRenderedRouteProgress: CLLocationDistance = -1
+        private let routeProgressRenderStep: CLLocationDistance = 25
         private var lastRouteDistance: Double = 0
         /// Geometry fingerprint catches a reroute that has the same distance
         /// as the previous route. Distance-only invalidation left old route
@@ -567,6 +570,16 @@ public struct LiveMapView: UIViewRepresentable {
             let routeChanged = isNavigating != lastIsNavigating
                 || abs(currentRouteDistance - lastRouteDistance) > 1.0
                 || currentRouteFingerprint != lastRouteFingerprint
+            let currentRouteProgress = isNavigating
+                ? vm.currentRoute.map { renderedProgress(for: $0, viewModel: vm) }
+                : nil
+            let progressChanged: Bool
+            if let currentRouteProgress {
+                progressChanged = lastRenderedRouteProgress < 0
+                    || abs(currentRouteProgress - lastRenderedRouteProgress) >= routeProgressRenderStep
+            } else {
+                progressChanged = lastRenderedRouteProgress >= 0
+            }
             // The historical GPS trail is intentionally disabled. It was
             // rendered as free-form polylines and could look like random
             // lines or triangular shading on the live drive map. Keep the
@@ -584,7 +597,7 @@ public struct LiveMapView: UIViewRepresentable {
             // rebuild fires (new routes from a fresh search).
             let routePickerOpened = !lastIsSelectingRoute && vm.isSelectingRoute
 
-            guard routeChanged || stopsChanged || (isNavigating && lastRouteDistance == 0) || routePickerDismissed || routePickerOpened || !hasClearedDisabledHistoryOverlays else {
+            guard routeChanged || progressChanged || stopsChanged || (isNavigating && lastRouteDistance == 0) || routePickerDismissed || routePickerOpened || !hasClearedDisabledHistoryOverlays else {
                 // ALTERNATIVE-ROUTE FINGERPRINT: rebuild when availableRoutes
                 // count changes during the route-selection step. We hash
                 // count + a stable signature (sum of distances) so the check
@@ -611,6 +624,7 @@ public struct LiveMapView: UIViewRepresentable {
             lastIsSelectingRoute = vm.isSelectingRoute
             lastRouteDistance = currentRouteDistance
             lastRouteFingerprint = currentRouteFingerprint
+            lastRenderedRouteProgress = currentRouteProgress ?? -1
             lastStopFingerprint = currentStopFP
         }
 
@@ -618,6 +632,10 @@ public struct LiveMapView: UIViewRepresentable {
             // Remove all overlays and non-user annotations
             mapView.removeOverlays(mapView.overlays)
             mapView.removeAnnotations(mapView.annotations.filter { !($0 is MKUserLocation) })
+            // `removeAnnotations` also removes the maneuver annotation. Do
+            // not retain a reference to an annotation that is no longer on
+            // the map; the next rebuild must create it again.
+            maneuverAnnotation = nil
 
             // Has any route work to render at all?
             let hasAvailableRoutes = viewModel.isSelectingRoute && !viewModel.availableRoutes.isEmpty
@@ -631,24 +649,16 @@ public struct LiveMapView: UIViewRepresentable {
                     && legs.allSatisfy({ $0.route != nil })
 
                 if hasLegRoutes {
-                    // MULTI-STOP: draw the coordinator's active leg bold,
-                    // not always leg zero. The old behavior kept the first
-                    // leg cyan after reaching a stop, so the visible line no
-                    // longer matched the spoken directions.
+                    // MULTI-STOP: draw the active leg with the same travelled /
+                    // remaining treatment as a single route. Later legs stay
+                    // visible but muted so the user never sees a connector from
+                    // the live GPS point back to the trip origin.
                     let activeIndex = min(
                         max(viewModel.navigationCoordinator.activeMultiStopLegIndexForDisplay, 0),
                         legs.count - 1
                     )
                     if let activeRoute = legs[activeIndex].route {
-                        let glowLine = GlowPolyline(points: activeRoute.polyline.points(), count: activeRoute.polyline.pointCount)
-                        glowLine.glowColor = UIColor(DesignSystem.cyan)
-                        mapView.addOverlay(glowLine, level: .aboveRoads)
-
-                        let activeLine = NavPolyline(points: activeRoute.polyline.points(), count: activeRoute.polyline.pointCount)
-                        activeLine.statusColor = UIColor(DesignSystem.cyan)
-                        activeLine.isRouteOverlay = true
-                        activeLine.useGradient = viewModel.gradientRouteEnabled
-                        mapView.addOverlay(activeLine, level: .aboveRoads)
+                        renderProgressRoute(mapView, route: activeRoute, viewModel: viewModel)
                     }
 
                     for (index, leg) in legs.enumerated() where index != activeIndex {
@@ -658,16 +668,11 @@ public struct LiveMapView: UIViewRepresentable {
                         }
                     }
                 } else {
-                    // SINGLE-ROUTE: existing behavior — draw everything bold cyan
-                    let glowLine = GlowPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
-                    glowLine.glowColor = UIColor(DesignSystem.cyan)
-                    mapView.addOverlay(glowLine, level: .aboveRoads)
-
-                    let polyline = NavPolyline(points: route.polyline.points(), count: route.polyline.pointCount)
-                    polyline.statusColor = UIColor(DesignSystem.cyan)
-                    polyline.isRouteOverlay = true
-                    polyline.useGradient = viewModel.gradientRouteEnabled
-                    mapView.addOverlay(polyline, level: .aboveRoads)
+                    // SINGLE-ROUTE: split only the existing route geometry at
+                    // the snapped progress point. Never append the raw GPS
+                    // coordinate to the route — that is what creates the
+                    // spurious straight line back to the route origin.
+                    renderProgressRoute(mapView, route: route, viewModel: viewModel)
                 }
 
                 if let dest = viewModel.destination {
@@ -760,6 +765,7 @@ public struct LiveMapView: UIViewRepresentable {
                 // navigation re-frames the polyline.
                 hasAutoFramedRoute = false
                 lastRouteFingerprint = nil
+                lastRenderedRouteProgress = -1
                 // Also clear the alt-route fingerprint so a fresh
                 // `selectDestinationAndCalculateRoutes` call triggers a
                 // rebuild next time the user opens the picker.
@@ -841,9 +847,143 @@ public struct LiveMapView: UIViewRepresentable {
             }
 
             // Historical GPS trails are intentionally not rendered. The
-            // recorded readings and renderer remain below as dormant code so
-            // the feature can be restored behind an explicit setting without
-            // changing route/navigation overlays.
+            // active route itself provides the only path overlay: its
+            // travelled portion is greyed and its remaining portion is blue.
+        }
+
+        /// Renders the active route as two slices of the original MKRoute
+        /// geometry: a muted travelled-behind segment and a cyan remaining
+        /// segment. The split is based on route progress, never a line drawn
+        /// between raw GPS fixes.
+        private func renderProgressRoute(_ mapView: MKMapView, route: MKRoute, viewModel: DriveViewModel) {
+            let routeProgress = renderedProgress(for: route, viewModel: viewModel)
+            let geometryLength = polylineLength(route.polyline)
+            let geometryProgress = route.distance > 0
+                ? routeProgress / route.distance * geometryLength
+                : 0
+            let segments = splitRoutePolyline(route.polyline, progressDistance: geometryProgress)
+
+            if let travelled = segments.travelled, travelled.pointCount > 1 {
+                let line = NavPolyline(points: travelled.points(), count: travelled.pointCount)
+                line.statusColor = UIColor(white: 0.42, alpha: 0.72)
+                line.isRouteOverlay = false
+                mapView.addOverlay(line, level: .aboveRoads)
+            }
+
+            if let remaining = segments.remaining, remaining.pointCount > 1 {
+                let glow = GlowPolyline(points: remaining.points(), count: remaining.pointCount)
+                glow.glowColor = UIColor(DesignSystem.cyan)
+                mapView.addOverlay(glow, level: .aboveRoads)
+
+                let line = NavPolyline(points: remaining.points(), count: remaining.pointCount)
+                line.statusColor = UIColor(DesignSystem.cyan)
+                line.isRouteOverlay = true
+                line.useGradient = viewModel.gradientRouteEnabled
+                mapView.addOverlay(line, level: .aboveRoads)
+            }
+        }
+
+        /// Returns the travelled distance on the active leg. `distanceToDestination`
+        /// includes later multi-stop legs, so subtract those legs before using
+        /// it to split the active leg's geometry.
+        private func renderedProgress(for route: MKRoute, viewModel: DriveViewModel) -> CLLocationDistance {
+            let laterLegDistance: CLLocationDistance
+            let coordinator = viewModel.navigationCoordinator
+            if coordinator.routeStops.isEmpty {
+                laterLegDistance = 0
+            } else {
+                let activeIndex = coordinator.activeMultiStopLegIndexForDisplay
+                laterLegDistance = coordinator.routeLegs.dropFirst(activeIndex + 1)
+                    .reduce(0) { $0 + $1.distance }
+            }
+
+            if viewModel.distanceToDestination > 0 {
+                let activeRemaining = min(
+                    route.distance,
+                    max(0, viewModel.distanceToDestination - laterLegDistance)
+                )
+                return max(0, route.distance - activeRemaining)
+            }
+
+            // Before the first navigation tick publishes a remaining distance,
+            // keep the whole route visible. The first location fix will cause
+            // the coordinator's canonical value to be used on the next pass.
+            return 0
+        }
+
+        private func polylineLength(_ polyline: MKPolyline) -> CLLocationDistance {
+            guard polyline.pointCount > 1 else { return 0 }
+            let points = polyline.points()
+            var length: CLLocationDistance = 0
+            for index in 0..<(polyline.pointCount - 1) {
+                let first = CLLocation(latitude: points[index].coordinate.latitude, longitude: points[index].coordinate.longitude)
+                let second = CLLocation(latitude: points[index + 1].coordinate.latitude, longitude: points[index + 1].coordinate.longitude)
+                length += first.distance(from: second)
+            }
+            return length
+        }
+
+        /// Splits the route's own vertices and inserts one boundary point. It
+        /// never uses the live GPS coordinate as a vertex, so a bad location
+        /// fix cannot create a line back to the route origin.
+        private func splitRoutePolyline(
+            _ polyline: MKPolyline,
+            progressDistance: CLLocationDistance
+        ) -> (travelled: MKPolyline?, remaining: MKPolyline?) {
+            let count = polyline.pointCount
+            guard count > 1 else { return (nil, nil) }
+            let source = polyline.points()
+            let coordinates = (0..<count).map { source[$0].coordinate }
+            var segmentLengths: [CLLocationDistance] = []
+            segmentLengths.reserveCapacity(count - 1)
+            var totalLength: CLLocationDistance = 0
+            for index in 0..<(count - 1) {
+                let first = CLLocation(latitude: coordinates[index].latitude, longitude: coordinates[index].longitude)
+                let second = CLLocation(latitude: coordinates[index + 1].latitude, longitude: coordinates[index + 1].longitude)
+                let length = first.distance(from: second)
+                segmentLengths.append(length)
+                totalLength += length
+            }
+
+            let target = min(max(0, progressDistance), totalLength)
+            guard target > 0 else { return (nil, MKPolyline(coordinates: coordinates, count: count)) }
+            guard target < totalLength else { return (MKPolyline(coordinates: coordinates, count: count), nil) }
+
+            var cumulative: CLLocationDistance = 0
+            var splitIndex = 0
+            var splitFraction: Double = 0
+            for (index, length) in segmentLengths.enumerated() {
+                if target <= cumulative + length {
+                    splitIndex = index
+                    splitFraction = length > 0
+                        ? min(1, max(0, (target - cumulative) / length))
+                    break
+                }
+                cumulative += length
+            }
+
+            let firstPoint = MKMapPoint(coordinates[splitIndex])
+            let secondPoint = MKMapPoint(coordinates[splitIndex + 1])
+            let splitPoint = MKMapPoint(
+                x: firstPoint.x + (secondPoint.x - firstPoint.x) * splitFraction,
+                y: firstPoint.y + (secondPoint.y - firstPoint.y) * splitFraction
+            ).coordinate
+            var travelled = Array(coordinates.prefix(splitIndex + 1))
+            var remaining = Array(coordinates.suffix(from: splitIndex + 1))
+            if let last = travelled.last,
+               abs(last.latitude - splitPoint.latitude) > 0.0000001
+                    || abs(last.longitude - splitPoint.longitude) > 0.0000001 {
+                travelled.append(splitPoint)
+            }
+            if let first = remaining.first,
+               abs(first.latitude - splitPoint.latitude) > 0.0000001
+                    || abs(first.longitude - splitPoint.longitude) > 0.0000001 {
+                remaining.insert(splitPoint, at: 0)
+            }
+
+            let travelledLine = travelled.count > 1 ? MKPolyline(coordinates: travelled, count: travelled.count) : nil
+            let remainingLine = remaining.count > 1 ? MKPolyline(coordinates: remaining, count: remaining.count) : nil
+            return (travelledLine, remainingLine)
         }
 
         /// Renders ALL of `routes` as map polylines during the route-selection
@@ -901,83 +1041,14 @@ public struct LiveMapView: UIViewRepresentable {
             }
         }
 
-        private func buildHistoryOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
-            // Hide history trail when actively navigating or selecting a route
-            // — the route polylines already show the path, and the grey
-            // history trail overlaps them causing visual glitches
-            // (TestFlight feedback: "Distorted trailing map").
-            guard !viewModel.isNavigating, !viewModel.isSelectingRoute else { return }
-            guard let session = viewModel.sessionRecorder.currentSession, !session.readings.isEmpty else { return }
-
-            var safeCoords: [CLLocationCoordinate2D] = []
-            var overCoords: [CLLocationCoordinate2D] = []
-
-            // Never draw a fabricated straight line across a GPS outage or
-            // location jump. A 250 m cap is above normal one-second highway
-            // travel while still rejecting a snapped fix on a distant road.
-            let maximumHistoryGap: CLLocationDistance = 250
-
-            func addHistoryPolyline(_ coordinates: [CLLocationCoordinate2D], color: UIColor) {
-                guard coordinates.count >= 2 else { return }
-                let polyline = NavPolyline(coordinates: coordinates, count: coordinates.count)
-                polyline.statusColor = color
-                mapView.addOverlay(polyline, level: .aboveRoads)
-            }
-
-            func flushHistorySegments() {
-                addHistoryPolyline(safeCoords, color: UIColor(white: 0.5, alpha: 0.5))
-                addHistoryPolyline(overCoords, color: UIColor(DesignSystem.alertRed))
-                safeCoords.removeAll(keepingCapacity: true)
-                overCoords.removeAll(keepingCapacity: true)
-            }
-
-            var previousReading: SpeedReading?
-            for reading in session.readings {
-                let coordinate = CLLocationCoordinate2D(latitude: reading.latitude, longitude: reading.longitude)
-                let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-
-                if let previousReading {
-                    let previousCoordinate = CLLocationCoordinate2D(
-                        latitude: previousReading.latitude,
-                        longitude: previousReading.longitude
-                    )
-                    let previousLocation = CLLocation(
-                        latitude: previousCoordinate.latitude,
-                        longitude: previousCoordinate.longitude
-                    )
-                    let elapsed = reading.timestamp.timeIntervalSince(previousReading.timestamp)
-                    if elapsed < 0 || elapsed > 10 || location.distance(from: previousLocation) > maximumHistoryGap {
-                        flushHistorySegments()
-                    }
-                }
-
-                if reading.overLimit {
-                    if !safeCoords.isEmpty {
-                        addHistoryPolyline(safeCoords, color: UIColor(white: 0.5, alpha: 0.5))
-                        safeCoords.removeAll(keepingCapacity: true)
-                    }
-                    overCoords.append(coordinate)
-                } else {
-                    if !overCoords.isEmpty {
-                        addHistoryPolyline(overCoords, color: UIColor(DesignSystem.alertRed))
-                        overCoords.removeAll(keepingCapacity: true)
-                    }
-                    safeCoords.append(coordinate)
-                }
-                previousReading = reading
-            }
-
-            flushHistorySegments()
-        }
-
         // MARK: - MKMapViewDelegate
 
         public func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? NavPolyline {
                 // GRADIENT ROUTE: only the ROUTE polyline upgrades to
-                // MKGradientPolylineRenderer. History polylines get the flat
-                // MKPolylineRenderer below (the previous behavior) since
-                // passing identical cyan-cyan stops renders as a flat color.
+                // MKGradientPolylineRenderer. The travelled-behind segment
+                // uses the flat renderer below so its muted grey remains
+                // visually distinct from the active route gradient.
                 if #available(iOS 17.0, *), polyline.useGradient, polyline.isRouteOverlay {
                     let renderer = MKGradientPolylineRenderer(polyline: polyline)
                     let colors: [UIColor] = [
