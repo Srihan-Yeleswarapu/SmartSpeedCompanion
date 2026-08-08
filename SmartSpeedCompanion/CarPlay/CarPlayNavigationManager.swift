@@ -458,7 +458,7 @@ public class CarPlayNavigationManager: NSObject, NavigationActionDelegate {
         let activeLegDistance = coordinatorDistance > 0
             ? min(coordinatorDistance, currentRoute.distance)
             : min(remainingDist, currentRoute.distance)
-        let expectedRemainingTime = currentRoute.expectedTravelTime *
+        var expectedRemainingTime = currentRoute.expectedTravelTime *
             min(1.0, max(0.0, activeLegDistance / max(currentRoute.distance, 1)))
         // The active CarPlay leg is only part of a multi-stop journey.
         // Include every later leg in the lower ETA/distance banner so it
