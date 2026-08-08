@@ -957,6 +957,7 @@ public struct LiveMapView: UIViewRepresentable {
                     splitIndex = index
                     splitFraction = length > 0
                         ? min(1, max(0, (target - cumulative) / length))
+                        : 0
                     break
                 }
                 cumulative += length
