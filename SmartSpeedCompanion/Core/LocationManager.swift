@@ -9,6 +9,10 @@ public final class LocationManager: NSObject, ObservableObject {
     @Published public var latestLocation: CLLocation?
     @Published public var latestHeading: CLHeading?
     @Published public var authorizationStatus: CLAuthorizationStatus = .notDetermined
+    /// True only while an explicit recording/navigation session owns the GPS.
+    /// Keeping this state here prevents queued Core Location or simulator
+    /// callbacks from leaking location data into the app while idle.
+    public private(set) var isUpdatingLocation = false
     
     #if DEBUG || DEVELOPER_BUILD
     @Published public var isMockMode: Bool = false
@@ -52,8 +56,9 @@ public final class LocationManager: NSObject, ObservableObject {
         mockCancellable = NotificationCenter.default.publisher(for: .didUpdateMockLocation)
             .compactMap { $0.object as? CLLocation }
             .sink { [weak self] location in
-                guard let self = self, self.isMockMode else { return }
+                guard let self = self, self.isMockMode, self.isUpdatingLocation else { return }
                 DispatchQueue.main.async {
+                    guard self.isUpdatingLocation else { return }
                     self.latestLocation = location
                 }
             }
@@ -104,14 +109,20 @@ public final class LocationManager: NSObject, ObservableObject {
     }
     
     public func startUpdatingLocation() {
+        isUpdatingLocation = true
         manager.startUpdatingLocation()
         manager.startUpdatingHeading()
         DebugLogger.shared.log("LocationManager: Started updating location and heading.")
     }
     
     public func stopUpdatingLocation() {
+        isUpdatingLocation = false
         manager.stopUpdatingLocation()
         manager.stopUpdatingHeading()
+        // Delegate callbacks are also gated by `isUpdatingLocation`, so a
+        // queued final fix cannot re-enter the app after this point. Keep the
+        // last fix available for final-session persistence and map cleanup;
+        // retaining a value is not active location monitoring.
         DebugLogger.shared.log("LocationManager: Stopped updating location and heading.")
     }
     
@@ -121,9 +132,14 @@ public final class LocationManager: NSObject, ObservableObject {
     /// (so the background indicator hides when not actively recording).
     /// Has no effect if location updates are not active.
     public func setBackgroundUpdates(_ enabled: Bool) {
-        manager.allowsBackgroundLocationUpdates = enabled
-        manager.showsBackgroundLocationIndicator = enabled
-        DebugLogger.shared.log("LocationManager: Background updates \(enabled ? "ENABLED" : "DISABLED")")
+        // Background execution is never meaningful without an active GPS
+        // owner. Ignore accidental enables from route-preview code and keep
+        // the indicator disabled until `startUpdatingLocation()` has claimed
+        // the resource for an explicit session.
+        let shouldEnable = enabled && isUpdatingLocation
+        manager.allowsBackgroundLocationUpdates = shouldEnable
+        manager.showsBackgroundLocationIndicator = shouldEnable
+        DebugLogger.shared.log("LocationManager: Background updates \(shouldEnable ? "ENABLED" : "DISABLED")")
     }
 }
 
@@ -140,10 +156,11 @@ extension LocationManager: CLLocationManagerDelegate {
         if isMockMode { return }
         #endif
         
-        guard let location = locations.last else { return }
+        guard isUpdatingLocation, let location = locations.last else { return }
         // Filter out stale or wildly inaccurate fixes to prevent map-going-bonkers
         guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 100 else { return }
         DispatchQueue.main.async {
+            guard self.isUpdatingLocation else { return }
             self.latestLocation = location
             // NOTE: Per-update coordinate logging removed to reduce heat from constant 
             // log-flush I/O on devices processing ~1 GPS update per second.
@@ -151,7 +168,9 @@ extension LocationManager: CLLocationManagerDelegate {
     }
     
     public func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        guard isUpdatingLocation else { return }
         DispatchQueue.main.async {
+            guard self.isUpdatingLocation else { return }
             self.latestHeading = newHeading
             // Heading updates fire continuously while driving — avoid logging here to prevent heat
         }

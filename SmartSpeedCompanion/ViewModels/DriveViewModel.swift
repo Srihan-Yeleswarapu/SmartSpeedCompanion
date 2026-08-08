@@ -41,7 +41,10 @@ public final class DriveViewModel: NSObject, ObservableObject {
     @Published public var status: SpeedStatus = .safe
     /// Indicates if a drive session is currently being recorded to the database.
     @Published public var isRecording: Bool = false {
-        didSet { updateIdleTimer() }
+        didSet {
+            updateIdleTimer()
+            if !isRecording { enforceIdleLifecycle() }
+        }
     }
     /// Total duration of the current recording session in seconds.
     @Published public var sessionDuration: TimeInterval = 0
@@ -62,7 +65,13 @@ public final class DriveViewModel: NSObject, ObservableObject {
     // MARK: - Navigation State
     /// Indicates if active turn-by-turn navigation is running.
     @Published public var isNavigating: Bool = false {
-        didSet { updateIdleTimer() }
+        didSet {
+            updateIdleTimer()
+            // Navigation can be cleared by CarPlay or arrival independently
+            // of recording teardown. If no explicit session owns the GPS,
+            // force the whole process back to the idle state.
+            if !isNavigating, !isRecording { enforceIdleLifecycle() }
+        }
     }
     /// The MapKit route object being followed. Owned by NavigationCoordinator;
     /// writable get/set so legacy call sites that pass through `viewModel`
@@ -842,6 +851,24 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// card so the label always matches the visible results.
     private var nearbySearchGeneration: UInt64 = 0
 
+    /// Restores the process-wide resources to the safe idle state. This is
+    /// deliberately driven by the recording flag, not by route-preview or
+    /// navigation UI state: a destination can be selected without granting
+    /// the app permission to keep watching location in the background.
+    private func enforceIdleLifecycle() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.enforceIdleLifecycle() }
+            return
+        }
+        locationManager.setBackgroundUpdates(false)
+        locationManager.stopUpdatingLocation()
+        #if !targetEnvironment(simulator)
+        if #available(iOS 16.1, *) {
+            LiveActivityManager.shared.endAllActivities()
+        }
+        #endif
+    }
+
     public init(modelContext: ModelContext? = nil) {
         // Core Logic components are owned by the ViewModel
         let locManager = LocationManager()
@@ -963,7 +990,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
         Timer.publish(every: 5.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                guard let self = self, self.isRecording || self.isNavigating else { return }
+                // A Live Activity represents an explicitly started recording
+                // session, never a route preview or a transient navigation
+                // handoff. Navigation auto-starts recording before it can
+                // become active, so `isRecording` is the authoritative gate.
+                guard let self = self, self.isRecording else { return }
                 self.updateLiveActivity()
             }
             .store(in: &cancellables)
@@ -973,7 +1004,12 @@ public final class DriveViewModel: NSObject, ObservableObject {
             .compactMap { $0 }
             .throttle(for: .milliseconds(500), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] location in
-                guard let self = self else { return }
+                guard let self = self, self.isRecording else {
+                    // Ignore any final queued GPS callback after a session
+                    // ends. This prevents a stale callback from refreshing
+                    // navigation, Live Activity, or cloud state while idle.
+                    return
+                }
                 // NOTE: we deliberately do NOT write `self.speed = location.speedMPH`
                 // here. Two writers to `DriveViewModel.speed` (this GPS sink + the
                 // `spdEngine.$speed.assign(to: &$speed)` pipeline above) caused a
@@ -1003,11 +1039,12 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 if self.isNavigating {
                     self.navigationCoordinator.updateNavigationProgress(at: location)
                 }
-                // Ensure Dynamic Island / Lock Screen stays fresh
-                if self.isRecording || self.isNavigating {
-                    self.updateLiveActivity()
-                }
-                if self.navigationCoordinator.currentRoute != nil {
+                // Ensure Dynamic Island / Lock Screen stays fresh. The
+                // recording flag is the explicit-session boundary; do not
+                // resurrect activity content for navigation-only/transient
+                // state.
+                self.updateLiveActivity()
+                if self.isNavigating, self.navigationCoordinator.currentRoute != nil {
                     self.navigationCoordinator.checkOffRouteStatus(at: location)
                 }
                 // Sync position to Firebase for potential multi-device/dashboard
@@ -1015,7 +1052,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 // every 500 ms GPS heartbeat was a major avoidable source of
                 // radio/CPU work and phone heat.
                 let cloudNow = Date()
-                if (self.isRecording || self.isNavigating),
+                if self.isRecording,
                    cloudNow.timeIntervalSince(self.lastCloudLocationSyncAt) >= self.cloudLocationSyncInterval {
                     self.lastCloudLocationSyncAt = cloudNow
                     AuthenticationManager.shared.updateLastLocation(
@@ -1050,7 +1087,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
         Timer.publish(every: 5.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                guard let self, self.isRecording || self.isNavigating else { return }
+                guard let self, self.isRecording else { return }
                 #if !targetEnvironment(simulator)
                 self.writeWidgetSnapshot()
                 #endif
@@ -1067,14 +1104,19 @@ public final class DriveViewModel: NSObject, ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                if self.isRecording || self.isNavigating {
-                    self.locationManager.setBackgroundUpdates(true)
+                if self.isRecording {
                     self.locationManager.startUpdatingLocation()
+                    self.locationManager.setBackgroundUpdates(true)
                     DebugLogger.shared.log("DriveViewModel: app foregrounded - active session, location restarted")
                 } else {
                     self.locationManager.setBackgroundUpdates(false)
                     self.locationManager.stopUpdatingLocation()
-                    DebugLogger.shared.log("DriveViewModel: app foregrounded - no session, location remains stopped")
+                    #if !targetEnvironment(simulator)
+                    if #available(iOS 16.1, *) {
+                        LiveActivityManager.shared.endAllActivities()
+                    }
+                    #endif
+                    DebugLogger.shared.log("DriveViewModel: app foregrounded - no session, location/activity remain stopped")
                 }
             }
             .store(in: &cancellables)
@@ -1089,14 +1131,22 @@ public final class DriveViewModel: NSObject, ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                if self.isRecording || self.isNavigating {
+                if self.isRecording {
                     self.sessionRecorder.saveSessionState()
                     self.saveNavigationState()
                     DebugLogger.shared.log("DriveViewModel: app backgrounded - session active, keeping location")
                 } else {
                     self.locationManager.setBackgroundUpdates(false)
                     self.locationManager.stopUpdatingLocation()
-                    DebugLogger.shared.log("DriveViewModel: app backgrounded - no session, location stopped")
+                    #if !targetEnvironment(simulator)
+                    if #available(iOS 16.1, *) {
+                        // A route preview/navigation flag without an
+                        // explicit recording session must not keep a Dynamic
+                        // Island activity alive after the app is backgrounded.
+                        LiveActivityManager.shared.endAllActivities()
+                    }
+                    #endif
+                    DebugLogger.shared.log("DriveViewModel: app backgrounded - no session, location/activity stopped")
                 }
             }
             .store(in: &cancellables)
@@ -1106,16 +1156,26 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     /// Logic to start recording GPS points. Triggered manually or automatically with navigation.
     public func startSession() {
+        // Make the explicit-session boundary idempotent. Navigation and
+        // CarPlay can both deliver a start callback during handoff; only the
+        // first one may acquire location/background execution and create a
+        // Live Activity.
+        guard !isRecording else { return }
         DebugLogger.shared.log("Drive session STARTED")
         locationManager.requestAuthorization()
-        locationManager.setBackgroundUpdates(true)
-        locationManager.startUpdatingLocation()
         
         var destID: String? = nil
         if #available(iOS 18.0, *) {
             destID = destination?.identifier?.rawValue
         }
+        // Establish the recording state before touching Core Location. This
+        // ordering makes the explicit-session gate atomic: a queued GPS
+        // callback can never observe hardware as active while the recorder
+        // still says idle.
         sessionRecorder.startSession(destinationPlaceID: destID)
+        guard isRecording else { return }
+        locationManager.startUpdatingLocation()
+        locationManager.setBackgroundUpdates(true)
         
         sessionStartTime = Date()
         lastLiveActivityUpdateAt = .distantPast
@@ -1139,7 +1199,10 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     /// Updates the Dynamic Island and Lock Screen widgets with real-time driving data.
     private func updateLiveActivity() {
-        guard isRecording || isNavigating else { return }
+        // Live Activities are strictly tied to an explicitly started
+        // recording session. `isNavigating` can be transiently true during a
+        // CarPlay preview/handoff and is not sufficient authorization.
+        guard isRecording else { return }
         let now = Date()
         guard now.timeIntervalSince(lastLiveActivityUpdateAt) >= liveActivityUpdateInterval else { return }
         lastLiveActivityUpdateAt = now
@@ -1409,18 +1472,18 @@ public final class DriveViewModel: NSObject, ObservableObject {
             }
         }
         
-        // Only stop Live Activity if navigation isn't using it too.
-        if !isNavigating {
-            // Live Activities don't render in the iOS Simulator; the matching
-            // start call is gated, so gate the stop call to keep the path silent.
-            #if !targetEnvironment(simulator)
-            LiveActivityManager.shared.endActivity()
-            #endif
-            // Free amenity + maneuver-coordinate transient state between
-            // drives so the next navigation starts clean.
+        // End the activity unconditionally when the recording session ends.
+        // Navigation teardown is asynchronous; waiting on `!isNavigating`
+        // here used to leave the Dynamic Island alive during that window.
+        // Live Activities don't render in the iOS Simulator; the matching
+        // start call is gated, so gate the stop call to keep the path silent.
+        #if !targetEnvironment(simulator)
+        LiveActivityManager.shared.endActivity()
+        #endif
+        // Free amenity + maneuver-coordinate transient state between
+        // drives so the next navigation starts clean.
             // (Look-Around scratch state was removed in TestFlight 2.2.0 / FB10.)
-            clearNativeMapCache()
-        }
+        clearNativeMapCache()
     }
     
     /// User explicitly chose to 'Keep' a drive that was under 90 seconds. 
