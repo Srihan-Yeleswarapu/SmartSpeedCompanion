@@ -8,6 +8,10 @@ import SwiftUI // For @AppStorage
 public final class SpeedEngine: ObservableObject {
     @Published public var speed: Double = 0.0
     @Published public var limit: Int = 0
+    /// True only after the latest requested lookup produced a usable posted
+    /// limit. AlertEngine uses this separately from `limit` so an old value
+    /// cannot keep beeping while a new lookup is in flight.
+    @Published public private(set) var isLimitResolved: Bool = false
     @Published public var status: SpeedStatus = .safe
     
     @AppStorage("userBuffer") public var userBuffer: Int = 5 // -5 to 15 mph
@@ -134,6 +138,12 @@ public final class SpeedEngine: ObservableObject {
                 return
             }
             lastFetchLocation = location
+            // The previous answer is no longer authoritative while this
+            // location is being resolved. This immediately stops an old
+            // overspeed alert instead of allowing it to fire during the
+            // network/provider wait.
+            self.isLimitResolved = false
+            self.status = .safe
 
             // ── Initial HERE batch cache setup ───────────────────
             // Fire once on the first valid GPS tick to populate the
@@ -167,6 +177,7 @@ public final class SpeedEngine: ObservableObject {
             )
 
             self.limit = currentLimit
+            self.isLimitResolved = currentLimit > 0
             updateStatus(speed: self.speed, limit: Double(currentLimit))
         }
     }
@@ -187,6 +198,22 @@ public final class SpeedEngine: ObservableObject {
         return await roadGeocoder.resolveRoadContext(at: coordinate)?.roadName
     }
     
+    /// Marks the current limit as unresolved before a direct/manual lookup.
+    /// DriveViewModel uses this when it asks SmartSpeedLimitService outside
+    /// the normal GPS-resolution task.
+    public func beginLimitResolution() {
+        isLimitResolved = false
+        status = .safe
+    }
+
+    /// Applies a limit returned by a direct lookup (manual refresh or a
+    /// heading-triggered fetch) through the same state path as GPS updates.
+    public func applyResolvedLimit(_ newLimit: Int) {
+        limit = newLimit
+        isLimitResolved = newLimit > 0
+        updateStatus(speed: speed, limit: Double(newLimit))
+    }
+
     private func updateStatus(speed: Double, limit: Double) {
         guard limit > 0 else {
             self.status = .safe

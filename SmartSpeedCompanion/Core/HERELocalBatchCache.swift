@@ -640,6 +640,67 @@ public final class HERELocalBatchCache: @unchecked Sendable {
         }
     }
 
+    /// Remove the cached road answer nearest to a manual refresh location.
+    /// A road-name match is preferred; deletion is bounded to 150m so a
+    /// refresh can never remove an unrelated distant segment.
+    public func invalidate(at coordinate: CLLocationCoordinate2D, roadName: String?) {
+        guard isReady else { return }
+        queue.sync {
+            guard let db = self.db else { return }
+            let radiusMeters = 150.0
+            let latRadius = radiusMeters / 111_111.0
+            let maxDistanceSquared = latRadius * latRadius
+            let lonScale = cos(coordinate.latitude * .pi / 180)
+            let distanceExpression = "((lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ?) <= ?"
+            let sql: String
+            if let roadName, !roadName.isEmpty {
+                sql = """
+                    DELETE FROM cached_roads
+                    WHERE rowid IN (
+                        SELECT rowid FROM cached_roads
+                        WHERE road_name = ? COLLATE NOCASE
+                          AND \(distanceExpression)
+                        ORDER BY \(distanceExpression)
+                        LIMIT 1
+                    )
+                """
+            } else {
+                sql = """
+                    DELETE FROM cached_roads
+                    WHERE rowid IN (
+                        SELECT rowid FROM cached_roads
+                        WHERE \(distanceExpression)
+                        ORDER BY \(distanceExpression)
+                        LIMIT 1
+                    )
+                """
+            }
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+
+            func bindDistance(_ start: Int32) {
+                sqlite3_bind_double(stmt, start, coordinate.latitude)
+                sqlite3_bind_double(stmt, start + 1, coordinate.latitude)
+                sqlite3_bind_double(stmt, start + 2, coordinate.longitude)
+                sqlite3_bind_double(stmt, start + 3, coordinate.longitude)
+                sqlite3_bind_double(stmt, start + 4, lonScale * lonScale)
+                sqlite3_bind_double(stmt, start + 5, maxDistanceSquared)
+            }
+
+            var nextBinding: Int32 = 1
+            if let roadName, !roadName.isEmpty {
+                sqlite3_bind_text(stmt, nextBinding, (roadName as NSString).utf8String, -1, nil)
+                nextBinding += 1
+            }
+            bindDistance(nextBinding)
+            nextBinding += 6
+            bindDistance(nextBinding)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
+        DebugLogger.shared.log("HERELocalBatchCache: invalidated nearby manual-refresh answer")
+    }
+
     /// Remove all cached data.
     public func clear() {
         queue.sync {

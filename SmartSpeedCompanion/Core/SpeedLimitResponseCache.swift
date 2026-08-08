@@ -154,6 +154,21 @@ public actor SpeedLimitResponseCache {
         persistToDisk()
     }
 
+    /// Remove the cached answer for one location/road so a manual refresh
+    /// cannot immediately resurrect the value the user rejected.
+    public func invalidate(
+        at coordinate: CLLocationCoordinate2D,
+        roadName: String?
+    ) {
+        guard isValidCoordinate(coordinate) else { return }
+        let canonicalName = canonicalRoadName(roadName)
+        let key = gridKey(for: coordinate, roadName: canonicalName)
+        memory.removeValue(forKey: key)
+        memoryRevisionByKey.removeValue(forKey: key)
+        latestStoreRevisionByKey.removeValue(forKey: key)
+        persistToDisk()
+    }
+
     /// Drop everything in memory + on disk. When a caller supplies the latest
     /// revision it has issued, stores already queued before this clear are
     /// rejected even if they have not reached this actor yet.

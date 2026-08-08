@@ -167,13 +167,27 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     
     // MARK: - Status Handling
     private func handleStatusChange(_ status: SpeedStatus) {
+        // A missing speed limit is not an alertable condition. The speed
+        // engine represents unknown data as limit == 0 and safely reports
+        // `.safe`; do not turn that bookkeeping transition into a relief
+        // vibration or allow an earlier overspeed timer to keep beeping.
+        guard speedEngine?.isLimitResolved == true,
+              (speedEngine?.limit ?? 0) > 0 else {
+            previousStatus = .safe
+            if timerCancellable != nil {
+                stopMonitoringState()
+            }
+            return
+        }
+
         // ── Transition Haptics ────────────────────────────────────
         // Detect state transitions and fire contextual haptic patterns
         // that are independent of the user's speed-alert style picker.
         // These provide tactile feedback for boundary events.
         
         // Relief haptic: user slowed down from `.over` to `.safe` or `.warning`
-        if previousStatus == .over && (status == .safe || status == .warning) {
+        if isHapticAlertsEnabled,
+           previousStatus == .over && (status == .safe || status == .warning) {
             DebugLogger.shared.log("AlertEngine: OVER → SAFE/WARNING — relief haptic")
             DispatchQueue.main.async {
                 HapticAlertManager.playSuccessHaptic()
@@ -184,7 +198,8 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // Fires ONLY once on the .safe → .warning transition, NOT on every
         // GPS tick while staying in .warning. The .over → .warning path is
         // already handled by the relief haptic above.
-        if previousStatus == .safe && status == .warning {
+        if isHapticAlertsEnabled,
+           previousStatus == .safe && status == .warning {
             DebugLogger.shared.log("AlertEngine: approaching limit — near haptic")
             DispatchQueue.main.async {
                 HapticAlertManager.playNearHaptic()

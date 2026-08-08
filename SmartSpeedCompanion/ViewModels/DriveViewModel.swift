@@ -1051,12 +1051,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 // Heading-delta trigger is only useful while following a route;
                 // do not create a task for every GPS fix during a recording-only
                 // drive.
-                // Heading-delta trigger: a 30+ degree bearing change
-                // forces a fresh fetch even mid-route. Pre-cache of the
-                // route ahead + heading-triggered re-fetches are the
-                // two "more smooth" adds per the user's request; the
-                // existing throttled fetches remain in place. Fire-and-
-                // forget so we don't block the GPS sink block.
+                // Heading-delta trigger: a 20+ degree bearing change
+                // forces a fresh, road-aware fetch even mid-route. Fire-
+                // and-forget so we don't block the GPS sink block.
                 if self.isNavigating {
                     self.scheduleHeadingDeltaEvaluation()
                 }
@@ -1548,54 +1545,6 @@ public final class DriveViewModel: NSObject, ObservableObject {
         return started
     }
 
-
-    /// Grabs coordinates along the route and pre-fetches speed limit data for those points.
-    private func cacheRouteSegments(_ route: MKRoute) async {
-        let polylinePoints = route.polyline.points()
-        let pointCount = route.polyline.pointCount
-        var coordinates: [CLLocationCoordinate2D] = []
-
-        // Sample every 10 points (~150-300m) for denser ahead-of-time
-        // coverage than the old every-30-points (~500m-1km) cadence.
-        // User asked that we "fetch all the roads the user will be on
-        // ahead of time" -- denser sampling catches on-ramps, exits,
-        // and named cross-roads that sparse sampling skipped.
-        for i in stride(from: 0, to: pointCount, by: 10) {
-            coordinates.append(polylinePoints[i].coordinate)
-        }
-        if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
-
-        // Live-provider ahead-of-time pre-fetch. Fires
-        // `SmartSpeedLimitService.prefetchAheadOfRoute(...)` for every
-        // sample coord with bounded concurrency (4 in flight). Skips
-        // the continuity guard so the user's actual GPS-driven
-        // continuity is untouched -- see SpeedLimitService.swift doc on
-        // `prefetchAheadOfRoute` for why bypassing the guard matters.
-        //
-        // The pre-cache runs in a fire-and-let-finish Task so this
-        // method returns promptly and `startNavigation` isn't blocked
-        // on ~500ms-per-point round-trips on a long drive.
-        let coordinatesForWarmup = coordinates
-        let roadNameForWarmup: String? = nil
-        Task { @MainActor in
-            await withTaskGroup(of: Void.self) { group in
-                var inflight = 0
-                for coord in coordinatesForWarmup {
-                    group.addTask {
-                        await SmartSpeedLimitService.shared.prefetchAheadOfRoute(
-                            at: coord, roadName: roadNameForWarmup
-                        )
-                    }
-                    inflight += 1
-                    if inflight >= 4 {
-                        await group.next()
-                        inflight = 0
-                    }
-                }
-                await group.waitForAll()
-            }
-        }
-    }
     
     /// Alternative start navigation that triggers the calculation internally (legacy/direct support).
     @discardableResult
@@ -2388,6 +2337,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
         }
 
         isRefreshingSpeedLimit = true
+        speedEngine.beginLimitResolution()
         defer { isRefreshingSpeedLimit = false }
 
         // Call SmartSpeedLimitService directly so we hit the freshly-plumbed
@@ -2406,14 +2356,15 @@ public final class DriveViewModel: NSObject, ObservableObject {
         let currentSpeedMph = gpsMps * 2.23694
 
         let roadName = await RoadGeocoder.shared.resolveRoadContext(at: coord)?.roadName
-        _ = await SmartSpeedLimitService.shared.updateSpeedLimit(
+        let refreshedLimit = await SmartSpeedLimitService.shared.updateSpeedLimit(
             at: coord,
             heading: currentHeading,
             currentSpeedMph: currentSpeedMph,
             roadName: roadName,
             forceRefresh: true
         )
-        DebugLogger.shared.log("manualRefetchSpeedLimit: completed (limit=\(limit)).")
+        speedEngine.applyResolvedLimit(refreshedLimit)
+        DebugLogger.shared.log("manualRefetchSpeedLimit: completed (limit=\(refreshedLimit)).")
     }
 
     // MARK: - Heading-delta trigger
@@ -2492,16 +2443,19 @@ public final class DriveViewModel: NSObject, ObservableObject {
         // fetch. Passing nil here forced the resolver into spatial-only mode
         // exactly at turns, which could select a nearby 25 mph cross-street.
         let roadName = await RoadGeocoder.shared.resolveRoadContext(at: coord)?.roadName
-        _ = await SmartSpeedLimitService.shared.updateSpeedLimit(
+        speedEngine.beginLimitResolution()
+        let refreshedLimit = await SmartSpeedLimitService.shared.updateSpeedLimit(
             at: coord,
             heading: heading,
             currentSpeedMph: currentSpeedMph,
             roadName: roadName,
             forceRefresh: false
         )
+        speedEngine.applyResolvedLimit(refreshedLimit)
         lastSpeedLimitFetchHeading = heading
         DebugLogger.shared.log("DriveViewModel: heading-delta refetch (delta=\(Int(delta))°).")
     }
+
 
     /// Promotes an MKMapItem out to Apple Maps for full-fidelity directions,
     /// live traffic detail, and Look Around the moment the user wants it.

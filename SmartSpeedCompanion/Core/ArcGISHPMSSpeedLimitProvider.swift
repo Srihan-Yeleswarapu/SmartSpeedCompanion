@@ -65,15 +65,16 @@ public final class ArcGISHPMSSpeedLimitProvider: SpeedLimitProvider, @unchecked 
 
     public func fetchSpeedLimit(
         at coordinate: CLLocationCoordinate2D,
-        heading: Double?
+        heading: Double?,
+        forceRefresh: Bool = false
     ) async throws -> SpeedLimitResponse? {
         // Self-throttle.
-        if let last = lastSuccessLocation {
+        if !forceRefresh, let last = lastSuccessLocation {
             let dist = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
                 .distance(from: last)
             if dist < successMinDistance { return nil }
         }
-        if let lastFail = lastFailureAt, Date().timeIntervalSince(lastFail) < failureRetryInterval {
+        if !forceRefresh, let lastFail = lastFailureAt, Date().timeIntervalSince(lastFail) < failureRetryInterval {
             return nil
         }
 

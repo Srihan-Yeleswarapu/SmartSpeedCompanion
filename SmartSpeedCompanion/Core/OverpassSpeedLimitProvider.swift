@@ -43,11 +43,13 @@ public final class OverpassSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
 
     public func fetchSpeedLimit(
         at coordinate: CLLocationCoordinate2D,
-        heading: Double?
+        heading: Double?,
+        forceRefresh: Bool = false
     ) async throws -> SpeedLimitResponse? {
-        // Throttle gate.
-        if let until = throttledUntil, Date() < until { return nil }
-        if let last = lastSuccessLocation {
+        // Throttle gate. A user-requested refresh is intentionally allowed
+        // through so a stale cross-street answer can be replaced immediately.
+        if !forceRefresh, let until = throttledUntil, Date() < until { return nil }
+        if !forceRefresh, let last = lastSuccessLocation {
             let dist = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
                 .distance(from: last)
             if dist < successMinDistance { return nil }

@@ -1088,7 +1088,7 @@ public final class NavigationCoordinator: ObservableObject {
         let startMultiStopGeneration = multiStopStateGeneration
         let startRouteRequestGeneration = routeRequestGeneration
         // Reserve this start before the first await. A newer start invalidates
-        // this token, so an older cache-warmup completion cannot publish a
+        // this token, so an older async completion cannot publish a
         // stale route afterward.
         navigationLifecycleGeneration &+= 1
         let startNavigationGeneration = navigationLifecycleGeneration
@@ -1100,11 +1100,8 @@ public final class NavigationCoordinator: ObservableObject {
         self.lastDistanceToTurn = nil
         self.spokenCameraKeys.removeAll()
 
-        // Cache speed limits for the route points to ensure we stay offline-capable during the drive.
-        await cacheRouteSegments(route)
-
-        // Stop edits or a newer navigation start can occur while the cache
-        // warmup is suspended. Do not publish this route after either event.
+        // Stop edits or a newer navigation start can occur while route setup
+        // is suspended. Do not publish this route after either event.
         guard navigationLifecycleGeneration == startNavigationGeneration,
               startRouteRequestGeneration == routeRequestGeneration,
               startMultiStopGeneration == multiStopStateGeneration,
@@ -1134,7 +1131,7 @@ public final class NavigationCoordinator: ObservableObject {
         self.setTrafficReference(distance: initialTrafficDistance, time: initialTrafficTime)
 
         // Automatically start recording the drive session if it hasn't been started manually.
-        // This is committed only after the route generation survives cache warming.
+        // This is committed only after the route generation survives setup.
 
         // Commit navigation-owned state only after all async validation has
         // passed. This prevents stale starts from leaving a route, timer, or
@@ -2113,59 +2110,6 @@ public final class NavigationCoordinator: ObservableObject {
         return trafficReferenceTime * ratio
     }
 
-    // MARK: - Route Segment Caching
-
-    /// Grabs coordinates along the route and pre-fetches speed limit data
-    /// for those points. Stays on the coordinator because it is purely a
-    /// side effect of starting guidance.
-    private func cacheRouteSegments(_ route: MKRoute) async {
-        let polylinePoints = route.polyline.points()
-        let pointCount = route.polyline.pointCount
-        var coordinates: [CLLocationCoordinate2D] = []
-
-        // Sample every 10 points (~150-300 m) for denser ahead-of-time
-        // coverage than the old every-30-points (~500 m-1 km) cadence.
-        // User asked that we "fetch all the roads the user will be on
-        // ahead of time" -- denser sampling catches on-ramps, exits,
-        // and named cross-roads that sparse sampling skipped.
-        for i in stride(from: 0, to: pointCount, by: 10) {
-            coordinates.append(polylinePoints[i].coordinate)
-        }
-        if pointCount > 0 { coordinates.append(polylinePoints[pointCount-1].coordinate) }
-
-        // Warm the active live-provider response cache ahead of the route.
-        // Live providers are the same HERE/ArcGIS/Overpass chain used on GPS ticks.
-        // Fires
-        // `SmartSpeedLimitService.prefetchAheadOfRoute(...)` for every
-        // sample coord with bounded concurrency (4 in flight). Skips
-        // the continuity guard so the user's actual GPS-driven
-        // continuity is untouched -- see SpeedLimitService.swift doc on
-        // `prefetchAheadOfRoute` for why bypassing the guard matters.
-        //
-        // The pre-cache runs in a fire-and-let-finish Task so this
-        // method returns promptly and `startNavigation` isn't blocked
-        // on ~500 ms-per-point round-trips on a long drive.
-        let coordinatesForWarmup = coordinates
-        let roadNameForWarmup: String? = nil
-        Task { @MainActor in
-            await withTaskGroup(of: Void.self) { group in
-                var inflight = 0
-                for coord in coordinatesForWarmup {
-                    group.addTask {
-                        await SmartSpeedLimitService.shared.prefetchAheadOfRoute(
-                            at: coord, roadName: roadNameForWarmup
-                        )
-                    }
-                    inflight += 1
-                    if inflight >= 4 {
-                        await group.next()
-                        inflight = 0
-                    }
-                }
-                await group.waitForAll()
-            }
-        }
-    }
 
     // MARK: - Maneuver Glyph & Label Helpers
 

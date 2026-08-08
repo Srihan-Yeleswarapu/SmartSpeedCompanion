@@ -103,8 +103,7 @@ public class SmartSpeedLimitService: ObservableObject {
     /// await network/database work, so an older location can finish after a
     /// newer one unless stale completions are explicitly discarded.
     private var latestUpdateGeneration: UInt64 = 0
-    /// Unique process-local revision for every cache write, including
-    /// concurrent route-prefetch requests that share one GPS generation.
+    /// Unique process-local revision for every committed cache write.
     private var nextCacheStoreRevision: UInt64 = 0
 
     /// `45 -> 65` (arterial->highway) stays below this bar; the user's reported
@@ -195,7 +194,8 @@ public class SmartSpeedLimitService: ObservableObject {
         let generation = latestUpdateGeneration
         let outcome = await resolveCandidate(
             at: coordinate, heading: heading,
-            currentSpeedMph: currentSpeedMph, roadName: roadName,
+            currentSpeedMph: currentSpeedMph,
+            roadName: roadName,
             forceRefresh: forceRefresh
         )
         // A newer GPS/manual request is authoritative. Do not let a slow
@@ -206,54 +206,14 @@ public class SmartSpeedLimitService: ObservableObject {
             currentSpeedMph: currentSpeedMph,
             coordinate: coordinate,
             roadName: roadName,
-            generation: generation
+            generation: generation,
+            forceRefresh: forceRefresh
         )
         // `finalizeWithContinuity` may await cache-clearing work for a miss;
         // do not return a stale result if another request became authoritative
         // during that await.
         guard generation == latestUpdateGeneration else { return currentLimit }
         return result
-    }
-
-    /// Pre-warm the response cache for a coordinate WITHOUT touching the
-    /// continuity guard or the @Published `currentLimit`/`dataSource`.
-    /// Used by `DriveViewModel.cacheRouteSegments(_:)` to bake live-provider
-    /// answers for every polyline sample on an upcoming route so the
-    /// driver's first real GPS tick at that coord is a cache hit instead of
-    /// a cold call.
-    ///
-    /// Drives ONLY `cache.store(...)`. Does NOT mutate `lastStable` and does
-    /// NOT commit (so the user's actual GPS-driven continuity path is
-    /// undisturbed by route-ahead fetches -- a 50-mile route's 100 pre-
-    /// cache calls would otherwise leave `lastStable` at the LAST sample
-    /// coordinate, ~50 miles off-route, and trigger an unwarranted
-    /// SUSPECT-HOLD on the driver's first moving tick).
-    public func prefetchAheadOfRoute(
-        at coordinate: CLLocationCoordinate2D,
-        roadName: String? = nil
-    ) async {
-        // A route prefetch can overlap a live GPS fetch. Do not let an older
-        // prefetch response write after the live request and poison the same
-        // spatial cache cell with stale provider data.
-        let prefetchGeneration = latestUpdateGeneration
-        nextCacheStoreRevision &+= 1
-        let cacheRevision = nextCacheStoreRevision
-        let outcome = await resolveCandidate(
-            at: coordinate,
-            heading: nil,
-            currentSpeedMph: 0,
-            roadName: roadName,
-            forceRefresh: false
-        )
-        guard prefetchGeneration == latestUpdateGeneration,
-              !outcome.isMiss, outcome.limit > 0 else { return }
-        let resp = SpeedLimitResponse(
-            speedLimitMph: outcome.limit,
-            roadKey: outcome.roadKey,
-            providerName: outcome.providerName,
-            detail: outcome.detail
-        )
-        await cache.store(resp, at: coordinate, roadName: roadName, revision: cacheRevision)
     }
 
     // MARK: - Candidate resolution (decision-tree)
@@ -286,7 +246,10 @@ public class SmartSpeedLimitService: ObservableObject {
         //    sign because the displayed answer is wrong), skip the response cache
         //    so we run HERE Batch + the live provider chain for a fresher answer.
         //    Normal GPS-driven fetches leave `forceRefresh` at `false`.
-        if !forceRefresh, let cached = await cache.lookup(at: coordinate, roadName: roadName) {
+        if !forceRefresh,
+           let roadName,
+           !roadName.isEmpty,
+           let cached = await cache.lookup(at: coordinate, roadName: roadName) {
             return Candidate(
                 limit: cached.speedLimitMph,
                 source: sourceForProviderName(cached.providerName),
@@ -307,11 +270,14 @@ public class SmartSpeedLimitService: ObservableObject {
         //    Like the response cache above, skip this when `forceRefresh`
         //    is true so the user's tap runs the live provider chain and
         //    can override a wrong batch-cached limit.
-        if !forceRefresh, let cached = await batchCache.lookup(
-            coordinate: coordinate,
-            roadName: roadName,
-            bearing: heading
-        ) {
+        if !forceRefresh,
+           let roadName,
+           !roadName.isEmpty,
+           let cached = await batchCache.lookup(
+                coordinate: coordinate,
+                roadName: roadName,
+                bearing: heading
+           ) {
             return Candidate(
                 limit: cached.speedLimitMph,
                 source: .batchCache,
@@ -332,7 +298,7 @@ public class SmartSpeedLimitService: ObservableObject {
             for provider in liveProviders {
                 do {
                     if let resp = try await provider.fetchSpeedLimit(
-                        at: coordinate, heading: heading
+                        at: coordinate, heading: heading, forceRefresh: forceRefresh
                     ), resp.speedLimitMph > 0 {
                         return Candidate(
                             limit: resp.speedLimitMph,
@@ -367,10 +333,28 @@ public class SmartSpeedLimitService: ObservableObject {
         currentSpeedMph: Double,
         coordinate: CLLocationCoordinate2D,
         roadName: String?,
-        generation: UInt64
+        generation: UInt64,
+        forceRefresh: Bool
     ) async -> Int {
         guard generation == latestUpdateGeneration else { return currentLimit }
         if outcome.isMiss {
+            // A manual refresh is an explicit request to discard the displayed
+            // answer if the fresh provider chain has no result. Do not keep a
+            // potentially wrong 25 mph answer alive through the normal miss
+            // grace window after the user tapped the sign.
+            if forceRefresh {
+                lastValidLimit = 0
+                consecutiveMissCount = 0
+                lastStable = nil
+                pendingSuspect = nil
+                consecutiveSuspectCount = 0
+                currentLimit = 0
+                dataSource = .noData
+                await cache.invalidate(at: coordinate, roadName: roadName)
+                batchCache.invalidate(at: coordinate, roadName: roadName)
+                return 0
+            }
+
             // Keep the proposed count local until every awaited cache-clear
             // operation completes. An older request may enter this branch,
             // then become stale while the next request starts; publishing its
@@ -395,6 +379,22 @@ public class SmartSpeedLimitService: ObservableObject {
 
         guard let prior = lastStable else {
             // First-ever fetch -- commit unconditionally so we have a baseline.
+            lastStable = snapshot
+            pendingSuspect = nil
+            consecutiveSuspectCount = 0
+            return commit(candidate: outcome, coordinate: coordinate, roadName: roadName, generation: generation)
+        }
+
+        // A manual refresh bypasses caches and provider throttles. Accept a
+        // fresh higher answer immediately, which is the common correction for
+        // a stale 25 mph cross-street result. Never replace a known higher
+        // answer with a lower one from a single unverified probe; that is the
+        // exact false-positive pattern reported on 55 mph roads.
+        if forceRefresh {
+            guard outcome.limit >= prior.limit else {
+                DebugLogger.shared.log("SpeedLimitService: rejected lower manual-refresh candidate \(outcome.limit) vs prior \(prior.limit)")
+                return prior.limit
+            }
             lastStable = snapshot
             pendingSuspect = nil
             consecutiveSuspectCount = 0
@@ -435,7 +435,8 @@ public class SmartSpeedLimitService: ObservableObject {
         // Rule 2 -- physics override. The driver is moving at the new speed;
         // the answer matching physics wins regardless of an arguably false
         // geocode. Models highway on-ramp transitions cleanly.
-        if abs(Double(outcome.limit) - currentSpeedMph) <= Double(Self.PHYSICS_TOLERANCE_MPH),
+        if outcome.limit > prior.limit,
+           abs(Double(outcome.limit) - currentSpeedMph) <= Double(Self.PHYSICS_TOLERANCE_MPH),
            abs(Double(prior.limit) - currentSpeedMph) > Double(Self.PHYSICS_PRIOR_MARGIN_MPH) {
             lastStable = snapshot
             pendingSuspect = nil
@@ -495,7 +496,12 @@ public class SmartSpeedLimitService: ObservableObject {
         // and would otherwise block the orchestrator's next fetch.
         nextCacheStoreRevision &+= 1
         let cacheRevision = nextCacheStoreRevision
-        Task { await cache.store(resp, at: coordinate, roadName: roadName, revision: cacheRevision) }
+        // Never persist an answer without road context. A spatial-only
+        // response can be the adjacent cross street at an intersection and
+        // would otherwise poison future GPS lookups in the same cell.
+        if let roadName, !roadName.isEmpty {
+            Task { await cache.store(resp, at: coordinate, roadName: roadName, revision: cacheRevision) }
+        }
         return candidate.limit
     }
 
@@ -533,11 +539,13 @@ public class SmartSpeedLimitService: ObservableObject {
             let effectiveThreshold = roadChanged ? min(3, missThresholdBeforeClear) : missThresholdBeforeClear
 
             if missCount < effectiveThreshold {
-                // Grace window: keep the previous limit visible for a short
-                // window before dropping to "No Data". Shorter when the road
-                // name changed.
-                self.currentLimit = lastValidLimit
-                return (lastValidLimit, missCount)
+                // A provider miss is not an alertable speed limit. Keep the
+                // prior answer only as internal continuity state; the HUD and
+                // AlertEngine must see "No Data" immediately rather than
+                // beeping against a stale/unknown limit.
+                self.currentLimit = 0
+                self.dataSource = .noData
+                return (0, missCount)
             } else if roadChanged {
                 // Road changed AND we've exceeded the road-change threshold.
                 // Drop to "--" immediately instead of holding the stale

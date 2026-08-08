@@ -44,7 +44,8 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
 
     public func fetchSpeedLimit(
         at coordinate: CLLocationCoordinate2D,
-        heading: Double?
+        heading: Double?,
+        forceRefresh: Bool = false
     ) async throws -> SpeedLimitResponse? {
         // Throttle gate (locked).
         let nowLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
@@ -52,12 +53,12 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         if let last = _lastSuccess {
             let dist = nowLoc.distance(from: last)
             throttleLock.unlock()
-            if dist < successMinDistance { return nil }
+            if !forceRefresh, dist < successMinDistance { return nil }
         } else {
             throttleLock.unlock()
         }
         throttleLock.lock()
-        if let lastFail = _lastFailureAt,
+        if !forceRefresh, let lastFail = _lastFailureAt,
            Date().timeIntervalSince(lastFail) < failureRetryInterval {
             throttleLock.unlock()
             return nil

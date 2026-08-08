@@ -52,6 +52,7 @@ public protocol SpeedLimitProvider: Sendable {
     ///   (`URLError.resourceUnavailable` for HTTP 429, generic URLError for network).
     func fetchSpeedLimit(
         at coordinate: CLLocationCoordinate2D,
-        heading: Double?
+        heading: Double?,
+        forceRefresh: Bool
     ) async throws -> SpeedLimitResponse?
 }
