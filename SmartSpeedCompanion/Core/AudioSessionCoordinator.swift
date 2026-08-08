@@ -113,18 +113,17 @@ public final class AudioSessionCoordinator {
     /// not expose another app's pause state, so a successful activation is
     /// the strongest pause request a third-party app can make.
     private func activateSessionWithFallback() {
-        guard activateSessionIfNeeded() else {
-            guard !usingDuckFallback else { return }
-            do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playback, mode: .voicePrompt, options: Self.duckOptions)
-                isConfigured = true
-                usingDuckFallback = true
-                _ = activateSessionIfNeeded()
-                DebugLogger.shared.log("Audio Session using duck fallback")
-            } catch {
-                DebugLogger.shared.log("Audio Session DUCK FALLBACK ERROR: \(error.localizedDescription)")
-            }
+        guard !activateSessionIfNeeded() else { return }
+        guard !usingDuckFallback else { return }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .voicePrompt, options: Self.duckOptions)
+            isConfigured = true
+            usingDuckFallback = true
+            _ = activateSessionIfNeeded()
+            DebugLogger.shared.log("Audio Session using duck fallback")
+        } catch {
+            DebugLogger.shared.log("Audio Session DUCK FALLBACK ERROR: \(error.localizedDescription)")
         }
     }
 
