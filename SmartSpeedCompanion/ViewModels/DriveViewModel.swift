@@ -1151,6 +1151,13 @@ public final class DriveViewModel: NSObject, ObservableObject {
         guard !isRecording else { return }
         DebugLogger.shared.log("Drive session STARTED")
         locationManager.requestAuthorization()
+        // If the background-vibration fallback is enabled, settle
+        // notification permission while the app is foregrounded at this
+        // contextual moment (a driving session start) rather than letting
+        // the bridge attempt it from a backgrounded process.
+        if BackgroundHapticBridge.shared.isEnabled {
+            BackgroundHapticBridge.shared.requestAuthorizationIfNeeded()
+        }
         
         var destID: String? = nil
         if #available(iOS 18.0, *) {

@@ -10,6 +10,11 @@ public struct SettingsView: View {
     @AppStorage("hapticAlertsEnabled") var hapticEnabled: Bool = true
     @AppStorage("hapticAlertStyle") private var hapticStyle: String = "strong"
     @AppStorage("hapticCustomPattern") private var hapticCustomPatternData: Data = Data()
+    // Background vibration fallback: iOS forbids the haptic engine while
+    // the app is backgrounded, so this toggle routes overspeed alerts to a
+    // silent-sound local notification (system vibration, no audio) when
+    // Speedio isn't in the foreground — see Core/BackgroundHapticBridge.swift.
+    @AppStorage("backgroundVibrationAlertsEnabled") var backgroundVibrationEnabled: Bool = false
     @AppStorage("voiceNavEnabled") var voiceNavEnabled: Bool = true
     @AppStorage("avoidHighways") var avoidHighways: Bool = false
     @AppStorage("measurementSystem") var measurementSystem: String = "Imperial"
@@ -83,7 +88,10 @@ public struct SettingsView: View {
     public var body: some View {
         NavigationStack {
             Form {
-                Section(header: Text("ALERTS").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
+                Section(header: Text("ALERTS").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan),
+                        footer: Text("Vibrate in Background buzzes via a silent notification — no sound plays — when you're over the limit while Speedio is in the background (using another app, or the phone locked in a holder). You'll be asked for notification permission the first time you switch it on.")
+                            .font(.caption2)
+                            .foregroundColor(.gray)) {
                     // Speed Buffer Profiles row — first item in ALERTS
                     Button(action: { showingAlertProfiles = true }) {
                         HStack(spacing: 10) {
@@ -117,6 +125,19 @@ public struct SettingsView: View {
                     // also be able to record your own haptic..."
                     Toggle("Haptic Alerts", isOn: $hapticEnabled)
                         .tint(DesignSystem.neonGreen)
+
+                    // Background vibration fallback (iOS forbids haptics
+                    // while backgrounded). When switched on, request
+                    // notification permission right here — the most
+                    // contextual moment, while the user is actively asking
+                    // for the behavior.
+                    Toggle("Vibrate in Background", isOn: $backgroundVibrationEnabled)
+                        .tint(DesignSystem.neonGreen)
+                        .onChange(of: backgroundVibrationEnabled) { _, isOn in
+                            if isOn {
+                                BackgroundHapticBridge.shared.requestAuthorizationIfNeeded()
+                            }
+                        }
 
                     // Only show the haptic catalog when (a) the master toggle is
                     // on AND (b) the device actually has a taptic engine.

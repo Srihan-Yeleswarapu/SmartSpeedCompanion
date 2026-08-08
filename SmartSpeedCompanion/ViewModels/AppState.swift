@@ -144,7 +144,8 @@ public class AppState: ObservableObject {
         // Observe all critical settings keys in UserDefaults and push updates to Firestore
         let settingsKeys = [
             "userBuffer", "audioAlertsEnabled",
-            "voiceNavEnabled", "speedUnit", "avoidHighways", "measurementSystem"
+            "voiceNavEnabled", "speedUnit", "avoidHighways", "measurementSystem",
+            "backgroundVibrationAlertsEnabled"
         ]
 
         for _ in settingsKeys {

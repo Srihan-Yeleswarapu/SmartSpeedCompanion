@@ -101,6 +101,12 @@ targets:
       # back to compile-time constants in CameraDecisionEngine if the resource is missing.
       - path: SmartSpeedCompanion/Resources/CameraTuning.json
         buildPhase: resources
+      # Silent notification sound used by `BackgroundHapticBridge` so the
+      # background-vibration fallback buzzes (system notification
+      # vibration) without playing any audio — preserving the user's
+      # "audio alerts off" choice.
+      - path: SmartSpeedCompanion/Resources/silent_alert.wav
+        buildPhase: resources
       # Preserve the Arizona SQLite implementation/data in the repository for a
       # future all-states replacement, but do not bundle it in the production app.
       # No active code path calls ArizonaSpeedLimitService today.

@@ -291,25 +291,6 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                         }
                     }
                 }
-
-                // ── Background vibration fallback ─────────────────
-                // iOS forbids driving the haptic engine while the app is
-                // backgrounded (another app like YouTube in the foreground,
-                // or the phone locked in a holder), so the CHHapticEngine
-                // pulse above goes silent even though GPS keeps running.
-                // When haptic alerts are on and the user is over the limit,
-                // deliver a SILENT-sound local notification instead — the
-                // system vibration that accompanies it is the only
-                // sanctioned way to buzz a backgrounded app. The bridge
-                // self-gates on background state + toggle + 10 s throttle,
-                // so this call is safe on every 1 s monitor tick.
-                if !self.isSnoozed {
-                    BackgroundHapticBridge.shared.handleSpeedingTick(
-                        hapticsEnabled: self.isHapticAlertsEnabled,
-                        speed: self.speedEngine?.speed ?? 0,
-                        limit: self.speedEngine?.limit ?? 0
-                    )
-                }
             }
     }
     
@@ -325,10 +306,6 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // kill the looping pulse immediately so the phone stops
         // vibrating.
         HapticAlertManager.shared.stopSpeedingPulse()
-        // Reset the background-buzz throttle too, so the NEXT speeding
-        // episode delivers its first notification immediately instead of
-        // waiting out a stale 10 s cooldown from the previous episode.
-        BackgroundHapticBridge.shared.reset()
         
         // Restore the previous media app as soon as the user is no longer
         // over the limit. Navigation speech can keep its own independent
