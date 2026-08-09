@@ -48,23 +48,11 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         heading: Double?,
         forceRefresh: Bool = false
     ) async throws -> SpeedLimitResponse? {
-        // Throttle gate (locked).
+        // Throttle gate. The lock is accessed through synchronous helpers so
+        // Swift 6 never calls NSLock.lock()/unlock() directly from this async
+        // network method.
         let nowLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        throttleLock.lock()
-        if let last = _lastSuccess {
-            let dist = nowLoc.distance(from: last)
-            throttleLock.unlock()
-            if !forceRefresh, dist < successMinDistance { return nil }
-        } else {
-            throttleLock.unlock()
-        }
-        throttleLock.lock()
-        if !forceRefresh, let lastFail = _lastFailureAt,
-           Date().timeIntervalSince(lastFail) < failureRetryInterval {
-            throttleLock.unlock()
-            return nil
-        }
-        throttleLock.unlock()
+        guard !shouldSkipRequest(at: nowLoc, forceRefresh: forceRefresh) else { return nil }
 
         // Credentials gate. No creds == the user hasn't onboarded yet, so we
         // silently fall through instead of crashing the chain on auth errors.
@@ -126,9 +114,7 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             // 429 specifically: too many requests. Push the failure window
             // longer so the next 30 s of GPS updates skip HERE entirely.
             if http.statusCode == 429 {
-                throttleLock.lock()
-                _lastFailureAt = Date().addingTimeInterval(30)
-                throttleLock.unlock()
+                extendFailureCooldown(by: 30)
             }
             return nil
         }
@@ -150,9 +136,7 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             return nil
         }
 
-        throttleLock.lock()
-        _lastSuccess = nowLoc
-        throttleLock.unlock()
+        recordSuccess(at: nowLoc)
 
         return SpeedLimitResponse(
             speedLimitMph: mph,
@@ -208,9 +192,38 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         return nil
     }
 
+    private func shouldSkipRequest(at location: CLLocation, forceRefresh: Bool) -> Bool {
+        throttleLock.lock()
+        defer { throttleLock.unlock() }
+
+        if let last = _lastSuccess,
+           !forceRefresh,
+           location.distance(from: last) < successMinDistance {
+            return true
+        }
+        if !forceRefresh,
+           let lastFailure = _lastFailureAt,
+           Date().timeIntervalSince(lastFailure) < failureRetryInterval {
+            return true
+        }
+        return false
+    }
+
+    private func recordSuccess(at location: CLLocation) {
+        throttleLock.lock()
+        _lastSuccess = location
+        throttleLock.unlock()
+    }
+
     private func recordFailure() {
         throttleLock.lock()
         _lastFailureAt = Date()
+        throttleLock.unlock()
+    }
+
+    private func extendFailureCooldown(by interval: TimeInterval) {
+        throttleLock.lock()
+        _lastFailureAt = Date().addingTimeInterval(interval)
         throttleLock.unlock()
     }
 }

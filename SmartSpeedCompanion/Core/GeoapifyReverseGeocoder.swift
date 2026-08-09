@@ -83,21 +83,9 @@ public final class GeoapifyReverseGeocoder: @unchecked Sendable {
     public func reverse(coordinate coord: CLLocationCoordinate2D) async -> GeoapifyResponse? {
         let nowLoc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
 
-        throttleLock.lock()
-        if let last = _lastSuccess {
-            let dist = nowLoc.distance(from: last)
-            throttleLock.unlock()
-            if dist < successMinDistance { return nil }
-        } else {
-            throttleLock.unlock()
-        }
-        throttleLock.lock()
-        if let lastFail = _lastFailureAt,
-           Date().timeIntervalSince(lastFail) < failureRetryInterval {
-            throttleLock.unlock()
-            return nil
-        }
-        throttleLock.unlock()
+        // Keep NSLock access inside synchronous helpers. Swift 6 rejects
+        // direct lock/unlock calls from this async network method.
+        guard !shouldSkipRequest(at: nowLoc) else { return nil }
 
         // Credentials gate. No creds == user hasn't onboarded yet, so we
         // silently fall through instead of crashing the chain on auth errors.
@@ -139,9 +127,7 @@ public final class GeoapifyReverseGeocoder: @unchecked Sendable {
             // 429 specifically: too many requests. Push the failure window
             // longer so the next 30 s of GPS updates skip Geoapify entirely.
             if http.statusCode == 429 {
-                throttleLock.lock()
-                _lastFailureAt = Date().addingTimeInterval(30)
-                throttleLock.unlock()
+                extendFailureCooldown(by: 30)
             }
             return nil
         }
@@ -169,9 +155,7 @@ public final class GeoapifyReverseGeocoder: @unchecked Sendable {
             ?? leadingSegment(nonEmpty(props["address_line1"]))
             ?? leadingSegment(nonEmpty(props["formatted"]))
 
-        throttleLock.lock()
-        _lastSuccess = nowLoc
-        throttleLock.unlock()
+        recordSuccess(at: nowLoc)
 
         return GeoapifyResponse(
             roadName: roadName,
@@ -181,9 +165,36 @@ public final class GeoapifyReverseGeocoder: @unchecked Sendable {
         )
     }
 
+    private func shouldSkipRequest(at location: CLLocation) -> Bool {
+        throttleLock.lock()
+        defer { throttleLock.unlock() }
+
+        if let last = _lastSuccess,
+           location.distance(from: last) < successMinDistance {
+            return true
+        }
+        if let lastFailure = _lastFailureAt,
+           Date().timeIntervalSince(lastFailure) < failureRetryInterval {
+            return true
+        }
+        return false
+    }
+
+    private func recordSuccess(at location: CLLocation) {
+        throttleLock.lock()
+        _lastSuccess = location
+        throttleLock.unlock()
+    }
+
     private func recordFailure() {
         throttleLock.lock()
         _lastFailureAt = Date()
+        throttleLock.unlock()
+    }
+
+    private func extendFailureCooldown(by interval: TimeInterval) {
+        throttleLock.lock()
+        _lastFailureAt = Date().addingTimeInterval(interval)
         throttleLock.unlock()
     }
 

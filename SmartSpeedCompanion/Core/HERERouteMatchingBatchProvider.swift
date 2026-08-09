@@ -63,15 +63,10 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
         radiusMeters: Double = 1500
     ) async throws -> Int {
         // ── 1. Throttle gate ─────────────────────────────────────────
-        lock.lock()
-        if let last = _lastBatchFetchAt,
-           Date().timeIntervalSince(last) < minBatchInterval {
-            lock.unlock()
-            DebugLogger.shared.log("HERE Batch: throttle — skipping (last fetch < \(Int(minBatchInterval))s ago)")
+        guard claimBatchFetchSlot() else {
+            DebugLogger.shared.log("HERE Batch: throttle — skipping")
             return 0
         }
-        _lastBatchFetchAt = Date()
-        lock.unlock()
 
         // ── 2. Build the CSV trace ───────────────────────────────────
         let tracePoints = generateRectangularGrid(
@@ -126,6 +121,18 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
         HERELocalBatchCache.shared.store(roads: roads)
         DebugLogger.shared.log("HERE Batch: cached \(roads.count) road segments")
         return roads.count
+    }
+
+    private func claimBatchFetchSlot() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let last = _lastBatchFetchAt,
+           Date().timeIntervalSince(last) < minBatchInterval {
+            return false
+        }
+        _lastBatchFetchAt = Date()
+        return true
     }
 
     // MARK: - Grid Generation
