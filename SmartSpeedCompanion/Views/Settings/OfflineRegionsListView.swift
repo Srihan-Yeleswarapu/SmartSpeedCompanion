@@ -31,7 +31,7 @@ public struct OfflineRegionsListView: View {
                         Text("No saved offline data")
                             .font(.headline)
                             .foregroundColor(.gray)
-                        Text("Downloaded speed-limit zones and offline map regions will appear here.")
+                        Text("Saved offline map regions will appear here.")
                             .font(.caption)
                             .foregroundColor(.gray)
                             .multilineTextAlignment(.center)
@@ -41,7 +41,9 @@ public struct OfflineRegionsListView: View {
                     .listRowBackground(Color.clear)
                 }
 
-                // ── Downloaded speed-limit zones (bulk "Download Limits") ──
+                // Legacy downloaded zones are no longer created by the UI;
+                // retain the list only so existing saved state can be removed
+                // cleanly after upgrading to HERE-only driving data.
                 if !driveViewModel.savedLimitsZones.isEmpty {
                     Section(header: Text("SPEED LIMIT ZONES")
                         .font(DesignSystem.labelFont)

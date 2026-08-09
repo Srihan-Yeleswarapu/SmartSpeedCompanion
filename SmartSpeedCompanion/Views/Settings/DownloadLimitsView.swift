@@ -1,14 +1,12 @@
 import SwiftUI
 
-/// "Download Limits" sheet — pick a radius (10–50 miles) around your current
-/// location, see a live size + time estimate while dragging the slider, then
-/// download every speed limit in that radius for offline use.
+/// Legacy "Download Limits" sheet. The downloader is retained for
+/// compatibility, but its OSM rows are deliberately rejected by the active
+/// HERE-only driving cache. It must not be presented as a source of live limits.
 ///
-/// The estimate is real: `DriveViewModel.refreshLimitsEstimate` runs an
-/// Overpass `out count;` query for the exact radius (falling back to a
-/// density heuristic while the slider is mid-drag or offline). Confirming
-/// kicks off `OfflineLimitsDownloader.download` with a progress bar and a
-/// Cancel button; completed zones appear in the Offline list.
+/// The production live path uses HERE REST plus HERE Route Matching cache.
+/// This legacy surface remains visible only until the offline-download UX is
+/// replaced with a HERE-backed implementation.
 public struct DownloadLimitsView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @Environment(\.dismiss) private var dismiss

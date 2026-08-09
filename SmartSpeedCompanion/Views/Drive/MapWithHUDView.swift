@@ -1012,11 +1012,10 @@ fileprivate struct LimitSignView: View {
         switch source {
         case "Batch (HERE)":    return ("HERE", Color(hex: "#34D38A"))      // warm HERE cache
         case "Live (HERE)":     return ("HERE", Color(hex: "#00D4FF"))      // live HERE
-        case "Live (ArcGIS)":   return ("ArcGIS", Color(hex: "#34D38A"))     // live fallback
-        case "Live (Overpass)": return ("OSM", Color(hex: "#00D4FF"))        // live OSM fallback
-        // Legacy DB values are retained only for decoding old state. They are
-        // not an active source and must never be presented as current data.
-        case "DB", "DB (Recovered)": return ("--", Color(hex: "#8888AA"))
+        // ArcGIS/Overpass values are retained only for decoding older state.
+        // They are not active sources and must never be shown as current data.
+        case "Live (ArcGIS)", "Live (Overpass)", "DB", "DB (Recovered)":
+            return ("--", Color(hex: "#8888AA"))
         default:                return ("--", Color(hex: "#8888AA"))         // No Data / unknown
         }
     }

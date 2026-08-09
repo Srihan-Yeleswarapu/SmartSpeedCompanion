@@ -99,7 +99,10 @@ public actor SpeedLimitResponseCache {
         guard isValidCoordinate(coordinate) else { return nil }
         let canonicalName = canonicalRoadName(roadName)
         let key = gridKey(for: coordinate, roadName: canonicalName)
-        guard var entry = memory[key], isFresh(entry), entry.roadName == canonicalName else { return nil }
+        guard var entry = memory[key],
+              isFresh(entry),
+              entry.roadName == canonicalName,
+              isHEREProviderName(entry.response.providerName) else { return nil }
         let recordedLoc = CLLocation(latitude: entry.lat, longitude: entry.lon)
         let queriedLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         if recordedLoc.distance(from: queriedLoc) > 50 { return nil }
@@ -117,6 +120,13 @@ public actor SpeedLimitResponseCache {
         roadName: String? = nil,
         revision: UInt64? = nil
     ) async {
+        // The response cache is part of the active driving path. Never allow
+        // legacy ArcGIS/OSM entries to be written back into it; a later lookup
+        // must be HERE-only even if an old caller still supplies another source.
+        guard isHEREProviderName(response.providerName) else {
+            DebugLogger.shared.log("SpeedLimitResponseCache: rejected non-HERE response \(response.providerName)")
+            return
+        }
         // Initialization starts disk loading in a separate Task. Complete that
         // merge before accepting the first live store so an older snapshot
         // cannot overwrite a fresh response.
@@ -213,9 +223,10 @@ public actor SpeedLimitResponseCache {
         let cutoff = Date().addingTimeInterval(-diskTtl)
 
         for entry in entries where entry.cachedAt > cutoff {
-            // Skip legacy Arizona-only SQLite entries that may still exist
-            // on disk from older app versions. The provider is retired.
-            guard entry.response.providerName != "AZ SQLite" else { continue }
+            // Skip legacy Arizona-only, ArcGIS, and OSM entries that may
+            // still exist on disk from older app versions. HERE is the only
+            // authoritative source for active driving data.
+            guard isHEREProviderName(entry.response.providerName) else { continue }
             let coordinate = CLLocationCoordinate2D(latitude: entry.lat, longitude: entry.lon)
             guard isValidCoordinate(coordinate) else { continue }
             let canonicalName = canonicalRoadName(entry.roadName)
@@ -244,6 +255,10 @@ public actor SpeedLimitResponseCache {
     }
 
     // MARK: - Private
+
+    private func isHEREProviderName(_ name: String) -> Bool {
+        name == "HERE REST" || name == "HERE Batch"
+    }
 
     private func isValidCoordinate(_ coordinate: CLLocationCoordinate2D) -> Bool {
         coordinate.latitude.isFinite && coordinate.longitude.isFinite &&

@@ -4,10 +4,11 @@
 // Decision tree (live-first; no local SQLite fallback):
 //   1. Spatial-grid cache lookup -> hit short-circuits everything below.
 //   2. HERE Batch cache lookup -> cached HERE road data wins without a network call.
-//   3. If NetworkReachability.isConnected, walk liveProviders in order (HERE REST ->
-//      ArcGIS HPMS -> Overpass) -- first non-nil response wins. On network/parse
-//      failure for a provider, drop and try the next.
-//   4. If every active provider misses, return No Data and let the continuity guard
+//   3. If NetworkReachability.isConnected, query HERE REST only. A HERE
+//      authentication, coverage, or network miss is never replaced by another
+//      map-data provider, because mixing sources can put a nearby road's limit
+//      on the HUD.
+//   4. If HERE misses, return No Data and let the continuity guard
 //      apply its normal miss-grace window.
 //
 // Trade-off note: live-first + cache-first means a recently-installed sign change
@@ -18,9 +19,9 @@
 //
 // PHASE 4 -- SpeedLimit Continuity Guard
 // --------------------------------------
-// When the user drives under a flyover (e.g. South Alma School Road under US-60 in
-// Mesa/Chandler, AZ), CLGeocoder can briefly resolve `roadName` to the OVERPASS
-// road for ~3-5 seconds while the underlying arterial's name re-resolves. The
+// When the user drives under a flyover, reverse geocoding can briefly resolve
+// `roadName` to a nearby road for ~3-5 seconds while the underlying arterial's
+// name re-resolves. The
 // continuity guard holds a suspect live-provider answer during that window
 // instead of allowing a nearby road result to flicker onto the HUD.
 //
@@ -79,7 +80,9 @@ public class SmartSpeedLimitService: ObservableObject {
     /// refreshed via just-in-time geofence triggers as the user drives.
     private let batchCache = HERELocalBatchCache.shared
 
-    /// Live network providers — the only non-cache providers used by the app.
+    /// HERE REST provider used for live lookups. Kept as a collection so the
+    /// provider abstraction remains easy to test without reintroducing fallback
+    /// sources.
     private let liveProviders: [SpeedLimitProvider]
 
     private let reachability = NetworkReachability.shared
@@ -158,15 +161,14 @@ public class SmartSpeedLimitService: ObservableObject {
 
     // MARK: - Live provider chain
     //
-    // HERE REST remains the primary live provider. It is followed by ArcGIS and
-    // Overpass when HERE has no credentials, no heading, no coverage, or fails.
+    // HERE REST is the sole active live provider. ArcGIS and Overpass remain
+    // in the repository for research/offline tooling, but must never silently
+    // become the source of a driving alert or HUD limit.
     // The HERE provider aligns its short probe with the vehicle course whenever
     // one is available, avoiding the old eastward-only probe at intersections.
     private init() {
         self.liveProviders = [
             HERERestSpeedLimitProvider(),
-            ArcGISHPMSSpeedLimitProvider(),
-            OverpassSpeedLimitProvider(),
         ]
         // Preload the in-memory response cache from disk so the very first
         // fetch can hit cached data without a network round-trip.
@@ -231,8 +233,8 @@ public class SmartSpeedLimitService: ObservableObject {
         let isMiss: Bool
     }
 
-    /// Resolve the speed limit from the active chain: response cache -> HERE batch
-    /// cache -> live providers. NEVER writes to the response cache here -- cache
+    /// Resolve the speed limit from the active HERE path: response cache -> HERE
+    /// batch cache -> HERE REST. NEVER writes to the response cache here -- cache
     /// writes happen only on commit, after the continuity guard clears the
     private func resolveCandidate(
         at coordinate: CLLocationCoordinate2D,
@@ -249,7 +251,8 @@ public class SmartSpeedLimitService: ObservableObject {
         if !forceRefresh,
            let roadName,
            !roadName.isEmpty,
-           let cached = await cache.lookup(at: coordinate, roadName: roadName) {
+           let cached = await cache.lookup(at: coordinate, roadName: roadName),
+           isHEREProviderName(cached.providerName) {
             return Candidate(
                 limit: cached.speedLimitMph,
                 source: sourceForProviderName(cached.providerName),
@@ -277,7 +280,7 @@ public class SmartSpeedLimitService: ObservableObject {
                 coordinate: coordinate,
                 roadName: roadName,
                 bearing: heading
-           ) {
+           ), cached.source.caseInsensitiveCompare("here") == .orderedSame {
             return Candidate(
                 limit: cached.speedLimitMph,
                 source: .batchCache,
@@ -288,18 +291,18 @@ public class SmartSpeedLimitService: ObservableObject {
             )
         }
 
-        // 3. Live provider chain (only when online).
-        //    NOTE: The geofence manager (HEREGeofenceManager) is the
-        //    SOLE owner of batch fetch triggers. It observes location
-        //    updates independently and fires background batch requests
-        //    when the user enters uncached zones. This service only
-        //    reads from the batch cache — it never triggers fetches.
+        // 3. HERE REST (only when online). The geofence manager
+        //    (HEREGeofenceManager) is the SOLE owner of HERE batch fetch
+        //    triggers. It observes location updates independently and fires
+        //    background batch requests when the user enters uncached zones.
+        //    This service only reads the HERE batch cache — it never triggers
+        //    fetches and never falls back to OSM/ArcGIS.
         if reachability.isConnected {
             for provider in liveProviders {
                 do {
                     if let resp = try await provider.fetchSpeedLimit(
                         at: coordinate, heading: heading, forceRefresh: forceRefresh
-                    ), resp.speedLimitMph > 0 {
+                    ), resp.providerName == "HERE REST", resp.speedLimitMph > 0 {
                         return Candidate(
                             limit: resp.speedLimitMph,
                             source: sourceForProviderName(resp.providerName),
@@ -311,12 +314,13 @@ public class SmartSpeedLimitService: ObservableObject {
                     }
                 } catch {
                     DebugLogger.shared.log("[\(provider.displayName)] Live fetch failed: \(error.localizedDescription)")
-                    continue  // try the next provider in the chain
+                    continue  // preserve the provider abstraction's failure path
                 }
             }
         }
 
-        // 4. No active provider has data. Returning a miss keeps all regions on the same path.
+        // 4. HERE has no data. Returning a miss keeps all regions on the same path
+        // and prevents an unrelated map-data source from becoming authoritative.
         return Candidate(
             limit: 0, source: .noData,
             roadKey: "", providerName: "", detail: "",
@@ -385,16 +389,12 @@ public class SmartSpeedLimitService: ObservableObject {
             return commit(candidate: outcome, coordinate: coordinate, roadName: roadName, generation: generation)
         }
 
-        // A manual refresh bypasses caches and provider throttles. Accept a
-        // fresh higher answer immediately, which is the common correction for
-        // a stale 25 mph cross-street result. Never replace a known higher
-        // answer with a lower one from a single unverified probe; that is the
-        // exact false-positive pattern reported on 55 mph roads.
+        // A manual refresh bypasses caches and provider throttles. It is an
+        // explicit request to replace the displayed answer with the current
+        // HERE result, including a lower limit after a legitimate road change.
+        // Cross-provider false positives cannot enter because HERE REST is the
+        // sole live provider and caches enforce the HERE allowlist.
         if forceRefresh {
-            guard outcome.limit >= prior.limit else {
-                DebugLogger.shared.log("SpeedLimitService: rejected lower manual-refresh candidate \(outcome.limit) vs prior \(prior.limit)")
-                return prior.limit
-            }
             lastStable = snapshot
             pendingSuspect = nil
             consecutiveSuspectCount = 0
@@ -575,12 +575,18 @@ public class SmartSpeedLimitService: ObservableObject {
 
     // MARK: - Helpers
 
+    private func isHEREProviderName(_ name: String) -> Bool {
+        name == "HERE REST" || name == "HERE Batch"
+    }
+
     private func sourceForProviderName(_ name: String) -> SpeedLimitDataSource {
         switch name {
         case "HERE Batch": return .batchCache
         case "HERE REST":  return .liveHERE
-        case "ArcGIS":     return .liveArcGIS
-        case "Overpass":   return .liveOverpass
+        // Non-HERE providers are intentionally not active. Keep the legacy
+        // enum cases for decoding older persisted state, but do not surface
+        // them as current driving data.
+        case "ArcGIS", "Overpass": return .noData
         default:           return .noData
         }
     }

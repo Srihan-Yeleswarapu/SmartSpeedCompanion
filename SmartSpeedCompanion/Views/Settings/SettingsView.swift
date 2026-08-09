@@ -55,7 +55,6 @@ public struct SettingsView: View {
     @State private var showingHapticRecorder = false
     @State private var showingAlertProfiles = false
     // Bulk "Download Limits" + Offline list sheets (OFFLINE section).
-    @State private var showingLimitsDownload = false
     @State private var showingOfflineRegions = false
 
     // NOTE: Previously this view hosted a deletion-flow (notice alert,
@@ -282,10 +281,10 @@ public struct SettingsView: View {
                 //  feature under the ad-gated-or-IAP model.)
                 
                 // MARK: - NETWORK & DATA section (always visible)
-                // Driving the speed-limit pipeline requires live
-                // network (HERE batch cache + ArcGIS HPMS + OSM Overpass).
-                // Help the user unblock cellular so live providers can
-                // come back online when they return to service.
+                // Driving speed-limit updates use HERE REST plus the local HERE
+                // batch cache. If HERE is unavailable, Speedio shows No Data
+                // instead of silently substituting another map database.
+                // Help the user unblock cellular so HERE can come back online.
                 // (TestFlight 2.1.4: "put a how to button… detailed
                 //  instructions on how to toggle an app to use cellular".)
                 Section(header: Text("NETWORK & DATA").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
@@ -312,28 +311,12 @@ public struct SettingsView: View {
                 .listRowBackground(DesignSystem.bgPanel)
 
                 // MARK: - OFFLINE section
-                // Bulk "Download Limits" — cache every speed limit in a radius
-                // around the current location for offline driving.
+                // Bulk offline downloads are retained as a legacy surface, but
+                // active driving limits remain HERE-only.
                 Section(header: Text("OFFLINE").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
-                    Button(action: {
-                        showingLimitsDownload = true
-                    }) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "square.and.arrow.down")
-                                .foregroundColor(DesignSystem.cyan)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Download Speed Limits")
-                                    .foregroundColor(.white)
-                                Text("Cache limits in a radius around you for offline use")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.white.opacity(0.4))
-                                .font(.caption.weight(.semibold))
-                        }
-                    }
+                    // The previous bulk downloader queried OSM and wrote rows
+                    // into the HERE cache. It is intentionally hidden until an
+                    // equivalent HERE-backed offline download is available.
 
                     Button(action: {
                         showingOfflineRegions = true
@@ -411,15 +394,6 @@ public struct SettingsView: View {
                     AlertProfilesListView()
                         .environmentObject(driveViewModel)
                         .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(24)
-                        .preferredColorScheme(.dark)
-                }
-                // Bulk speed-limit download sheet (slider + estimate + confirm).
-                .sheet(isPresented: $showingLimitsDownload) {
-                    DownloadLimitsView()
-                        .environmentObject(driveViewModel)
-                        .presentationDetents([.large])
                         .presentationDragIndicator(.visible)
                         .presentationCornerRadius(24)
                         .preferredColorScheme(.dark)
@@ -508,7 +482,7 @@ fileprivate struct NetworkHelpSheet: View {
                     .font(.system(size: 17, weight: .bold))
                     .foregroundColor(.white)
             }
-            Text("Speedio grabs fresh speed-limit data from Apple/ArcGIS, HERE, and OpenStreetMap. If Wi-Fi and Cellular Data are both off — or if Speedio's per-app toggle is off — live speed limits can't update, and you may see stale or missing limits.")
+            Text("Speedio gets fresh speed-limit data from HERE and uses the local HERE cache when available. If Wi-Fi and Cellular Data are both off — or if Speedio's per-app toggle is off — the app shows No Data rather than substituting another map database.")
                 .font(.system(size: 14))
                 .foregroundColor(.white.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)

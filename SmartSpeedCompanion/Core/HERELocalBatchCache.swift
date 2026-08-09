@@ -302,7 +302,8 @@ public final class HERELocalBatchCache: @unchecked Sendable {
                 sql = """
                     SELECT road_name, direction, speed_limit, lat, lon, source
                     FROM cached_roads
-                    WHERE road_name = ?
+                    WHERE road_name = ? COLLATE NOCASE
+                      AND source = 'here' COLLATE NOCASE
                     ORDER BY cached_at DESC
                     LIMIT 1
                 """
@@ -310,7 +311,9 @@ public final class HERELocalBatchCache: @unchecked Sendable {
                 sql = """
                     SELECT road_name, direction, speed_limit, lat, lon, source
                     FROM cached_roads
-                    WHERE road_name = ? AND (direction = ? OR direction = '')
+                    WHERE road_name = ? COLLATE NOCASE
+                      AND source = 'here' COLLATE NOCASE
+                      AND (direction = ? OR direction = '')
                     ORDER BY CASE WHEN direction = ? THEN 0 ELSE 1 END, cached_at DESC
                     LIMIT 1
                 """
@@ -363,7 +366,8 @@ public final class HERELocalBatchCache: @unchecked Sendable {
                 SELECT road_name, direction, speed_limit, lat, lon, source,
                        ((lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ?) AS dist2
                 FROM cached_roads
-                WHERE lat BETWEEN ? AND ?
+                WHERE source = 'here' COLLATE NOCASE
+                  AND lat BETWEEN ? AND ?
                   AND lon BETWEEN ? AND ?
                   AND (lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ? <= ?
                 ORDER BY dist2 ASC
@@ -420,7 +424,8 @@ public final class HERELocalBatchCache: @unchecked Sendable {
            let cached = lookup(roadName: name, bearing: bearing) {
             let cachedLocation = CLLocation(latitude: cached.latitude, longitude: cached.longitude)
             let requestedLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            if cachedLocation.distance(from: requestedLocation) <= 75 {
+            if cachedLocation.distance(from: requestedLocation) <= 75,
+               cached.source.caseInsensitiveCompare("here") == .orderedSame {
                 return cached
             }
             DebugLogger.shared.log("HERELocalBatchCache: rejected distant name match '\(cached.roadName)' (\(Int(cachedLocation.distance(from: requestedLocation)))m)")
@@ -428,10 +433,12 @@ public final class HERELocalBatchCache: @unchecked Sendable {
 
         // Secondary path: spatial fallback
         if let spatial = lookupNearest(to: coordinate, radiusMeters: 50) {
-            // When a road name was provided by the geocoder, validate the
-            // spatial result's road name actually matches the geocoded name.
-            // A nearby cached point from a completely different road would
-            // be wrong to return (e.g. neighborhood road vs adjacent arterial).
+            // A nearby cached point from a completely different road would be
+            // wrong to return (e.g. neighborhood road vs adjacent arterial).
+            guard spatial.source.caseInsensitiveCompare("here") == .orderedSame else {
+                DebugLogger.shared.log("HERELocalBatchCache: ignored non-HERE cached row from legacy/offline data")
+                return nil
+            }
             if let name = roadName, !name.isEmpty {
                 let matchScore = RoadNameMatcher.score(
                     geocodedName: name,

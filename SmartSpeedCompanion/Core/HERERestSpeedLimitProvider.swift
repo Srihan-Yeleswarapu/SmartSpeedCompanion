@@ -16,8 +16,9 @@
 //
 // Auth: HERE Freemium tier — 250k requests/month free PERMANENTLY (NOT a
 // 90-day trial). Credentials live in Keychain via HERECredentialStore.
-// If credentials are missing, this provider returns nil and the orchestrator's
-// chain falls through to ArcGIS/Overpass/SQLite unchanged.
+// If credentials are missing or HERE has no coverage, this provider returns
+// nil and the orchestrator shows No Data rather than silently switching to
+// ArcGIS/Overpass/OSM.
 //
 // Throttle state is guarded by an NSLock because the provider is `final`
 // non-actor — Swift concurrency allows concurrent awaiters and mutable
@@ -68,7 +69,7 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         // Credentials gate. No creds == the user hasn't onboarded yet, so we
         // silently fall through instead of crashing the chain on auth errors.
         guard let creds = HERECredentialStore.shared.loadCredentials() else {
-            DebugLogger.shared.log("HERE REST: credentials missing in Keychain; falling through")
+            DebugLogger.shared.log("HERE REST: credentials missing; active HERE source unavailable")
             return nil
         }
 
@@ -137,12 +138,12 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
               let firstRoute = routes.first,
               let sections = firstRoute["sections"] as? [[String: Any]],
               let firstSection = sections.first,
-              let speedLimitObj = firstSection["speedLimit"] as? [String: Any],
-              let speedValue = speedLimitObj["speed"] as? Double else {
+              let speedValue = speedMetersPerSecond(in: firstSection) else {
+            DebugLogger.shared.log("HERE REST: response contained no usable speedLimit field")
             return nil
         }
 
-        // HERE returns speed in m/s. Convert to mph.
+        // HERE returns speed limits in m/s. Convert to mph.
         let mph = Int((speedValue * 2.23694).rounded())
         guard mph > 0, mph <= 90 else {
             // 0 == HERE has no posted limit for the segment; >90 is bogus.
@@ -159,6 +160,52 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             providerName: displayName,
             detail: "HERE REST v8 segment speed \(mph) mph"
         )
+    }
+
+    /// Extract HERE's speed-limit value across the v8 response variants used
+    /// by different Routing API deployments. Canonical responses put the
+    /// value in a section span's `speedLimit` object with `maxSpeed` or
+    /// `baseSpeed` in m/s; older responses used `speed` or an array.
+    private func speedMetersPerSecond(in section: [String: Any]) -> Double? {
+        var containers: [[String: Any]] = []
+        if let spans = section["spans"] as? [[String: Any]] {
+            containers.append(contentsOf: spans)
+        }
+        containers.append(section)
+
+        for container in containers {
+            if let direct = numericValue(container["speedLimit"]), direct > 0 {
+                return direct
+            }
+            if let limit = container["speedLimit"] as? [String: Any],
+               let value = numericSpeed(in: limit) {
+                return value
+            }
+            if let limits = container["speedLimit"] as? [[String: Any]] {
+                for limit in limits {
+                    if let value = numericSpeed(in: limit) { return value }
+                }
+            }
+            // Defensive support for flattened span attributes.
+            if let value = numericSpeed(in: container) { return value }
+        }
+        return nil
+    }
+
+    private func numericSpeed(in object: [String: Any]) -> Double? {
+        for key in ["maxSpeed", "baseSpeed", "speed", "value"] {
+            if let value = numericValue(object[key]), value > 0 { return value }
+        }
+        return nil
+    }
+
+    private func numericValue(_ value: Any?) -> Double? {
+        if let value = value as? Double, value.isFinite { return value }
+        if let value = value as? NSNumber {
+            let doubleValue = value.doubleValue
+            if doubleValue.isFinite { return doubleValue }
+        }
+        return nil
     }
 
     private func recordFailure() {

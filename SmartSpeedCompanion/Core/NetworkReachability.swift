@@ -1,8 +1,8 @@
 // NetworkReachability.swift
 // Lightweight wrapper around NWPathMonitor that publishes whether the device has an
 // active network path. SmartSpeedLimitService uses this to decide whether to
-// attempt the live HERE/ArcGIS/Overpass provider chain. When offline, it returns
-// No Data rather than using the Arizona-only dormant dataset.
+// attempt the active HERE provider. When offline, it returns No Data rather
+// than silently using OSM/ArcGIS or the retired Arizona-only dataset.
 //
 // Why @MainActor? The published `isConnected` is consumed by the @MainActor
 // orchestrator (SmartSpeedLimitService) on every speed-limit fetch. Keeping both

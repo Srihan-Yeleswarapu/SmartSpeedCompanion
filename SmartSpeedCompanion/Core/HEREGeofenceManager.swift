@@ -15,8 +15,9 @@
 // name + direction (fast path) or by spatial nearest-neighbor (fallback).
 //
 // This ensures the user never waits for a speed limit — if the batch cache
-// misses, the live provider chain (HERE REST → ArcGIS → Overpass) serves
-// as an immediate fallback while the batch fetch runs in the background.
+// misses, the active HERE REST provider serves as the only live fallback
+// while the batch fetch runs in the background. OSM/ArcGIS data is never
+// promoted to a driving limit.
 
 import Foundation
 import CoreLocation

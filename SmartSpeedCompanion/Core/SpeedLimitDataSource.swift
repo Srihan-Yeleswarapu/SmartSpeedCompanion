@@ -20,9 +20,11 @@ public enum SpeedLimitDataSource: String, Equatable, Codable, Sendable, CaseIter
     /// accuracy on signed arterials; uses user-supplied HERE Platform creds from
     /// Keychain (HERECredentialStore). 250k requests/month FREE PERMANENTLY.
     case liveHERE = "Live (HERE)"
-    /// Live data from the ArcGIS HPMS FeatureServer (layer 48 — SpeedLimit_2024).
+    /// Legacy ArcGIS value retained only so older persisted state can decode.
+    /// It is not produced by the active driving pipeline.
     case liveArcGIS = "Live (ArcGIS)"
-    /// Live data from the OpenStreetMap Overpass API (queries the OSM `maxspeed` tag).
+    /// Legacy OpenStreetMap value retained only so older persisted state can decode.
+    /// It is not produced by the active driving pipeline.
     case liveOverpass = "Live (Overpass)"
     /// Legacy local-DB source retained for decoding older persisted state.
     /// Retired — the app now uses only live network providers.
