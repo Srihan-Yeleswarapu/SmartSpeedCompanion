@@ -86,10 +86,11 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     private var isOpen = false
     private let dbURL: URL
     private let queue = DispatchQueue(label: "com.speedsense.hereBatchCache", qos: .utility)
-    /// Bump whenever the persisted row interpretation changes. Version 2
-    /// invalidates rows written by the old GeoJSON parser, which swapped HERE's
-    /// `[longitude, latitude]` positions and could associate a valid road name
-    /// with an unusable or misleading coordinate.
+    /// Bump whenever the persisted row interpretation changes. Version 3
+    /// invalidates rows written by the old batch parser, which could smear a
+    /// section-level speed limit across neighboring matched links and return a
+    /// nearby residential limit (for example 25 mph) for the arterial.
+    private static let currentSchemaVersion = 3
 
     /// 30-day TTL for cached entries.
     private let ttlDays: Int = 30
@@ -156,7 +157,10 @@ public final class HERELocalBatchCache: @unchecked Sendable {
             }
             let cleared = exec("DELETE FROM cached_roads") && exec("VACUUM")
             if cleared {
-                UserDefaults.standard.set(2, forKey: "hereBatchCacheSchemaVersion")
+                // The destructive migration has completed successfully; keep
+                // the current version so the rebuilt cache is not wiped again
+                // on the next launch.
+                UserDefaults.standard.set(Self.currentSchemaVersion, forKey: "hereBatchCacheSchemaVersion")
             } else {
                 cacheDisabled = true
                 DebugLogger.shared.log("HERELocalBatchCache: disabling cache after failed legacy-data migration")
@@ -177,7 +181,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     @discardableResult
     private func resetPersistedStoreIfNeeded() -> Bool {
         let schemaKey = "hereBatchCacheSchemaVersion"
-        let currentVersion = 2
+        let currentVersion = Self.currentSchemaVersion
         guard UserDefaults.standard.integer(forKey: schemaKey) != currentVersion else { return true }
 
         // The old cache may contain rows created with the incorrect HERE
@@ -289,17 +293,75 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     ///   - roadName: The road name (e.g., "I-10", "Baseline Rd").
     ///   - bearing: User's bearing in degrees. If non-nil, filters by direction.
     /// - Returns: The closest matching cached road, or nil if not found.
-    public func lookup(roadName: String, bearing: Double? = nil) -> CachedRoad? {
+    public func lookup(roadName: String, bearing: Double? = nil, near coordinate: CLLocationCoordinate2D? = nil) -> CachedRoad? {
         guard isReady else { return nil }
         let dir = directionFromBearing(bearing)
         var result: CachedRoad?
+        let canonicalName = roadName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+            .uppercased()
 
         queue.sync {
             guard let db = self.db else { return }
-            // Try exact direction match first, then any direction
             let sql: String
-            if dir.isEmpty {
-                sql = """
+            if let coordinate {
+                // Never choose the newest row blindly: a batch refresh can
+                // contain multiple segments with the same road name and
+                // different limits. Select the nearest segment first, while
+                // still preferring the driver's direction when available.
+                let lonScale = cos(coordinate.latitude * .pi / 180)
+                if dir.isEmpty {
+                    sql = """
+                        SELECT road_name, direction, speed_limit, lat, lon, source
+                        FROM cached_roads
+                        WHERE road_name = ? COLLATE NOCASE
+                          AND source = 'here' COLLATE NOCASE
+                        ORDER BY ((lat - ?) * (lat - ?) +
+                                  (lon - ?) * (lon - ?) * ?) ASC,
+                                 cached_at DESC
+                        LIMIT 1
+                    """
+                } else {
+                    sql = """
+                        SELECT road_name, direction, speed_limit, lat, lon, source
+                        FROM cached_roads
+                        WHERE road_name = ? COLLATE NOCASE
+                          AND source = 'here' COLLATE NOCASE
+                          AND (direction = ? OR direction = '')
+                        ORDER BY ((lat - ?) * (lat - ?) +
+                                  (lon - ?) * (lon - ?) * ?) ASC,
+                                 CASE WHEN direction = ? THEN 0 ELSE 1 END,
+                                 cached_at DESC
+                        LIMIT 1
+                    """
+                }
+                var stmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                    DebugLogger.shared.log("HERELocalBatchCache: nearby lookup prepare failed: \(errmsg)")
+                    return
+                }
+                sqlite3_bind_text(stmt, 1, (canonicalName as NSString).utf8String, -1, nil)
+                var bindIndex: Int32 = 2
+                if !dir.isEmpty {
+                    sqlite3_bind_text(stmt, bindIndex, (dir as NSString).utf8String, -1, nil)
+                    bindIndex += 1
+                }
+                sqlite3_bind_double(stmt, bindIndex, coordinate.latitude)
+                sqlite3_bind_double(stmt, bindIndex + 1, coordinate.latitude)
+                sqlite3_bind_double(stmt, bindIndex + 2, coordinate.longitude)
+                sqlite3_bind_double(stmt, bindIndex + 3, coordinate.longitude)
+                sqlite3_bind_double(stmt, bindIndex + 4, lonScale * lonScale)
+                if !dir.isEmpty {
+                    sqlite3_bind_text(stmt, bindIndex + 5, (dir as NSString).utf8String, -1, nil)
+                }
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    result = readRow(stmt)
+                }
+                sqlite3_finalize(stmt)
+            } else {
+                let sql = """
                     SELECT road_name, direction, speed_limit, lat, lon, source
                     FROM cached_roads
                     WHERE road_name = ? COLLATE NOCASE
@@ -307,32 +369,17 @@ public final class HERELocalBatchCache: @unchecked Sendable {
                     ORDER BY cached_at DESC
                     LIMIT 1
                 """
-            } else {
-                sql = """
-                    SELECT road_name, direction, speed_limit, lat, lon, source
-                    FROM cached_roads
-                    WHERE road_name = ? COLLATE NOCASE
-                      AND source = 'here' COLLATE NOCASE
-                      AND (direction = ? OR direction = '')
-                    ORDER BY CASE WHEN direction = ? THEN 0 ELSE 1 END, cached_at DESC
-                    LIMIT 1
-                """
+                var stmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                    DebugLogger.shared.log("HERELocalBatchCache: lookup prepare failed: \(errmsg)")
+                    return
+                }
+                sqlite3_bind_text(stmt, 1, (canonicalName as NSString).utf8String, -1, nil)
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    result = readRow(stmt)
+                }
+                sqlite3_finalize(stmt)
             }
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-                DebugLogger.shared.log("HERELocalBatchCache: lookup prepare failed: \(errmsg)")
-                return
-            }
-            sqlite3_bind_text(stmt, 1, (roadName as NSString).utf8String, -1, nil)
-            if !dir.isEmpty {
-                sqlite3_bind_text(stmt, 2, (dir as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 3, (dir as NSString).utf8String, -1, nil)
-            }
-
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                result = readRow(stmt)
-            }
-            sqlite3_finalize(stmt)
         }
 
         return result
@@ -343,8 +390,13 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     /// - Parameters:
     ///   - coordinate: The user's GPS coordinate.
     ///   - radiusMeters: Search radius in meters. Default 50m.
+    /// - bearing: Optional travel bearing used to avoid returning an opposite-direction segment.
     /// - Returns: The nearest cached road within the radius, or nil.
-    public func lookupNearest(to coordinate: CLLocationCoordinate2D, radiusMeters: Double = 50) -> CachedRoad? {
+    public func lookupNearest(
+        to coordinate: CLLocationCoordinate2D,
+        radiusMeters: Double = 50,
+        bearing: Double? = nil
+    ) -> CachedRoad? {
         guard isReady else { return nil }
         var result: CachedRoad?
 
@@ -362,6 +414,10 @@ public final class HERELocalBatchCache: @unchecked Sendable {
 
             // Use the bbox to filter rows, then find the closest within the bbox.
             // The squared-distance ordering is fast with the (lat, lon) indexes.
+            let direction = directionFromBearing(bearing)
+            let directionClause = direction.isEmpty
+                ? ""
+                : " AND (direction = ? OR direction = '')"
             let sql = """
                 SELECT road_name, direction, speed_limit, lat, lon, source,
                        ((lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ?) AS dist2
@@ -369,7 +425,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
                 WHERE source = 'here' COLLATE NOCASE
                   AND lat BETWEEN ? AND ?
                   AND lon BETWEEN ? AND ?
-                  AND (lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ? <= ?
+                  AND (lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ? <= ?\(directionClause)
                 ORDER BY dist2 ASC
                 LIMIT 1
             """
@@ -380,20 +436,26 @@ public final class HERELocalBatchCache: @unchecked Sendable {
 
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-            // Bind: source lat, source lon, lon scale, bbox, and distance check
+            // Bind: SELECT distance (1–5), bbox (6–9), WHERE distance
+            // (10–15), and the optional direction filter (16).
             sqlite3_bind_double(stmt, 1, coordinate.latitude)
             sqlite3_bind_double(stmt, 2, coordinate.latitude)
             sqlite3_bind_double(stmt, 3, coordinate.longitude)
-            sqlite3_bind_double(stmt, 4, bearingScale)
-            sqlite3_bind_double(stmt, 5, minLat)
-            sqlite3_bind_double(stmt, 6, maxLat)
-            sqlite3_bind_double(stmt, 7, minLon)
-            sqlite3_bind_double(stmt, 8, maxLon)
-            sqlite3_bind_double(stmt, 9, coordinate.latitude)
+            sqlite3_bind_double(stmt, 4, coordinate.longitude)
+            sqlite3_bind_double(stmt, 5, bearingScale)
+            sqlite3_bind_double(stmt, 6, minLat)
+            sqlite3_bind_double(stmt, 7, maxLat)
+            sqlite3_bind_double(stmt, 8, minLon)
+            sqlite3_bind_double(stmt, 9, maxLon)
             sqlite3_bind_double(stmt, 10, coordinate.latitude)
-            sqlite3_bind_double(stmt, 11, coordinate.longitude)
-            sqlite3_bind_double(stmt, 12, bearingScale)
-            sqlite3_bind_double(stmt, 13, maxDist2)
+            sqlite3_bind_double(stmt, 11, coordinate.latitude)
+            sqlite3_bind_double(stmt, 12, coordinate.longitude)
+            sqlite3_bind_double(stmt, 13, coordinate.longitude)
+            sqlite3_bind_double(stmt, 14, bearingScale)
+            sqlite3_bind_double(stmt, 15, maxDist2)
+            if !direction.isEmpty {
+                sqlite3_bind_text(stmt, 16, (direction as NSString).utf8String, -1, nil)
+            }
 
             if sqlite3_step(stmt) == SQLITE_ROW {
                 result = readRow(stmt)
@@ -421,7 +483,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
         // rejects legacy rows written by the old HERE GeoJSON parser, which
         // treated [longitude, latitude] as [latitude, longitude].
         if let name = roadName, !name.isEmpty,
-           let cached = lookup(roadName: name, bearing: bearing) {
+           let cached = lookup(roadName: name, bearing: bearing, near: coordinate) {
             let cachedLocation = CLLocation(latitude: cached.latitude, longitude: cached.longitude)
             let requestedLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
             if cachedLocation.distance(from: requestedLocation) <= 75,
@@ -432,7 +494,7 @@ public final class HERELocalBatchCache: @unchecked Sendable {
         }
 
         // Secondary path: spatial fallback
-        if let spatial = lookupNearest(to: coordinate, radiusMeters: 50) {
+        if let spatial = lookupNearest(to: coordinate, radiusMeters: 50, bearing: bearing) {
             // A nearby cached point from a completely different road would be
             // wrong to return (e.g. neighborhood road vs adjacent arterial).
             guard spatial.source.caseInsensitiveCompare("here") == .orderedSame else {
@@ -444,7 +506,14 @@ public final class HERELocalBatchCache: @unchecked Sendable {
                     geocodedName: name,
                     sqliteRouteId: spatial.roadName
                 )
-                guard matchScore >= 0.5 else { return nil }
+                // Spatial proximity alone is not enough at intersections:
+                // the nearest cached point is often a 25 mph neighborhood
+                // street beside the arterial. Require a strong road-name
+                // match before allowing the fallback to become authoritative.
+                guard matchScore >= 0.85 else {
+                    DebugLogger.shared.log("HERELocalBatchCache: rejected weak spatial road match '\(spatial.roadName)' score=\(matchScore)")
+                    return nil
+                }
             }
             return spatial
         }

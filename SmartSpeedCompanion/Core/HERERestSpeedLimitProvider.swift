@@ -123,8 +123,20 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
               let routes = payload["routes"] as? [[String: Any]],
               let firstRoute = routes.first,
               let sections = firstRoute["sections"] as? [[String: Any]],
-              let firstSection = sections.first,
-              let speedValue = speedMetersPerSecond(in: firstSection) else {
+              let firstSection = sections.first else {
+            DebugLogger.shared.log("HERE REST: response contained no usable route section")
+            return nil
+        }
+
+        // Reject a route that HERE snapped away from the requested GPS fix.
+        // Without this check, the first/lowest-offset span can legitimately be
+        // a nearby 25-mph side street even though the driver is on the arterial.
+        guard sectionStartMatchesOrigin(firstSection, origin: coordinate) else {
+            DebugLogger.shared.log("HERE REST: rejected route whose departure is not near the GPS fix")
+            return nil
+        }
+
+        guard let speedValue = speedMetersPerSecond(in: firstSection) else {
             DebugLogger.shared.log("HERE REST: response contained no usable speedLimit field")
             return nil
         }
@@ -146,34 +158,81 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         )
     }
 
+    /// Verify HERE's snapped route starts near the GPS coordinate used for the
+    /// short self-loop. If the response omits departure metadata, retain the
+    /// provider's normal behavior and let the span parser decide.
+    private func sectionStartMatchesOrigin(_ section: [String: Any], origin: CLLocationCoordinate2D) -> Bool {
+        guard let departure = section["departure"] as? [String: Any],
+              let place = departure["place"] as? [String: Any],
+              let location = place["location"] as? [String: Any] else {
+            return true
+        }
+
+        let latitude = numericValue(location["lat"] ?? location["latitude"])
+        let longitude = numericValue(location["lng"] ?? location["lon"] ?? location["longitude"])
+        guard let latitude, let longitude,
+              (-90.0...90.0).contains(latitude),
+              (-180.0...180.0).contains(longitude) else {
+            return false
+        }
+
+        let departureLocation = CLLocation(latitude: latitude, longitude: longitude)
+        let originLocation = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+        return departureLocation.distance(from: originLocation) <= 120
+    }
+
     /// Extract HERE's speed-limit value across the v8 response variants used
     /// by different Routing API deployments. Canonical responses put the
     /// value in a section span's `speedLimit` object with `maxSpeed` or
     /// `baseSpeed` in m/s; older responses used `speed` or an array.
+    ///
+    /// A route can contain more than one span when the short probe crosses an
+    /// intersection. The span with the smallest HERE `offset` is the one at
+    /// the request origin/current road; blindly taking the first dictionary
+    /// entry made an adjacent 25-mph street authoritative.
     private func speedMetersPerSecond(in section: [String: Any]) -> Double? {
-        var containers: [[String: Any]] = []
-        if let spans = section["spans"] as? [[String: Any]] {
-            containers.append(contentsOf: spans)
-        }
-        containers.append(section)
-
-        for container in containers {
-            if let direct = numericValue(container["speedLimit"]), direct > 0 {
-                return direct
+        if let spans = section["spans"] as? [[String: Any]], !spans.isEmpty {
+            let candidates: [(value: Double, offset: Double?, index: Int)] = spans.enumerated().compactMap { index, span in
+                guard let value = speedValue(in: span), value > 0 else { return nil }
+                return (value, numericValue(span["offset"]), index)
             }
-            if let limit = container["speedLimit"] as? [String: Any],
-               let value = numericSpeed(in: limit) {
-                return value
-            }
-            if let limits = container["speedLimit"] as? [[String: Any]] {
-                for limit in limits {
-                    if let value = numericSpeed(in: limit) { return value }
+            if let selected = candidates.sorted(by: { lhs, rhs in
+                switch (lhs.offset, rhs.offset) {
+                case let (left?, right?):
+                    if left != right { return left < right }
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                default:
+                    break
                 }
+                return lhs.index < rhs.index
+            }).first {
+                return selected.value
             }
-            // Defensive support for flattened span attributes.
-            if let value = numericSpeed(in: container) { return value }
         }
-        return nil
+
+        // Defensive support for deployments that put the value directly on
+        // the section rather than returning a spans array.
+        return speedValue(in: section)
+    }
+
+    private func speedValue(in container: [String: Any]) -> Double? {
+        if let direct = numericValue(container["speedLimit"]), direct > 0 {
+            return direct
+        }
+        if let limit = container["speedLimit"] as? [String: Any],
+           let value = numericSpeed(in: limit) {
+            return value
+        }
+        if let limits = container["speedLimit"] as? [[String: Any]] {
+            for limit in limits {
+                if let value = numericSpeed(in: limit) { return value }
+            }
+        }
+        // Defensive support for flattened span attributes.
+        return numericSpeed(in: container)
     }
 
     private func numericSpeed(in object: [String: Any]) -> Double? {

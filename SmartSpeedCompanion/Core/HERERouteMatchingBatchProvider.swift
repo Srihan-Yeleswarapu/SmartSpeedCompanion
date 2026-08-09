@@ -219,21 +219,21 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
         var roads: [CachedRoad] = []
 
         for link in matchedLinks {
-            guard let roadName = link["roadName"] as? String,
+            guard let roadName = roadName(from: link),
                   !roadName.isEmpty else { continue }
 
             // ── Extract speed limit (m/s → mph) ─────────────────────
-            var speedMs: Double?
-            if let sl = link["speedLimits"] as? [String: Any] {
-                speedMs = sl["fromRefSpeedLimit"] as? Double
-                    ?? sl["toRefSpeedLimit"] as? Double
-                    ?? sl["speedLimit"] as? Double
-            }
-            // Fallback: section-level speed limits
-            if speedMs == nil, let sl = section["speedLimits"] as? [String: Any] {
-                speedMs = sl["fromRefSpeedLimit"] as? Double
-                    ?? sl["toRefSpeedLimit"] as? Double
-            }
+            // Use only the link's forward/reference-direction limit. The
+            // reverse (`toRef`) value belongs to the opposite travel direction
+            // and cannot be used unless the trace direction is explicitly
+            // matched to it. Returning no data is safer than caching the
+            // opposite side of a divided road or a different directional zone.
+            let speedMs = speedLimitMetersPerSecond(in: link)
+            // Do not fall back to a section-level value for a link without
+            // its own speed-limit attributes. A section may contain several
+            // matched links at an intersection; smearing one link's 25 mph
+            // value across the entire section is how an arterial can inherit
+            // a nearby residential limit.
             guard let spd = speedMs, spd > 0 else { continue }
             let mph = Int((spd * 2.23694).rounded())
             guard mph > 0, mph <= 90 else { continue }
@@ -242,26 +242,15 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
             var geometryCoords: [CLLocationCoordinate2D] = []
 
             // Try "geometry.coordinates" (GeoJSON format)
-            if let geometry = link["geometry"] as? [String: Any],
-               let coords = geometry["coordinates"] as? [[Double]] {
-                for pair in coords where pair.count >= 2 {
-                    // HERE returns GeoJSON positions in [longitude, latitude]
-                    // order. Reversing these values puts batch-cache points
-                    // on the real road instead of thousands of kilometres away.
-                    geometryCoords.append(CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0]))
-                }
+            if let geometry = link["geometry"] as? [String: Any] {
+                geometryCoords = coordinates(from: geometry["coordinates"])
             }
 
-            // Fallback: try section-level geometry if link doesn't have its own
-            if geometryCoords.isEmpty,
-               let geometry = section["geometry"] as? [String: Any],
-               let coords = geometry["coordinates"] as? [[Double]] {
-                for pair in coords where pair.count >= 2 {
-                    geometryCoords.append(CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0]))
-                }
-            }
-
-            // No geometry available — use a coarse approach: skip silently
+            // Never reuse section geometry for a link. That geometry may span
+            // multiple links and would place every link at the same midpoint,
+            // allowing a nearby 25 mph link to masquerade as the current road.
+            //
+            // No link geometry available — skip silently
             // (the live provider chain will handle single-point lookups).
             guard !geometryCoords.isEmpty else { continue }
 
@@ -288,6 +277,90 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
         }
 
         return roads
+    }
+
+    private func roadName(from link: [String: Any]) -> String? {
+        if let direct = link["roadName"] as? String, !direct.isEmpty {
+            return direct
+        }
+        let attributes = link["attributes"] as? [String: Any] ?? [:]
+        if let direct = attributes["roadName"] as? String, !direct.isEmpty {
+            return direct
+        }
+        for container in [link, attributes] {
+            if let names = container["names"] as? [[String: Any]] {
+                if let value = names.compactMap({ $0["value"] as? String ?? $0["name"] as? String }).first(where: { !$0.isEmpty }) {
+                    return value
+                }
+            }
+            if let names = container["names"] as? [String],
+               let value = names.first(where: { !$0.isEmpty }) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    /// Extract the forward/reference-direction speed limit from one matched
+    /// link. JSONSerialization may bridge integer and floating-point values to
+    /// NSNumber, so do not rely on `as? Double` for this boundary.
+    private func speedLimitMetersPerSecond(in link: [String: Any]) -> Double? {
+        // HERE has returned this attribute both directly on a matched link and
+        // inside an `attributes`/`speedLimits` object. Search those containers
+        // recursively, but only accept the forward/reference-direction field.
+        // Never substitute TO_REF_SPEED_LIMIT: it describes the opposite travel
+        // direction and the trace does not prove that direction here.
+        return forwardSpeedLimit(in: link)
+    }
+
+    private func forwardSpeedLimit(in object: [String: Any], depth: Int = 0) -> Double? {
+        guard depth < 4 else { return nil }
+        for (key, value) in object {
+            let normalizedKey = key
+                .uppercased()
+                .replacingOccurrences(of: "_", with: "")
+                .replacingOccurrences(of: "-", with: "")
+            if normalizedKey.contains("FROMREFSPEEDLIMIT"),
+               let number = numericValue(value), number > 0 {
+                return number
+            }
+            if let nested = value as? [String: Any],
+               let number = forwardSpeedLimit(in: nested, depth: depth + 1) {
+                return number
+            }
+        }
+        return nil
+    }
+
+    private func numericValue(_ value: Any?) -> Double? {
+        guard let value else { return nil }
+        if let number = value as? NSNumber {
+            let result = number.doubleValue
+            return result.isFinite ? result : nil
+        }
+        if let number = value as? Double, number.isFinite { return number }
+        if let number = value as? Int { return Double(number) }
+        return nil
+    }
+
+    private func coordinates(from value: Any?) -> [CLLocationCoordinate2D] {
+        guard let pairs = value as? [[Any]] else {
+            if let pairs = value as? [[Double]] {
+                return pairs.compactMap { pair in
+                    guard pair.count >= 2 else { return nil }
+                    return CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0])
+                }
+            }
+            return []
+        }
+        return pairs.compactMap { pair in
+            guard pair.count >= 2,
+                  let longitude = numericValue(pair[0]),
+                  let latitude = numericValue(pair[1]),
+                  longitude.isFinite, latitude.isFinite else { return nil }
+            // HERE returns GeoJSON positions in [longitude, latitude] order.
+            return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        }
     }
 
     /// Compute the cardinal direction from an array of geometry coordinates.
