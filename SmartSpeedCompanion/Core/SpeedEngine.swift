@@ -142,6 +142,11 @@ public final class SpeedEngine: ObservableObject {
             // location is being resolved. This immediately stops an old
             // overspeed alert instead of allowing it to fire during the
             // network/provider wait.
+            // SpeedEngine is the single source of truth for the limit shown
+            // by the HUD and for alert eligibility. Clear the old value before
+            // the async HERE lookup so a stale limit can never remain paired
+            // with a new location while the UI already shows No Data.
+            self.limit = 0
             self.isLimitResolved = false
             self.status = .safe
 
@@ -202,6 +207,11 @@ public final class SpeedEngine: ObservableObject {
     /// DriveViewModel uses this when it asks SmartSpeedLimitService outside
     /// the normal GPS-resolution task.
     public func beginLimitResolution() {
+        // Clear the displayed limit immediately. Manual and heading-triggered
+        // refreshes must have the same unknown-limit semantics as GPS refreshes:
+        // neutral HUD, no red state, and no alert audio/haptics while HERE is
+        // resolving the new road.
+        limit = 0
         isLimitResolved = false
         status = .safe
     }

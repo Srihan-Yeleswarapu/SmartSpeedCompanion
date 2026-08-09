@@ -849,7 +849,10 @@ public final class DriveViewModel: NSObject, ObservableObject {
 
         // 2. STATE BINDING: Connect logic-layer publishers to UI-layer @Published properties
         spdEngine.$speed.assign(to: &$speed)
-        SmartSpeedLimitService.shared.$currentLimit.assign(to: &$limit)
+        // SpeedEngine owns both the displayed limit and its status. Binding
+        // the limit from SmartSpeedLimitService separately allowed a stale
+        // status and a `--` limit to appear together during an async miss.
+        spdEngine.$limit.assign(to: &$limit)
         spdEngine.$status.assign(to: &$status)
         alrtEngine.$audioAlertActive.assign(to: &$alertActive)
         rec.$isRecording.assign(to: &$isRecording)
