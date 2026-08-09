@@ -149,6 +149,7 @@ public final class SpeedEngine: ObservableObject {
             self.limit = 0
             self.isLimitResolved = false
             self.status = .safe
+            speedLimitService.beginResolution()
 
             // ── Initial HERE batch cache setup ───────────────────
             // Fire once on the first valid GPS tick to populate the
@@ -214,6 +215,7 @@ public final class SpeedEngine: ObservableObject {
         limit = 0
         isLimitResolved = false
         status = .safe
+        speedLimitService.beginResolution()
     }
 
     /// Applies a limit returned by a direct lookup (manual refresh or a

@@ -1012,10 +1012,15 @@ fileprivate struct LimitSignView: View {
         switch source {
         case "Batch (HERE)":    return ("HERE", Color(hex: "#34D38A"))      // warm HERE cache
         case "Live (HERE)":     return ("HERE", Color(hex: "#00D4FF"))      // live HERE
-        // ArcGIS/Overpass values are retained only for decoding older state.
-        // They are not active sources and must never be shown as current data.
-        case "Live (ArcGIS)", "Live (Overpass)", "DB", "DB (Recovered)":
-            return ("--", Color(hex: "#8888AA"))
+        // Keep legacy-provider names truthful if an older persisted state or
+        // diagnostic path ever reaches the HUD. Hiding them as "--" made it
+        // impossible to explain why a non-HERE answer appeared under the sign.
+        case "Live (Overpass)", "OSM", "OpenStreetMap":
+            return ("OSM", Color(hex: "#74B9FF"))
+        case "Live (ArcGIS)", "ArcGIS":
+            return ("ArcGIS", Color(hex: "#A78BFA"))
+        case "DB", "DB (Recovered)":
+            return ("Local DB", Color(hex: "#A0A0B8"))
         default:                return ("--", Color(hex: "#8888AA"))         // No Data / unknown
         }
     }

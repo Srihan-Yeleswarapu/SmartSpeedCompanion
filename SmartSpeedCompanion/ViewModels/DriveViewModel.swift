@@ -857,10 +857,22 @@ public final class DriveViewModel: NSObject, ObservableObject {
         alrtEngine.$audioAlertActive.assign(to: &$alertActive)
         rec.$isRecording.assign(to: &$isRecording)
         
-        // SmartSpeedLimitService emits a typed SpeedLimitDataSource enum now; the UI still reads
-        // a String here via .rawValue so we map at the binding boundary.
-        SmartSpeedLimitService.shared.$dataSource
-            .map { $0.rawValue }
+        // Keep the source label coupled to the same published limit that is
+        // shown by the HUD. During a refresh SpeedEngine clears its limit to 0
+        // before the HERE request completes; without this guard, the old source
+        // (including a legacy OSM label from an older build) could remain under
+        // a new/unknown sign and make the provenance look wrong.
+        spdEngine.$limit
+            .combineLatest(SmartSpeedLimitService.shared.$dataSource)
+            .map { displayedLimit, source in
+                // Bind provenance to the exact limit published by SpeedEngine,
+                // which is the number rendered in the HUD. A service update can
+                // finish between two engine publishes; using the engine value
+                // prevents a stale provider name from appearing under a fresh
+                // or unknown sign.
+                guard displayedLimit > 0 else { return SpeedLimitDataSource.noData.rawValue }
+                return source.rawValue
+            }
             .receive(on: RunLoop.main)
             .assign(to: &$speedLimitSource)
         // SPEED CAMERA FEED: wire the SpeedCameraService shared publisher

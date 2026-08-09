@@ -177,6 +177,15 @@ public class SmartSpeedLimitService: ObservableObject {
         }
     }
 
+    /// Clear the service's published answer before a new GPS/manual resolution.
+    /// SpeedEngine clears its own limit at the same boundary; resetting both
+    /// properties keeps the HUD's number and provenance chip atomic instead of
+    /// leaving an old provider label under a new/unknown answer.
+    public func beginResolution() {
+        currentLimit = 0
+        dataSource = .noData
+    }
+
     /// Pick the best speed limit at the user's current coord. Returns the new
     /// limit value and updates the @Published `currentLimit` + `dataSource`
     /// properties.
@@ -190,6 +199,10 @@ public class SmartSpeedLimitService: ObservableObject {
         roadName: String? = nil,
         forceRefresh: Bool = false
     ) async -> Int {
+        // Keep the service's number and provenance synchronized with the
+        // SpeedEngine refresh boundary. This prevents an old OSM/legacy label
+        // from surviving underneath the cleared sign while HERE resolves.
+        beginResolution()
         latestUpdateGeneration &+= 1
         let generation = latestUpdateGeneration
         let outcome = await resolveCandidate(
@@ -398,6 +411,14 @@ public class SmartSpeedLimitService: ObservableObject {
             roadKey: outcome.roadKey, roadName: roadName,
             committedAt: Date()
         )
+        // The active service is HERE-only. Keep this invariant at the final
+        // publication boundary as well as in provider resolution, so stale
+        // persisted/cache data can never relabel a positive HUD answer as OSM.
+        guard outcome.source == .liveHERE || outcome.source == .batchCache else {
+            dataSource = .noData
+            currentLimit = 0
+            return 0
+        }
 
         guard let prior = lastStable else {
             // First-ever fetch -- commit unconditionally so we have a baseline.
@@ -485,6 +506,12 @@ public class SmartSpeedLimitService: ObservableObject {
 
         // Hold prior -- returns the previously committed limit to the caller
         // without publishing the suspect candidate or poisoning the cache.
+        // `beginResolution()` cleared the published answer before this
+        // candidate arrived. Restore the complete prior presentation when the
+        // continuity guard holds it; restoring only the number would leave a
+        // positive limit paired with `No Data` (or an old OSM label) in the HUD.
+        self.dataSource = prior.source
+        self.currentLimit = prior.limit
         DebugLogger.shared.log("[ContinuityGuard] HOLD prior=\(prior.limit) holding back suspect=\(snapshot.limit) on \(snapshot.roadKey.isEmpty ? "(no roadKey)" : snapshot.roadKey) (count=\(consecutiveSuspectCount)/\(Self.SUSPICIOUS_FETCH_HOLD))")
         return prior.limit
     }
@@ -501,8 +528,11 @@ public class SmartSpeedLimitService: ObservableObject {
             self.lastValidLimit = candidate.limit
             self.consecutiveMissCount = 0
         }
-        self.currentLimit = candidate.limit
+        // Publish provenance first, then the number. The DriveViewModel source
+        // binding combines both streams and will only show a provider label
+        // once the corresponding positive limit is visible.
         self.dataSource = candidate.source
+        self.currentLimit = candidate.limit
 
         let resp = SpeedLimitResponse(
             speedLimitMph: candidate.limit,
@@ -561,15 +591,15 @@ public class SmartSpeedLimitService: ObservableObject {
                 // prior answer only as internal continuity state; the HUD and
                 // AlertEngine must see "No Data" immediately rather than
                 // beeping against a stale/unknown limit.
-                self.currentLimit = 0
                 self.dataSource = .noData
+                self.currentLimit = 0
                 return (0, missCount)
             } else if roadChanged {
                 // Road changed AND we've exceeded the road-change threshold.
                 // Drop to "--" immediately instead of holding the stale
                 // limit from the previous road.
-                self.currentLimit = 0
                 self.dataSource = .noData
+                self.currentLimit = 0
                 return (0, 0)
             }
         }
@@ -583,8 +613,8 @@ public class SmartSpeedLimitService: ObservableObject {
             await cache.clear(rejectingRevisionsThrough: clearThroughRevision)
             guard generation == latestUpdateGeneration else { return (currentLimit, consecutiveMissCount) }
             lastValidLimit = 0
-            currentLimit = 0
             dataSource = .noData
+            currentLimit = 0
             consecutiveMissCount = 0
             return (0, 0)
         }
