@@ -48,11 +48,13 @@ public struct OfflineRegionsListView: View {
                     Section(header: Text("SPEED LIMIT ZONES")
                         .font(DesignSystem.labelFont)
                         .foregroundColor(DesignSystem.cyan)) {
-                        ForEach(Array(driveViewModel.savedLimitsZones.enumerated()), id: \.element.id) { index, zone in
+                        ForEach(driveViewModel.savedLimitsZones) { zone in
                             HStack(spacing: 14) {
-                                Image(systemName: zone.isPinned ? "pin.fill" : "speedometer")
+                                let zoneIcon = zone.isPinned ? "pin.fill" : "speedometer"
+                                let zoneTint = zone.isPinned ? DesignSystem.amber : DesignSystem.cyan
+                                Image(systemName: zoneIcon)
                                     .font(.system(size: 16))
-                                    .foregroundColor(zone.isPinned ? DesignSystem.amber : DesignSystem.cyan)
+                                    .foregroundColor(zoneTint)
                                     .frame(width: 28)
 
                                 VStack(alignment: .leading, spacing: 2) {
