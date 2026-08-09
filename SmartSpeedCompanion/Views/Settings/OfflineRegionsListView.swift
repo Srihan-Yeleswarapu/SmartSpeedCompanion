@@ -49,9 +49,11 @@ public struct OfflineRegionsListView: View {
                         .font(DesignSystem.labelFont)
                         .foregroundColor(DesignSystem.cyan)) {
                         ForEach(driveViewModel.savedLimitsZones) { zone in
+                            let zoneIcon = zone.isPinned ? "pin.fill" : "speedometer"
+                            let zoneTint = zone.isPinned ? DesignSystem.amber : DesignSystem.cyan
+                            let zoneActionTitle = zone.isPinned ? "Unpin" : "Pin"
+                            let zoneActionIcon = zone.isPinned ? "pin.slash" : "pin"
                             HStack(spacing: 14) {
-                                let zoneIcon = zone.isPinned ? "pin.fill" : "speedometer"
-                                let zoneTint = zone.isPinned ? DesignSystem.amber : DesignSystem.cyan
                                 Image(systemName: zoneIcon)
                                     .font(.system(size: 16))
                                     .foregroundColor(zoneTint)
@@ -89,7 +91,7 @@ public struct OfflineRegionsListView: View {
                                 Button {
                                     driveViewModel.toggleLimitsZonePin(zone)
                                 } label: {
-                                    Label(zone.isPinned ? "Unpin" : "Pin", systemImage: zone.isPinned ? "pin.slash" : "pin")
+                                    Label(zoneActionTitle, systemImage: zoneActionIcon)
                                 }
                                 .tint(DesignSystem.amber)
                             }

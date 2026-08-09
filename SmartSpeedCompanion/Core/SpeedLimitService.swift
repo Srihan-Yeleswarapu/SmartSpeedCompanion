@@ -275,20 +275,22 @@ public class SmartSpeedLimitService: ObservableObject {
         //    can override a wrong batch-cached limit.
         if !forceRefresh,
            let roadName,
-           !roadName.isEmpty,
-           let cached = await batchCache.lookup(
+           !roadName.isEmpty {
+            let cached = batchCache.lookup(
                 coordinate: coordinate,
                 roadName: roadName,
                 bearing: heading
-           ), cached.source.caseInsensitiveCompare("here") == .orderedSame {
-            return Candidate(
-                limit: cached.speedLimitMph,
-                source: .batchCache,
-                roadKey: cached.roadName + (cached.direction.isEmpty ? "" : " \(cached.direction)"),
-                providerName: "HERE Batch",
-                detail: "Batch cache on \(roadName)",
-                isMiss: false
             )
+            if let cached, cached.source.caseInsensitiveCompare("here") == .orderedSame {
+                return Candidate(
+                    limit: cached.speedLimitMph,
+                    source: .batchCache,
+                    roadKey: cached.roadName + (cached.direction.isEmpty ? "" : " \(cached.direction)"),
+                    providerName: "HERE Batch",
+                    detail: "Batch cache on \(roadName)",
+                    isMiss: false
+                )
+            }
         }
 
         // 3. HERE REST (only when online). The geofence manager
