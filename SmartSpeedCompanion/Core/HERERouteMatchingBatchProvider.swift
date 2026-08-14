@@ -8,9 +8,17 @@
 // ─────────
 //   POST https://routematching.hereapi.com/v8/match/routelinks
 //     ?apiKey={key}
+//     &filetype=CSV
 //     &routeMatch=1
 //     &mode=fastest;car
-//     &attributes=SPEED_LIMITS_FCn(FROM_REF_SPEED_LIMIT)
+//     &attributes=SPEED_LIMITS_FCn(FROM_REF_SPEED_LIMIT),ROAD_NAME_FCn(*)
+//
+// Route Matching returns a `RouteLinks` array. Each link carries its shape
+// as a whitespace-separated latitude/longitude sequence and its requested
+// layer attributes under `attributes`.
+//
+// Route Matching returns FROM_REF_SPEED_LIMIT in KPH. It is not the m/s
+// unit used by the Routing API span response.
 //
 // HOW CACHING WORKS
 // ──────────────────
@@ -87,15 +95,22 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
         var components = URLComponents(string: "https://routematching.hereapi.com/v8/match/routelinks")
         components?.queryItems = [
             URLQueryItem(name: "apiKey", value: creds.accessKeyId),
+            // The body is a CSV trace. Without filetype=CSV the v8 endpoint
+            // may accept the request but return no matched route links.
+            URLQueryItem(name: "filetype", value: "CSV"),
             URLQueryItem(name: "routeMatch", value: "1"),
             URLQueryItem(name: "mode", value: "fastest;car"),
-            URLQueryItem(name: "attributes", value: "SPEED_LIMITS_FCn(FROM_REF_SPEED_LIMIT)"),
+            // Request both the forward speed limit and road name. RouteLinks
+            // does not include a usable display road name unless ROAD_NAME_FCn
+            // is explicitly requested.
+            URLQueryItem(name: "attributes", value: "SPEED_LIMITS_FCn(FROM_REF_SPEED_LIMIT),ROAD_NAME_FCn(*)"),
         ]
         guard let url = components?.url else { return 0 }
 
         var request = URLRequest(url: url, timeoutInterval: 15.0)
         request.httpMethod = "POST"
         request.setValue("text/csv", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Speedio/2.2", forHTTPHeaderField: "User-Agent")
         request.httpBody = csvBody.data(using: .utf8)
 
@@ -171,20 +186,21 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
     /// Parse the HERE Route Matching API response and produce an array of
     /// CachedRoad values for each matched link.
     ///
-    /// Expected response structure:
+    /// Expected Route Matching response structure:
     /// {
-    ///   "routes": [{
-    ///     "sections": [{
-    ///       "matchedLinks": [{
-    ///         "linkId": "12345",
-    ///         "roadName": "I-10",
-    ///         "functionalClass": 1,
-    ///         "speedLimits": { "fromRefSpeedLimit": 29.0576 },
-    ///         "geometry": { "coordinates": [[lat, lon], [lat, lon], ...] }
-    ///       }]
-    ///     }]
+    ///   "RouteLinks": [{
+    ///     "linkId": 12345,
+    ///     "shape": "33.4 -111.9 33.401 -111.901",
+    ///     "attributes": {
+    ///       "SPEED_LIMITS_FCn": [{ "FROM_REF_SPEED_LIMIT": "65" }],
+    ///       "ROAD_NAME_FCn": [{ "NAMES": "Main St" }]
+    ///     }
     ///   }]
     /// }
+    ///
+    /// A defensive parser for the older routes/sections/matchedLinks shape is
+    /// retained below so a backend response-format transition cannot erase all
+    /// cache coverage at once.
     private func parseResponseToCachedRoads(data: Data) throws -> [CachedRoad] {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return []
@@ -195,16 +211,39 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
         // to avoid inserting duplicate rows for the same road segment.
         var seen: Set<String> = []
 
-        guard let routes = json["routes"] as? [[String: Any]] else { return [] }
+        // This is the actual Route Matching v8 response shape. The previous
+        // parser only looked for Routing API's routes/sections shape, so every
+        // batch response was parsed as zero roads and the local HERE cache
+        // stayed empty.
+        if let routeLinks = json["RouteLinks"] as? [[String: Any]] {
+            roads.append(contentsOf: parseRouteLinks(routeLinks, seen: &seen))
+        }
 
-        for route in routes {
-            guard let sections = route["sections"] as? [[String: Any]] else { continue }
-            for section in sections {
-                let sectionRoads = parseSectionLinks(section, seen: &seen)
-                roads.append(contentsOf: sectionRoads)
+        // Defensive compatibility with an older routes/sections response.
+        if let routes = json["routes"] as? [[String: Any]] {
+            for route in routes {
+                guard let sections = route["sections"] as? [[String: Any]] else { continue }
+                for section in sections {
+                    roads.append(contentsOf: parseSectionLinks(section, seen: &seen))
+                }
             }
         }
 
+        return roads
+    }
+
+    /// Extract CachedRoad values from a RouteLinks array.
+    private func parseRouteLinks(
+        _ links: [[String: Any]],
+        seen: inout Set<String>
+    ) -> [CachedRoad] {
+        var roads: [CachedRoad] = []
+        for link in links {
+            guard let road = parseCachedRoad(from: link) else { continue }
+            let dedupKey = "\(road.roadName)|\(road.direction)|\(road.speedLimitMph)|\(String(format: "%.4f,%.4f", road.latitude, road.longitude))"
+            guard seen.insert(dedupKey).inserted else { continue }
+            roads.append(road)
+        }
         return roads
     }
 
@@ -215,96 +254,142 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
     ) -> [CachedRoad] {
         guard let matchedLinks = section["matchedLinks"] as? [[String: Any]],
               !matchedLinks.isEmpty else { return [] }
+        return parseRouteLinks(matchedLinks, seen: &seen)
+    }
 
-        var roads: [CachedRoad] = []
+    private func parseCachedRoad(from link: [String: Any]) -> CachedRoad? {
+        guard let roadName = roadName(from: link),
+              !roadName.isEmpty,
+              let speedKph = speedLimitKilometersPerHour(in: link),
+              speedKph > 0 else { return nil }
 
-        for link in matchedLinks {
-            guard let roadName = roadName(from: link),
-                  !roadName.isEmpty else { continue }
+        // Route Matching's SPEED_LIMITS_FCn layer reports
+        // FROM_REF_SPEED_LIMIT in KPH. The live Routing API uses m/s,
+        // but applying that conversion here turns a normal 50 KPH value
+        // into an impossible 112 MPH value that is then rejected.
+        let mph = Int((speedKph * 0.621371).rounded())
+        guard mph > 0, mph <= 90 else { return nil }
 
-            // ── Extract speed limit (m/s → mph) ─────────────────────
-            // Use only the link's forward/reference-direction limit. The
-            // reverse (`toRef`) value belongs to the opposite travel direction
-            // and cannot be used unless the trace direction is explicitly
-            // matched to it. Returning no data is safer than caching the
-            // opposite side of a divided road or a different directional zone.
-            let speedMs = speedLimitMetersPerSecond(in: link)
-            // Do not fall back to a section-level value for a link without
-            // its own speed-limit attributes. A section may contain several
-            // matched links at an intersection; smearing one link's 25 mph
-            // value across the entire section is how an arterial can inherit
-            // a nearby residential limit.
-            guard let spd = speedMs, spd > 0 else { continue }
-            let mph = Int((spd * 2.23694).rounded())
-            guard mph > 0, mph <= 90 else { continue }
+        // RouteLinks uses a whitespace-separated "lat lon" shape. The
+        // defensive GeoJSON path keeps compatibility with the older parser
+        // shape used by some proxy deployments.
+        let geometryCoords = geometryCoordinates(from: link)
+        guard !geometryCoords.isEmpty else { return nil }
 
-            // ── Extract geometry and compute midpoint + direction ────
-            var geometryCoords: [CLLocationCoordinate2D] = []
+        let direction = computeDirection(from: geometryCoords)
+        let midCoord = geometryCoords[geometryCoords.count / 2]
+        return CachedRoad(
+            roadName: roadName,
+            direction: direction,
+            speedLimitMph: mph,
+            latitude: midCoord.latitude,
+            longitude: midCoord.longitude,
+            source: "here"
+        )
+    }
 
-            // Try "geometry.coordinates" (GeoJSON format)
-            if let geometry = link["geometry"] as? [String: Any] {
-                geometryCoords = coordinates(from: geometry["coordinates"])
-            }
-
-            // Never reuse section geometry for a link. That geometry may span
-            // multiple links and would place every link at the same midpoint,
-            // allowing a nearby 25 mph link to masquerade as the current road.
-            //
-            // No link geometry available — skip silently
-            // (the live provider chain will handle single-point lookups).
-            guard !geometryCoords.isEmpty else { continue }
-
-            // ── Compute direction from geometry bearing ──────────────
-            let direction = computeDirection(from: geometryCoords)
-
-            // ── Store midpoint coordinate ────────────────────────────
-            let midIndex = geometryCoords.count / 2
-            let midCoord = geometryCoords[midIndex]
-
-            // ── Dedup: skip if we already have this (name, dir, mph, coord) ──
-            let dedupKey = "\(roadName)|\(direction)|\(mph)|\(String(format: "%.4f,%.4f", midCoord.latitude, midCoord.longitude))"
-            guard seen.insert(dedupKey).inserted else { continue }
-
-            let road = CachedRoad(
-                roadName: roadName,
-                direction: direction,
-                speedLimitMph: mph,
-                latitude: midCoord.latitude,
-                longitude: midCoord.longitude,
-                source: "here"
-            )
-            roads.append(road)
+    private func geometryCoordinates(from link: [String: Any]) -> [CLLocationCoordinate2D] {
+        if let geometry = link["geometry"] as? [String: Any] {
+            let coords = coordinates(from: geometry["coordinates"])
+            if !coords.isEmpty { return coords }
         }
+        let coords = coordinates(from: link["coordinates"])
+        if !coords.isEmpty { return coords }
+        if let shape = link["shape"] as? String {
+            return coordinates(fromRouteLinkShape: shape)
+        }
+        return []
+    }
 
-        return roads
+    private func coordinates(fromRouteLinkShape shape: String) -> [CLLocationCoordinate2D] {
+        let values = shape
+            .replacingOccurrences(of: ",", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+            .compactMap { Double($0) }
+        guard values.count >= 4 else { return [] }
+
+        var result: [CLLocationCoordinate2D] = []
+        for index in stride(from: 0, through: values.count - 2, by: 2) {
+            let latitude = values[index]
+            let longitude = values[index + 1]
+            guard (-90.0...90.0).contains(latitude),
+                  (-180.0...180.0).contains(longitude) else { return [] }
+            result.append(CLLocationCoordinate2D(latitude: latitude, longitude: longitude))
+        }
+        return result
     }
 
     private func roadName(from link: [String: Any]) -> String? {
-        if let direct = link["roadName"] as? String, !direct.isEmpty {
-            return direct
+        for key in ["roadName", "road_name", "name", "names"] {
+            if let name = textValue(link[key]) {
+                return name
+            }
         }
+
         let attributes = link["attributes"] as? [String: Any] ?? [:]
-        if let direct = attributes["roadName"] as? String, !direct.isEmpty {
-            return direct
+        for key in ["roadName", "road_name", "name", "names"] {
+            if let name = textValue(attributes[key]) {
+                return name
+            }
         }
-        for container in [link, attributes] {
-            if let names = container["names"] as? [[String: Any]] {
-                if let value = names.compactMap({ $0["value"] as? String ?? $0["name"] as? String }).first(where: { !$0.isEmpty }) {
-                    return value
+
+        // Route Matching returns requested map layers with names such as
+        // ROAD_NAME_FCn. The layer value is normally an array of dictionaries
+        // containing NAMES, but accepting the other common scalar/dictionary
+        // shapes makes the cache resilient to HERE schema variants.
+        for (key, value) in attributes {
+            let normalizedKey = key
+                .uppercased()
+                .replacingOccurrences(of: "_", with: "")
+                .replacingOccurrences(of: "-", with: "")
+            if normalizedKey.contains("ROADNAME"),
+               let name = textValue(value) {
+                return name
+            }
+        }
+        return nil
+    }
+
+    private func textValue(_ value: Any?, depth: Int = 0) -> String? {
+        guard depth < 5 else { return nil }
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let object = value as? [String: Any] {
+            // Prefer human-readable name fields over metadata such as language
+            // codes or link identifiers.
+            for key in ["NAMES", "NAME", "ROAD_NAME", "roadName", "name", "value", "VALUE"] {
+                if let result = textValue(object[key], depth: depth + 1) {
+                    return result
                 }
             }
-            if let names = container["names"] as? [String],
-               let value = names.first(where: { !$0.isEmpty }) {
-                return value
+            for child in object.values {
+                if let result = textValue(child, depth: depth + 1) {
+                    return result
+                }
+            }
+        }
+        if let objects = value as? [[String: Any]] {
+            for object in objects {
+                if let result = textValue(object, depth: depth + 1) {
+                    return result
+                }
+            }
+        }
+        if let values = value as? [Any] {
+            for child in values {
+                if let result = textValue(child, depth: depth + 1) {
+                    return result
+                }
             }
         }
         return nil
     }
 
     /// Extract the forward/reference-direction speed limit from one matched
-    /// link. JSONSerialization may bridge integer and floating-point values to
-    /// NSNumber, so do not rely on `as? Double` for this boundary.
-    private func speedLimitMetersPerSecond(in link: [String: Any]) -> Double? {
+    /// link. Route Matching's SPEED_LIMITS_FCn values are KPH.
+    private func speedLimitKilometersPerHour(in link: [String: Any]) -> Double? {
         // HERE has returned this attribute both directly on a matched link and
         // inside an `attributes`/`speedLimits` object. Search those containers
         // recursively, but only accept the forward/reference-direction field.
@@ -328,6 +413,13 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
                let number = forwardSpeedLimit(in: nested, depth: depth + 1) {
                 return number
             }
+            if let nested = value as? [[String: Any]] {
+                for item in nested {
+                    if let number = forwardSpeedLimit(in: item, depth: depth + 1) {
+                        return number
+                    }
+                }
+            }
         }
         return nil
     }
@@ -340,6 +432,13 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
         }
         if let number = value as? Double, number.isFinite { return number }
         if let number = value as? Int { return Double(number) }
+        // Route Matching has historically encoded layer attributes such as
+        // FROM_REF_SPEED_LIMIT as JSON strings (for example "50").
+        if let string = value as? String,
+           let number = Double(string.trimmingCharacters(in: .whitespacesAndNewlines)),
+           number.isFinite {
+            return number
+        }
         return nil
     }
 

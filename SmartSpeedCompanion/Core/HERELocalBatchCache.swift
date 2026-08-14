@@ -86,11 +86,12 @@ public final class HERELocalBatchCache: @unchecked Sendable {
     private var isOpen = false
     private let dbURL: URL
     private let queue = DispatchQueue(label: "com.speedsense.hereBatchCache", qos: .utility)
-    /// Bump whenever the persisted row interpretation changes. Version 3
-    /// invalidates rows written by the old batch parser, which could smear a
-    /// section-level speed limit across neighboring matched links and return a
-    /// nearby residential limit (for example 25 mph) for the arterial.
-    private static let currentSchemaVersion = 3
+    /// Bump whenever the persisted row interpretation changes. Version 4
+    /// invalidates rows written by the old batch parser, which treated the
+    /// Route Matching KPH attribute as m/s and expected the wrong response
+    /// shape. Keeping those rows would either discard valid limits or serve
+    /// a mis-scaled value after this parser is corrected.
+    private static let currentSchemaVersion = 4
 
     /// 30-day TTL for cached entries.
     private let ttlDays: Int = 30

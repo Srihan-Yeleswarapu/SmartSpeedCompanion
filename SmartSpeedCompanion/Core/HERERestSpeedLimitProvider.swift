@@ -9,10 +9,18 @@
 //                                         // HERE resolves the actual segment
 //                                         // rather than straddle a junction).
 //     &routingMode=fast
-//     &return=summary,speedLimit
+//     &return=summary
+//     &units=imperial
+//     &spans=names,maxSpeed
 //     &apiKey={access_key_id}
 //
-// Response: `routes[].sections[].speedLimit` object with `speed` field in m/s.
+// Speed limits are span attributes, not `return` values. Without the `spans`
+// query item HERE returns a valid route with no speed-limit field; the old
+// `return=summary,speedLimit` request therefore made every live lookup
+// resolve to No Data. Current HERE v8 exposes the limit as `maxSpeed` and the
+// explicit imperial unit makes the returned value directly usable as MPH.
+// The parser still accepts the deprecated `speedLimit` object for older
+// deployments.
 //
 // Auth: HERE Freemium tier — 250k requests/month free PERMANENTLY (NOT a
 // 90-day trial). Credentials live in Keychain via HERECredentialStore.
@@ -85,13 +93,20 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             URLQueryItem(name: "origin", value: origin),
             URLQueryItem(name: "destination", value: dest),
             URLQueryItem(name: "routingMode", value: "fast"),
-            URLQueryItem(name: "return", value: "summary,speedLimit"),
+            // HERE exposes speed limits through the `spans` parameter. They
+            // are not valid members of the `return` list. `maxSpeed` is the
+            // current v8 attribute; the parser retains a legacy speedLimit
+            // fallback for older API deployments.
+            URLQueryItem(name: "return", value: "summary"),
+            URLQueryItem(name: "units", value: "imperial"),
+            URLQueryItem(name: "spans", value: "names,maxSpeed"),
             URLQueryItem(name: "apiKey", value: creds.accessKeyId)
         ]
 
         guard let url = components?.url else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 4.0)
         request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Speedio/2.1", forHTTPHeaderField: "User-Agent")
 
         let data: Data
@@ -136,13 +151,12 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             return nil
         }
 
-        guard let speedValue = speedMetersPerSecond(in: firstSection) else {
-            DebugLogger.shared.log("HERE REST: response contained no usable speedLimit field")
+        guard let speedMph = speedLimitMilesPerHour(in: firstSection) else {
+            DebugLogger.shared.log("HERE REST: response contained no usable speed-limit field")
             return nil
         }
 
-        // HERE returns speed limits in m/s. Convert to mph.
-        let mph = Int((speedValue * 2.23694).rounded())
+        let mph = Int(speedMph.rounded())
         guard mph > 0, mph <= 90 else {
             // 0 == HERE has no posted limit for the segment; >90 is bogus.
             return nil
@@ -152,7 +166,7 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
 
         return SpeedLimitResponse(
             speedLimitMph: mph,
-            roadKey: "here-rest-\(Int(speedValue))",
+            roadKey: "here-rest-\(mph)",
             providerName: displayName,
             detail: "HERE REST v8 segment speed \(mph) mph"
         )
@@ -182,19 +196,25 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
     }
 
     /// Extract HERE's speed-limit value across the v8 response variants used
-    /// by different Routing API deployments. Canonical responses put the
-    /// value in a section span's `speedLimit` object with `maxSpeed` or
-    /// `baseSpeed` in m/s; older responses used `speed` or an array.
+    /// by different Routing API deployments. Current responses put `maxSpeed`
+    /// on a requested route span; older responses put `maxSpeed`/`speed` in a
+    /// `speedLimit` object. Because the request explicitly asks for imperial
+    /// units, a unit-less current value is already MPH.
     ///
     /// A route can contain more than one span when the short probe crosses an
     /// intersection. The span with the smallest HERE `offset` is the one at
     /// the request origin/current road; blindly taking the first dictionary
     /// entry made an adjacent 25-mph street authoritative.
-    private func speedMetersPerSecond(in section: [String: Any]) -> Double? {
+    private struct SpeedReading {
+        let value: Double
+        let unit: String?
+    }
+
+    private func speedLimitMilesPerHour(in section: [String: Any]) -> Double? {
         if let spans = section["spans"] as? [[String: Any]], !spans.isEmpty {
-            let candidates: [(value: Double, offset: Double?, index: Int)] = spans.enumerated().compactMap { index, span in
-                guard let value = speedValue(in: span), value > 0 else { return nil }
-                return (value, numericValue(span["offset"]), index)
+            let candidates: [(reading: SpeedReading, offset: Double?, index: Int)] = spans.enumerated().compactMap { index, span in
+                guard let reading = speedReading(in: span), reading.value > 0 else { return nil }
+                return (reading, numericValue(span["offset"]), index)
             }
             if let selected = candidates.sorted(by: { lhs, rhs in
                 switch (lhs.offset, rhs.offset) {
@@ -209,37 +229,74 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
                 }
                 return lhs.index < rhs.index
             }).first {
-                return selected.value
+                return milesPerHour(for: selected.reading)
             }
         }
 
         // Defensive support for deployments that put the value directly on
         // the section rather than returning a spans array.
-        return speedValue(in: section)
+        guard let reading = speedReading(in: section) else { return nil }
+        return milesPerHour(for: reading)
     }
 
-    private func speedValue(in container: [String: Any]) -> Double? {
+    private func speedReading(in container: [String: Any]) -> SpeedReading? {
+        // Current HERE v8 maxSpeed span attribute.
+        if let direct = numericValue(container["maxSpeed"]), direct > 0 {
+            return SpeedReading(value: direct, unit: unit(in: container))
+        }
+        if let maxSpeed = container["maxSpeed"] as? [String: Any],
+           let reading = numericSpeed(in: maxSpeed) {
+            return reading
+        }
+        // Legacy/deprecated span shape retained for compatibility.
         if let direct = numericValue(container["speedLimit"]), direct > 0 {
-            return direct
+            return SpeedReading(value: direct, unit: unit(in: container))
         }
         if let limit = container["speedLimit"] as? [String: Any],
-           let value = numericSpeed(in: limit) {
-            return value
+           let reading = numericSpeed(in: limit) {
+            return reading
         }
         if let limits = container["speedLimit"] as? [[String: Any]] {
             for limit in limits {
-                if let value = numericSpeed(in: limit) { return value }
+                if let reading = numericSpeed(in: limit) { return reading }
             }
         }
         // Defensive support for flattened span attributes.
         return numericSpeed(in: container)
     }
 
-    private func numericSpeed(in object: [String: Any]) -> Double? {
+    private func numericSpeed(in object: [String: Any]) -> SpeedReading? {
         for key in ["maxSpeed", "baseSpeed", "speed", "value"] {
-            if let value = numericValue(object[key]), value > 0 { return value }
+            if let value = numericValue(object[key]), value > 0 {
+                return SpeedReading(value: value, unit: unit(in: object))
+            }
         }
         return nil
+    }
+
+    private func unit(in object: [String: Any]) -> String? {
+        for key in ["unit", "speedUnit"] {
+            if let value = object[key] as? String, !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func milesPerHour(for reading: SpeedReading) -> Double {
+        switch reading.unit?.lowercased().replacingOccurrences(of: " ", with: "") {
+        case "mph", "mi/h", "mileperhour", "milesperhour":
+            return reading.value
+        case "kph", "kmh", "km/h", "kilometerperhour", "kilometersperhour":
+            return reading.value * 0.621371
+        case "mps", "m/s", "meterpersecond", "meterspersecond":
+            return reading.value * 2.23694
+        default:
+            // The request includes units=imperial, so current unit-less
+            // maxSpeed values are MPH. This also keeps older numeric responses
+            // usable when HERE omits the unit metadata.
+            return reading.value
+        }
     }
 
     private func numericValue(_ value: Any?) -> Double? {
@@ -247,6 +304,13 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         if let value = value as? NSNumber {
             let doubleValue = value.doubleValue
             if doubleValue.isFinite { return doubleValue }
+        }
+        // JSON providers occasionally serialize numeric speed fields as
+        // strings. Treat that as a wire-format variation, not a missing limit.
+        if let value = value as? String,
+           let doubleValue = Double(value.trimmingCharacters(in: .whitespacesAndNewlines)),
+           doubleValue.isFinite {
+            return doubleValue
         }
         return nil
     }
