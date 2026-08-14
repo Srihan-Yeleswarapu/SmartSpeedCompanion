@@ -13,6 +13,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     var navigationRoot: CarPlayNavigationRootTemplate?
     private var dashboardManager: CarPlayDashboardController?
     private var carPlayMapView: MKMapView?
+    private var carPlayMapController: CarPlayMapController?
     private var cancellables = Set<AnyCancellable>()
     
     // ── IMPORTANT — why the MKMapView is NOT removed ─────────────────
@@ -102,6 +103,10 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         self.carPlayMapView = mapView
         window.rootViewController = UIViewController()
         window.rootViewController?.view.addSubview(mapView)
+        self.carPlayMapController = CarPlayMapController(
+            mapView: mapView,
+            viewModel: AppDelegate.sharedDriveViewModel
+        )
     }
 
     /// Build the navigation root and set it as the interface controller's
@@ -183,6 +188,8 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     /// our reference so the view controller holding the CPWindow
     /// releases promptly.
     private func tearDownMapView() {
+        carPlayMapController?.stop()
+        carPlayMapController = nil
         carPlayMapView?.removeFromSuperview()
         carPlayMapView = nil
     }
