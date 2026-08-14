@@ -11,13 +11,16 @@ public struct AnalyticsDashboardView: View {
     // recent drives, and an unbounded ordered fetch plus relationship faults
     // made the XR's SwiftUI appearance transaction do database work on the
     // main thread for every historical session.
-    @Query(FetchDescriptor<DriveSession>(
-        sortBy: [SortDescriptor(\.startTime, order: .reverse)],
-        fetchLimit: 100
-    )) private var sessions: [DriveSession]
+    @Query private var sessions: [DriveSession]
     @StateObject private var viewModel = AnalyticsViewModel()
 
-    public init() {}
+    public init() {
+        var descriptor = FetchDescriptor<DriveSession>(
+            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+        )
+        descriptor.fetchLimit = 100
+        _sessions = Query(descriptor)
+    }
 
     public var body: some View {
         ZStack {
