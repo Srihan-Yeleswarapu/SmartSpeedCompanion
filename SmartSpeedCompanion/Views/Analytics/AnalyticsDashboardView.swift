@@ -7,7 +7,14 @@ import SwiftData
 public struct AnalyticsDashboardView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \DriveSession.startTime, order: .reverse) private var sessions: [DriveSession]
+    // Keep the initial SwiftData query bounded. The dashboard only presents
+    // recent drives, and an unbounded ordered fetch plus relationship faults
+    // made the XR's SwiftUI appearance transaction do database work on the
+    // main thread for every historical session.
+    @Query(FetchDescriptor<DriveSession>(
+        sortBy: [SortDescriptor(\.startTime, order: .reverse)],
+        fetchLimit: 100
+    )) private var sessions: [DriveSession]
     @StateObject private var viewModel = AnalyticsViewModel()
 
     public init() {}

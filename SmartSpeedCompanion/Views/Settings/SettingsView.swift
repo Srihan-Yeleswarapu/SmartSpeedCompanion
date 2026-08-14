@@ -45,6 +45,10 @@ public struct SettingsView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
+    // The manager resolves Core Haptics capability asynchronously; observing
+    // it lets the picker appear once the background probe completes without
+    // probing Core Haptics during SwiftUI body evaluation.
+    @ObservedObject private var hapticManager = HapticAlertManager.shared
     @State private var showingTutorial = false
     // TestFlight 2.1.4 feedback from
     // srihan.yeleswarapu@gmail.com: "And put a how to button. Then put
@@ -144,7 +148,7 @@ public struct SettingsView: View {
                     // Haptic Alerts toggle still appears so the user can
                     // pre-stage their setting for a future iPhone, but the
                     // catalog stays hidden.
-                    if hapticEnabled && HapticAlertManager.shared.deviceSupportsHaptics {
+                    if hapticEnabled && hapticManager.deviceSupportsHaptics {
                         // Spec: changing the picker should play the chosen
                         // style so the user can audition it without waiting
                         // for a speeding alert (TestFlight v2.2.0 b366
@@ -168,7 +172,7 @@ public struct SettingsView: View {
                         // the user's tap. `onChange` of the storage key
                         // only fires on real selection events.
                         .onChange(of: hapticStyle) { _, _ in
-                            HapticAlertManager.shared.previewCurrentStyle()
+                            hapticManager.previewCurrentStyle()
                         }
 
                         if HapticStyle(rawValue: hapticStyle) == .custom {
@@ -423,7 +427,10 @@ public struct SettingsView: View {
                     SpeedFormatting.writeMeasurementSystemToAppGroup(measurementSystem)
                 }
                 .onAppear {
-                    driveViewModel.loadAlertProfiles(context: modelContext)
+                    // DriveRootView owns the one-time profile load. Keeping
+                    // this screen free of another synchronous SwiftData fetch
+                    // prevents Settings presentation from competing with the
+                    // root appearance transaction on older devices.
                     driveViewModel.loadLimitsZones()
                 }
         }

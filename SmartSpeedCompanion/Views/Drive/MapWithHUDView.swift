@@ -3,7 +3,6 @@ import MapKit
 
 public struct MapWithHUDView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
-    @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) var hSizeClass
     @Environment(\.verticalSizeClass) var vSizeClass
     // Observed so the offline banner re-renders in real time when
@@ -169,9 +168,6 @@ public struct MapWithHUDView: View {
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: driveViewModel.isNavigating)
             .animation(.easeInOut(duration: 0.25), value: driveViewModel.isMapDetached)
             .animation(.easeInOut(duration: 0.3), value: driveViewModel.nearbyAmenities.count)
-        }
-        .onAppear {
-            driveViewModel.loadNamedLocations(context: modelContext)
         }
         .sheet(isPresented: $driveViewModel.showNameLocationSheet) {
             NameLocationSheet()

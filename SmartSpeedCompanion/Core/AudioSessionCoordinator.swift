@@ -21,19 +21,15 @@ public final class AudioSessionCoordinator {
 
     public static let shared = AudioSessionCoordinator()
 
-    /// Empty options are intentional: `.playback` then requests exclusive
-    /// audio focus, which pauses interruptible media while our cue plays.
-    /// `.duckOthers` is used only when exclusive activation is rejected.
-    private static let interruptOptions: AVAudioSession.CategoryOptions = []
-    private static let duckOptions: AVAudioSession.CategoryOptions = [.duckOthers]
-
     /// Keep the audio route alive across adjacent navigation prompts and
     /// speeding beeps, but restore other audio promptly after the final cue.
     private static let releaseDelayNanoseconds: UInt64 = 500_000_000
 
-    private var isConfigured = false
+    private let audioQueue = DispatchQueue(
+        label: "com.speedsense.audio-session",
+        qos: .userInitiated
+    )
     private var activeCueCount = 0
-    private var usingDuckFallback = false
     private var releaseTask: Task<Void, Never>?
     private var releaseGeneration: UInt64 = 0
 
@@ -51,16 +47,16 @@ public final class AudioSessionCoordinator {
         releaseTask?.cancel()
         releaseTask = nil
 
-        if activeCueCount == 0 {
-            configureIfNeeded(options: Self.interruptOptions)
-            activateSessionWithFallback()
-        } else {
-            // A system interruption (phone call/Siri) can deactivate an
-            // otherwise live cue. Reassert focus without changing category
-            // while another cue is still rendering.
-            activateSessionIfNeeded()
-        }
+        // AVAudioSession.setCategory/setActive can synchronously wait on the
+        // audio daemon. The old implementation called them on the main actor
+        // from speech and speeding-alert callbacks, which is the AVAudioSession
+        // run-loop hang signature in the XR reports. Keep the reference count
+        // on the main actor, but do every session operation on a serial audio
+        // queue so speech/alerts never stall UIKit.
         activeCueCount += 1
+        audioQueue.async {
+            Self.activateSessionOnAudioQueue()
+        }
     }
 
     /// Releases one tone/prompt. The delayed final release allows the next
@@ -77,7 +73,9 @@ public final class AudioSessionCoordinator {
                   let self,
                   self.releaseGeneration == generation,
                   self.activeCueCount == 0 else { return }
-            self.deactivateSession()
+            self.audioQueue.async {
+                Self.deactivateSessionOnAudioQueue()
+            }
             self.releaseTask = nil
         }
     }
@@ -86,66 +84,43 @@ public final class AudioSessionCoordinator {
     /// interruption recovery and never starts audio during an idle navigation.
     public func ensureActive() {
         guard activeCueCount > 0 else { return }
-        configureIfNeeded(options: usingDuckFallback ? Self.duckOptions : Self.interruptOptions)
-        activateSessionIfNeeded()
+        audioQueue.async {
+            Self.activateSessionOnAudioQueue()
+        }
     }
 
     // MARK: - Session plumbing
 
-    private func configureIfNeeded(options: AVAudioSession.CategoryOptions) {
-        guard !isConfigured else { return }
+    /// Performs the potentially blocking AVAudioSession work away from the
+    /// main actor. Exclusive activation is preferred; if the current route
+    /// rejects it, retry with the system-supported ducking policy.
+    private nonisolated static func activateSessionOnAudioQueue() {
+        let session = AVAudioSession.sharedInstance()
+        let interruptOptions: AVAudioSession.CategoryOptions = []
+        let duckOptions: AVAudioSession.CategoryOptions = [.duckOthers]
         do {
-            let session = AVAudioSession.sharedInstance()
             // Do not force a sample rate. CarPlay commonly negotiates 48 kHz
             // while iPhone speaker routes commonly use 44.1 kHz.
-            try session.setCategory(.playback, mode: .voicePrompt, options: options)
-            isConfigured = true
-            usingDuckFallback = options.contains(.duckOthers)
-            DebugLogger.shared.log("Audio Session configured (playback / voicePrompt / \(usingDuckFallback ? "duck" : "interrupt"))")
+            try session.setCategory(.playback, mode: .voicePrompt, options: interruptOptions)
+            try session.setActive(true)
+            DebugLogger.shared.log("Audio Session active (playback / voicePrompt / interrupt)")
         } catch {
-            DebugLogger.shared.log("Audio Session CONFIG ERROR: \(error.localizedDescription)")
+            do {
+                try session.setCategory(.playback, mode: .voicePrompt, options: duckOptions)
+                try session.setActive(true)
+                DebugLogger.shared.log("Audio Session active using duck fallback")
+            } catch {
+                DebugLogger.shared.log("Audio Session ACTIVATE ERROR: \(error.localizedDescription)")
+            }
         }
     }
 
-    /// First tries exclusive playback focus. Some routes/apps refuse that
-    /// activation; retry with `.duckOthers` so Speedio remains intelligible
-    /// over the other source instead of losing its cue entirely. iOS does
-    /// not expose another app's pause state, so a successful activation is
-    /// the strongest pause request a third-party app can make.
-    private func activateSessionWithFallback() {
-        guard !activateSessionIfNeeded() else { return }
-        guard !usingDuckFallback else { return }
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .voicePrompt, options: Self.duckOptions)
-            isConfigured = true
-            usingDuckFallback = true
-            _ = activateSessionIfNeeded()
-            DebugLogger.shared.log("Audio Session using duck fallback")
-        } catch {
-            DebugLogger.shared.log("Audio Session DUCK FALLBACK ERROR: \(error.localizedDescription)")
-        }
-    }
-
-    @discardableResult
-    private func activateSessionIfNeeded() -> Bool {
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-            return true
-        } catch {
-            DebugLogger.shared.log("Audio Session ACTIVATE ERROR: \(error.localizedDescription)")
-            return false
-        }
-    }
-
-    private func deactivateSession() {
+    private nonisolated static func deactivateSessionOnAudioQueue() {
         do {
             try AVAudioSession.sharedInstance().setActive(
                 false,
                 options: .notifyOthersOnDeactivation
             )
-            isConfigured = false
-            usingDuckFallback = false
             DebugLogger.shared.log("Audio Session deactivated after cue")
         } catch {
             DebugLogger.shared.log("Audio Session DEACTIVATE ERROR: \(error.localizedDescription)")

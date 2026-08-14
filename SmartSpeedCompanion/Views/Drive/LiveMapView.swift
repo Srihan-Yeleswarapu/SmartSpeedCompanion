@@ -252,12 +252,14 @@ public struct LiveMapView: UIViewRepresentable {
             return
         }
 
-        // Re-engage native tracking if it was released, and keep compass
-        // tracking out of free-drive camera updates. The custom animator owns
-        // altitude/pitch; MapKit should only own centering unless navigation
-        // explicitly needs heading-following.
-        let desiredTrackingMode: MKUserTrackingMode =
-            viewModel.isNavigating ? .followWithHeading : .follow
+        // Re-engage native tracking if it was released. Do not combine
+        // MapKit's `.followWithHeading` camera controller with our own
+        // altitude/pitch animator: the XR traces show both controllers
+        // repeatedly entering VectorKit camera updates during navigation,
+        // starving the UIKit run loop. `.follow` still keeps the vehicle
+        // centered; the custom camera remains the sole owner of camera
+        // movement and the navigation card supplies turn context.
+        let desiredTrackingMode: MKUserTrackingMode = .follow
         if uiView.userTrackingMode != desiredTrackingMode {
             #if DEBUG || DEVELOPER_BUILD
             if !viewModel.locationManager.isMockMode {
@@ -464,11 +466,13 @@ public struct LiveMapView: UIViewRepresentable {
         private var maneuverAnnotation: ManeuverAnnotation? = nil
 
         // Overlay state tracking to avoid redundant remove/add cycles.
-        // Progress is rendered in distance-sized steps instead of every GPS
-        // tick so splitting the route never causes visible overlay churn.
+        // Progress is rendered in coarse distance-sized steps instead of every
+        // GPS tick. Rebuilding a long MKPolyline is synchronous MapKit work;
+        // the previous 25 m cadence could remove/re-add three large overlays
+        // every second on an iPhone XR and starve the UIKit run loop.
         private var lastIsNavigating: Bool = false
         private var lastRenderedRouteProgress: CLLocationDistance = -1
-        private let routeProgressRenderStep: CLLocationDistance = 25
+        private let routeProgressRenderStep: CLLocationDistance = 250
         private var lastRouteDistance: Double = 0
         /// Geometry fingerprint catches a reroute that has the same distance
         /// as the previous route. Distance-only invalidation left old route
@@ -559,20 +563,21 @@ public struct LiveMapView: UIViewRepresentable {
 
         // MARK: - Smart Overlay Management
         // Only rebuild overlays when the underlying data actually changes.
-        // This was the primary cause of 0.5 fps — removing and re-adding overlays every frame.
+        // Progress updates replace only Speedio-owned route overlays; they do
+        // not tear down camera/POI/stop annotations or unrelated MapKit layers.
         func updateOverlaysIfNeeded(_ mapView: MKMapView, viewModel: DriveViewModel) {
             let vm = viewModel
             let currentRouteDistance = vm.currentRoute?.distance ?? 0
             let currentRouteFingerprint = vm.currentRoute.map(Self.routeFingerprint(for:))
             let isNavigating = vm.isNavigating
             let currentStopFP = Self.stopFingerprint(for: vm.routeStops)
+            let currentRouteProgress = isNavigating
+                ? vm.currentRoute.map { renderedProgress(for: $0, viewModel: vm) }
+                : nil
 
             let routeChanged = isNavigating != lastIsNavigating
                 || abs(currentRouteDistance - lastRouteDistance) > 1.0
                 || currentRouteFingerprint != lastRouteFingerprint
-            let currentRouteProgress = isNavigating
-                ? vm.currentRoute.map { renderedProgress(for: $0, viewModel: vm) }
-                : nil
             let progressChanged: Bool
             if let currentRouteProgress {
                 progressChanged = lastRenderedRouteProgress < 0
@@ -580,57 +585,103 @@ public struct LiveMapView: UIViewRepresentable {
             } else {
                 progressChanged = lastRenderedRouteProgress >= 0
             }
-            // The historical GPS trail is intentionally disabled. It was
-            // rendered as free-form polylines and could look like random
-            // lines or triangular shading on the live drive map. Keep the
-            // recorded readings and dormant renderer below so the feature can
-            // be reintroduced safely behind an explicit setting later.
             let stopsChanged = currentStopFP != lastStopFingerprint
-
-            // Detect when the user dismissed the route picker (isSelectingRoute
-            // transitioned true→false). When this happens the overlay fingerprint
-            // check short-circuits because vm.isSelectingRoute is now false, so
-            // stale route polylines would remain drawn on the map. We jump to
-            // rebuildOverlays which calls removeOverlays(…) first, clearing them.
             let routePickerDismissed = lastIsSelectingRoute && !vm.isSelectingRoute
-            // Also detect new route-selection step so the initial fingerprint
-            // rebuild fires (new routes from a fresh search).
             let routePickerOpened = !lastIsSelectingRoute && vm.isSelectingRoute
+            let alternativeFingerprint = vm.isSelectingRoute
+                ? Self.altRouteFingerprint(for: vm.availableRoutes)
+                : nil
+            let alternativesChanged = vm.isSelectingRoute
+                && alternativeFingerprint != lastAltRouteFingerprint
 
-            guard routeChanged || progressChanged || stopsChanged || (isNavigating && lastRouteDistance == 0) || routePickerDismissed || routePickerOpened || !hasClearedDisabledHistoryOverlays else {
-                // ALTERNATIVE-ROUTE FINGERPRINT: rebuild when availableRoutes
-                // count changes during the route-selection step. We hash
-                // count + a stable signature (sum of distances) so the check
-                // doesn't fire on every 500 ms GPS tick.
-                let fp = vm.isSelectingRoute ? Self.altRouteFingerprint(for: vm.availableRoutes) : -1
-                if vm.isSelectingRoute && fp != lastAltRouteFingerprint {
-                    rebuildOverlays(mapView, viewModel: vm)
-                    lastAltRouteFingerprint = fp
-                    hasClearedDisabledHistoryOverlays = true
-                }
-                // Always sync lastIsSelectingRoute even when the guard
-                // short-circuits, otherwise the dismissed-picker detection
-                // fires a stale rebuild on the next pass.
+            let needsFullRebuild = routeChanged
+                || stopsChanged
+                || routePickerDismissed
+                || routePickerOpened
+                || alternativesChanged
+                || !hasClearedDisabledHistoryOverlays
+
+            if needsFullRebuild {
+                rebuildOverlays(mapView, viewModel: vm)
+                hasClearedDisabledHistoryOverlays = true
+                lastIsNavigating = isNavigating
                 lastIsSelectingRoute = vm.isSelectingRoute
+                lastRouteDistance = currentRouteDistance
+                lastRouteFingerprint = currentRouteFingerprint
+                lastRenderedRouteProgress = currentRouteProgress ?? -1
+                lastStopFingerprint = currentStopFP
+                lastAltRouteFingerprint = alternativeFingerprint
                 return
             }
 
-            // Perform the overlay rebuild only when data changed
-            rebuildOverlays(mapView, viewModel: vm)
-            hasClearedDisabledHistoryOverlays = true
+            // A progress refresh is intentionally narrow. The old path called
+            // `rebuildOverlays`, which removed every overlay and annotation and
+            // synchronously re-added the full route geometry on every 25 m
+            // movement. That is the `MKMapView.addOverlay` run-loop hang seen
+            // repeatedly in the XR reports.
+            if progressChanged, isNavigating, vm.currentRoute != nil {
+                updateActiveRouteProgressOverlay(mapView, viewModel: vm)
+                lastRenderedRouteProgress = currentRouteProgress ?? -1
+            }
 
-            // Update tracking state
-            lastIsNavigating = isNavigating
             lastIsSelectingRoute = vm.isSelectingRoute
-            lastRouteDistance = currentRouteDistance
-            lastRouteFingerprint = currentRouteFingerprint
-            lastRenderedRouteProgress = currentRouteProgress ?? -1
-            lastStopFingerprint = currentStopFP
+        }
+
+        private func removeRenderedRouteOverlays(_ mapView: MKMapView) {
+            let routeOverlays = mapView.overlays.filter {
+                $0 is NavPolyline
+                    || $0 is GlowPolyline
+                    || $0 is AltRoutePolyline
+                    || $0 is DimmedLegPolyline
+            }
+            guard !routeOverlays.isEmpty else { return }
+            mapView.removeOverlays(routeOverlays)
+        }
+
+        private func updateActiveRouteProgressOverlay(
+            _ mapView: MKMapView,
+            viewModel: DriveViewModel
+        ) {
+            guard viewModel.isNavigating, viewModel.currentRoute != nil else { return }
+            removeRenderedRouteOverlays(mapView)
+            renderActiveRouteGeometry(mapView, viewModel: viewModel)
+        }
+
+        private func renderActiveRouteGeometry(_ mapView: MKMapView, viewModel: DriveViewModel) {
+            guard let route = viewModel.currentRoute else { return }
+            let legs = viewModel.routeLegs
+            let hasLegRoutes = !viewModel.routeStops.isEmpty
+                && legs.count > 1
+                && legs.allSatisfy({ $0.route != nil })
+
+            if hasLegRoutes {
+                let activeIndex = min(
+                    max(viewModel.navigationCoordinator.activeMultiStopLegIndexForDisplay, 0),
+                    legs.count - 1
+                )
+                if let activeRoute = legs[activeIndex].route {
+                    renderProgressRoute(mapView, route: activeRoute, viewModel: viewModel)
+                }
+                for (index, leg) in legs.enumerated() where index != activeIndex {
+                    if let legRoute = leg.route {
+                        let dimmed = DimmedLegPolyline(points: legRoute.polyline.points(), count: legRoute.polyline.pointCount)
+                        mapView.addOverlay(dimmed, level: .aboveRoads)
+                    }
+                }
+            } else {
+                renderProgressRoute(mapView, route: route, viewModel: viewModel)
+            }
         }
 
         private func rebuildOverlays(_ mapView: MKMapView, viewModel: DriveViewModel) {
-            // Remove all overlays and non-user annotations
-            mapView.removeOverlays(mapView.overlays)
+            // Clear unknown legacy overlays once after an app update, then
+            // remove only the route overlays owned by this coordinator. Never
+            // remove unrelated MapKit overlays during a progress tick.
+            if !hasClearedDisabledHistoryOverlays {
+                mapView.removeOverlays(mapView.overlays)
+            } else {
+                removeRenderedRouteOverlays(mapView)
+            }
             mapView.removeAnnotations(mapView.annotations.filter { !($0 is MKUserLocation) })
             // `removeAnnotations` also removes the maneuver annotation. Do
             // not retain a reference to an annotation that is no longer on
@@ -643,37 +694,10 @@ public struct LiveMapView: UIViewRepresentable {
 
             // Route polyline + destination
             if hasActiveRoute, let route = viewModel.currentRoute {
-                let legs = viewModel.routeLegs
-                let hasLegRoutes = !viewModel.routeStops.isEmpty
-                    && legs.count > 1
-                    && legs.allSatisfy({ $0.route != nil })
-
-                if hasLegRoutes {
-                    // MULTI-STOP: draw the active leg with the same travelled /
-                    // remaining treatment as a single route. Later legs stay
-                    // visible but muted so the user never sees a connector from
-                    // the live GPS point back to the trip origin.
-                    let activeIndex = min(
-                        max(viewModel.navigationCoordinator.activeMultiStopLegIndexForDisplay, 0),
-                        legs.count - 1
-                    )
-                    if let activeRoute = legs[activeIndex].route {
-                        renderProgressRoute(mapView, route: activeRoute, viewModel: viewModel)
-                    }
-
-                    for (index, leg) in legs.enumerated() where index != activeIndex {
-                        if let legRoute = leg.route {
-                            let dimmed = DimmedLegPolyline(points: legRoute.polyline.points(), count: legRoute.polyline.pointCount)
-                            mapView.addOverlay(dimmed, level: .aboveRoads)
-                        }
-                    }
-                } else {
-                    // SINGLE-ROUTE: split only the existing route geometry at
-                    // the snapped progress point. Never append the raw GPS
-                    // coordinate to the route — that is what creates the
-                    // spurious straight line back to the route origin.
-                    renderProgressRoute(mapView, route: route, viewModel: viewModel)
-                }
+                // Draw the active leg and any later legs without touching
+                // annotations or unrelated overlays. Progress-only updates
+                // use the same helper after removing just these route lines.
+                renderActiveRouteGeometry(mapView, viewModel: viewModel)
 
                 if let dest = viewModel.destination {
                     let destinationAnnotation = MKPointAnnotation()

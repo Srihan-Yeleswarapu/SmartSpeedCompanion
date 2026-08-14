@@ -125,12 +125,19 @@ public final class HapticAlertManager: ObservableObject {
     /// sees a single "fireIfEnabled()" entry point; the fallback path inside
     /// covers the engine==nil case.
     private var engine: CHHapticEngine?
+    /// Engine startup can wait on a system haptics service. Never make the
+    /// first user tap pay that wait on the main actor.
+    private var isPreparingEngine = false
 
     /// Whether the running hardware supports Core Haptics. iPads return
     /// `false` and the Settings UI hides the haptic controls for them.
+    /// The capability query is resolved on a utility queue because Apple's
+    /// `capabilitiesForHardware()` performs one-time Core Haptics setup and
+    /// was visible on the UIKit main thread in the XR hang reports.
     /// Single source of truth — exposed as instance property on the
     /// shared singleton (`HapticAlertManager.shared.deviceSupportsHaptics`).
-    public let deviceSupportsHaptics: Bool
+    @Published public private(set) var deviceSupportsHaptics: Bool = false
+    private var hapticCapabilityResolved = false
 
     /// Convenience computed var for the current style value.
     public var style: HapticStyle {
@@ -191,15 +198,20 @@ public final class HapticAlertManager: ObservableObject {
     }
 
     private init() {
-        self.deviceSupportsHaptics =
-            CHHapticEngine.capabilitiesForHardware().supportsHaptics
-        // LAUNCH-HANG FIX (2026-08-02 UIKit-runloop reports): the
-        // CHHapticEngine is NO LONGER created/started here. `AlertEngine.init`
-        // used to touch `HapticAlertManager.shared` at app launch, and
-        // `CHHapticEngine()` + `start()` blocked the main thread for hundreds
-        // of ms — one of the three back-to-back launch hangs in TestFlight
-        // build 549. The engine is now built lazily on first haptic use via
-        // `ensureEngine()`.
+        // LAUNCH-HANG FIX (2026-08-02 UIKit-runloop reports): both the
+        // capability probe and the CHHapticEngine construction are kept off
+        // the main actor. `capabilitiesForHardware()` itself performs a
+        // one-time Core Haptics preference/device initialization; the XR
+        // reports caught that work while SwiftUI was building Settings.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let supportsHaptics = CHHapticEngine.capabilitiesForHardware().supportsHaptics
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.deviceSupportsHaptics = supportsHaptics
+                self.hapticCapabilityResolved = true
+            }
+        }
+        // The engine is built lazily on first haptic use via `ensureEngine()`.
     }
 
     /// Lazily creates and starts the CHHapticEngine on first haptic use.
@@ -214,39 +226,51 @@ public final class HapticAlertManager: ObservableObject {
             DebugLogger.shared.log("HapticAlertManager: no hardware support; will fall back to system vibrate")
             return nil
         }
-        do {
-            let engine = try CHHapticEngine()
-            engine.stoppedHandler = { [weak self] reason in
-                DebugLogger.shared.log("HapticAlertManager stopped: \(reason.rawValue)")
-                // A stop (backgrounding, audio interruption) invalidates
-                // every player the engine owned — including the speeding
-                // pulse — so drop it; the next monitor tick rebuilds it.
-                self?.speedingPlayer = nil
-            }
-            engine.resetHandler = { [weak self] in
-                guard let self else { return }
-                // A reset invalidates the players too. `CHHapticEngine` has
-                // no `isRunning` API to probe liveness, so invalidating the
-                // pulse here is how `startSpeedingPulse()` learns a rebuild
-                // is needed on the next tick.
-                self.speedingPlayer = nil
-                do {
-                    try self.engine?.start()
-                } catch {
-                    DebugLogger.shared.log("HapticAlertManager restart failed: \(error.localizedDescription)")
+
+        // CHHapticEngine.start() internally waits for the haptics daemon. The
+        // XR reports show that wait on the main thread during a button action.
+        // Prepare and start the engine on a utility queue; the first cue uses
+        // the existing system-vibrate fallback and the next tick/interaction
+        // adopts the ready engine.
+        guard hapticCapabilityResolved else { return nil }
+        guard !isPreparingEngine else { return nil }
+        isPreparingEngine = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let preparedEngine = try CHHapticEngine()
+                preparedEngine.stoppedHandler = { [weak self] reason in
+                    DebugLogger.shared.log("HapticAlertManager stopped: \(reason.rawValue)")
+                    Task { @MainActor in
+                        self?.speedingPlayer = nil
+                    }
+                }
+                preparedEngine.resetHandler = { [weak self, weak preparedEngine] in
+                    // The reset callback is already off the main actor. Keep
+                    // the restart off-main too, then invalidate the player on
+                    // the actor that owns the published manager state.
+                    do {
+                        try preparedEngine?.start()
+                    } catch {
+                        DebugLogger.shared.log("HapticAlertManager restart failed: \(error.localizedDescription)")
+                    }
+                    Task { @MainActor in
+                        self?.speedingPlayer = nil
+                    }
+                }
+                try preparedEngine.start()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.engine = preparedEngine
+                    self.isPreparingEngine = false
+                }
+            } catch {
+                DebugLogger.shared.log("HapticAlertManager setup error: \(error.localizedDescription)")
+                Task { @MainActor [weak self] in
+                    self?.isPreparingEngine = false
                 }
             }
-            // Assign BEFORE `start()`: if the hardware triggers a reset
-            // during the initial start, the resetHandler's `self.engine?.start()`
-            // must already see the engine to restart it (code-review fix).
-            self.engine = engine
-            try engine.start()
-            return engine
-        } catch {
-            DebugLogger.shared.log("HapticAlertManager setup error: \(error.localizedDescription)")
-            self.engine = nil
-            return nil
         }
+        return nil
     }
 
     // MARK: - Public API
@@ -321,7 +345,16 @@ public final class HapticAlertManager: ObservableObject {
         // LAUNCH-HANG FIX: lazily build the engine on first haptic use
         // (see `ensureEngine`); `ensureEngine()` itself gates on
         // `deviceSupportsHaptics`.
-        guard let engine = ensureEngine() else { return }
+        guard let engine = ensureEngine() else {
+            // Capability resolution and engine preparation are asynchronous.
+            // Give the driver one immediate fallback cue while that work is in
+            // flight, but stay silent on devices that have no haptic hardware.
+            if (!hapticCapabilityResolved || isPreparingEngine) && !speedingFallbackVibrated {
+                speedingFallbackVibrated = true
+                AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+            }
+            return
+        }
 
         let clampedSeverity = min(1.0, max(0.1, severity))
         let intensity = Float(0.6 + 0.4 * clampedSeverity)
@@ -353,7 +386,8 @@ public final class HapticAlertManager: ObservableObject {
                 )
             ], parameters: [])
 
-            try engine.start()
+            // `ensureEngine()` starts the engine off-main. Starting it again
+            // here would reintroduce the synchronous haptics-daemon wait.
             let player = try engine.makeAdvancedPlayer(with: pattern)
             player.loopEnabled = true
             // Loop restarts at on+off (3.5 s): the 3 s burst ends at 3.0 s,
@@ -857,7 +891,6 @@ public final class HapticAlertManager: ObservableObject {
                           relativeTime: tap.timeOffset)
         }
         do {
-            try engine.start()
             let pattern = try CHHapticPattern(events: events, parameters: [])
             let player = try engine.makePlayer(with: pattern)
             try player.start(atTime: 0)
@@ -886,9 +919,9 @@ public final class HapticAlertManager: ObservableObject {
             return
         }
         do {
-            // (Re-)start before each play so a backgrounded engine that came
-            // back to the foreground is alive when we ask for a player.
-            try engine.start()
+            // The engine is started by `ensureEngine()` on a utility queue.
+            // Do not call `start()` again here: on older devices that call can
+            // synchronously wait on the haptics daemon on the main actor.
             let player = try engine.makePlayer(with: pattern)
             try player.start(atTime: 0)
         } catch {

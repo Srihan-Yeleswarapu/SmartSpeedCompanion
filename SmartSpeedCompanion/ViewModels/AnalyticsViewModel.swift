@@ -175,8 +175,13 @@ public final class AnalyticsViewModel: ObservableObject {
     /// (TestFlight FB7, v2.2.0 b361).
     public func purgeOldSessions(sessions: [DriveSession], context: ModelContext) {
         let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+        // The query snapshot is the source of truth for visible rows. Do not
+        // inspect `session.isDeleted` here: on iOS 18 SwiftData can leave a
+        // tombstoned relationship object in the snapshot for one render pass,
+        // and that backing-data read is exactly the crash/hang signature seen
+        // in the XR reports. The deferred delete below safely converges the
+        // store after the current view has unmounted.
         let victims = sessions.filter { session in
-            guard !session.isDeleted else { return false }
             let isStarred = session.isStarred ?? false
             return !isStarred && session.startTime < cutoff
         }

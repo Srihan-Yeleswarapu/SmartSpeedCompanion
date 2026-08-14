@@ -69,9 +69,19 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     private var previousStatus: SpeedStatus = .safe
     
     // MARK: - Audio (Tone)
-    private let audioEngine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
+    // AVAudioEngine touches the audio graph when it is initialized. Keep
+    // both objects lazy so constructing the shared DriveViewModel at launch
+    // cannot trigger audio-daemon work on the UIKit thread.
+    private lazy var audioEngine = AVAudioEngine()
+    private lazy var playerNode = AVAudioPlayerNode()
     private var toneBuffer: AVAudioPCMBuffer?
+    /// AVAudioEngine graph creation and startup can synchronously wait on the
+    /// audio daemon. Keep first-use preparation off the main actor just like
+    /// AVAudioSession activation.
+    private let audioPreparationQueue = DispatchQueue(
+        label: "com.speedsense.tone-preparation",
+        qos: .userInitiated
+    )
     /// True while the current overspeed episode owns the shared audio cue.
     private var alertSessionHeld = false
     /// AudioServices sound ID built from the tone buffer, used by the
@@ -463,18 +473,27 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // Build it before anything else so a mid-session interruption
         // can't hit an un-initialized graph.
         ensureToneEngine()
-        guard !audioEngine.isRunning else {
-            DebugLogger.shared.log("AlertEngine: tone engine still running after interruption")
-            return
-        }
-        do {
-            try audioEngine.start()
-            if !playerNode.isPlaying {
-                playerNode.play()
+        guard toneEngineReady else { return }
+
+        // `AVAudioEngine.start()` can wait for the audio daemon after an
+        // interruption. Capture the already-prepared graph on the main actor,
+        // then restart it on the same utility queue used for preparation.
+        let engine = audioEngine
+        let player = playerNode
+        audioPreparationQueue.async {
+            guard !engine.isRunning else {
+                DebugLogger.shared.log("AlertEngine: tone engine still running after interruption")
+                return
             }
-            DebugLogger.shared.log("AlertEngine: audio engine restarted after interruption")
-        } catch {
-            DebugLogger.shared.log("AlertEngine: audio engine restart failed: \(error.localizedDescription)")
+            do {
+                try engine.start()
+                if !player.isPlaying {
+                    player.play()
+                }
+                DebugLogger.shared.log("AlertEngine: audio engine restarted after interruption")
+            } catch {
+                DebugLogger.shared.log("AlertEngine: audio engine restart failed: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -489,6 +508,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// one-shot build so the AVAudioEngine hardware is only started on the
     /// first actual alert (LAUNCH-HANG FIX — see `init` note).
     private var toneEngineReady = false
+    private var toneEnginePreparationStarted = false
 
     /// Builds the tone-engine graph (buffer + node wiring) on first use.
     /// Deliberately NOT called from `init`: starting AVAudioEngine
@@ -514,43 +534,67 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// rate (CarPlay links are typically 48 kHz) instead of a hard-coded
     /// 44.1 kHz, so the mixer never has to resample a live stream mid-drive.
     private func ensureToneEngine() {
-        guard !toneEngineReady else { return }
-        toneEngineReady = true
+        guard !toneEngineReady, !toneEnginePreparationStarted else { return }
+        toneEnginePreparationStarted = true
 
-        // Use the session's current sample rate (caller activates the
-        // session before this runs) so the tone graph matches the hardware
+        // Use the session's current sample rate (the caller has already
+        // requested audio focus) so the tone graph matches the hardware
         // instead of forcing a 44.1 kHz resample while nav voice is playing.
-        let sessionRate = AVAudioSession.sharedInstance().sampleRate
-        let sampleRate: Double = sessionRate > 0 ? sessionRate : 44100
-        let duration: Double = 0.25
-        let frequency: Double = 1052.0
-        
-        let frameCount = AVAudioFrameCount(sampleRate * duration)
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        
-        toneBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)
-        toneBuffer?.frameLength = frameCount
-        
-        let theta = 2.0 * Double.pi * frequency / sampleRate
-        
-        if let buffer = toneBuffer?.floatChannelData?[0] {
-            for frame in 0..<Int(frameCount) {
-                let value = sin(theta * Double(frame))
-                buffer[frame] = value >= 0 ? 1.0 : -1.0 // square wave
+        // Every potentially blocking AVAudioEngine operation stays on this
+        // utility queue. The first beep uses the AudioServices fallback while
+        // preparation is in flight; later beeps use the prepared graph.
+        audioPreparationQueue.async { [weak self] in
+            let sessionRate = AVAudioSession.sharedInstance().sampleRate
+            let sampleRate: Double = sessionRate > 0 ? sessionRate : 44_100
+            let duration: Double = 0.25
+            let frequency: Double = 1_052.0
+            let frameCount = AVAudioFrameCount(sampleRate * duration)
+
+            guard let format = AVAudioFormat(
+                standardFormatWithSampleRate: sampleRate,
+                channels: 1
+            ),
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+                DebugLogger.shared.log("AlertEngine: tone format creation failed")
+                return
             }
-        }
-        
-        audioEngine.attach(playerNode)
-        audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
-        
-        do {
-            try audioEngine.start()
-            DebugLogger.shared.log("Tone engine started OK")
-        } catch {
-            DebugLogger.shared.log("Tone engine error: \(error.localizedDescription)")
-        }
-        if !playerNode.isPlaying {
-            playerNode.play()
+            buffer.frameLength = frameCount
+
+            let theta = 2.0 * Double.pi * frequency / sampleRate
+            if let samples = buffer.floatChannelData?[0] {
+                for frame in 0..<Int(frameCount) {
+                    let value = sin(theta * Double(frame))
+                    samples[frame] = value >= 0 ? 1.0 : -1.0 // square wave
+                }
+            }
+
+            let preparedEngine = AVAudioEngine()
+            let preparedPlayer = AVAudioPlayerNode()
+            preparedEngine.attach(preparedPlayer)
+            preparedEngine.connect(
+                preparedPlayer,
+                to: preparedEngine.mainMixerNode,
+                format: format
+            )
+
+            do {
+                try preparedEngine.start()
+                DebugLogger.shared.log("Tone engine started OK")
+            } catch {
+                DebugLogger.shared.log("Tone engine error: \(error.localizedDescription)")
+                return
+            }
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.audioEngine = preparedEngine
+                self.playerNode = preparedPlayer
+                self.toneBuffer = buffer
+                self.toneEngineReady = true
+                if !preparedPlayer.isPlaying {
+                    preparedPlayer.play()
+                }
+            }
         }
     }
     
@@ -636,7 +680,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // LAUNCH-HANG FIX: build the tone engine on the first actual beep
         // (see `ensureToneEngine` / `init` note) instead of at launch.
         ensureToneEngine()
-        guard let buffer = toneBuffer else {
+        guard toneEngineReady, let buffer = toneBuffer else {
             prepareFallbackAlertSound()
             if fallbackAlertSoundID != 0 {
                 AudioServicesPlaySystemSound(fallbackAlertSoundID)
@@ -652,27 +696,17 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // the engine between beeps, which was silently killing every beep
         // after the first).
         if !audioEngine.isRunning {
-            do {
-                try audioEngine.start()
-                DebugLogger.shared.log("AlertEngine: audio engine restarted for beep")
-            } catch {
-                DebugLogger.shared.log("AlertEngine: audio engine restart failed: \(error.localizedDescription)")
-                // Step 4: Fallback — play the alert tone through
-                // AudioServices, which uses its own audio path independent
-                // of AVAudioEngine. The tester report was "no sound coming
-                // out at all when you speed" — the old fallback was
-                // vibration only, which is silent. kSystemSoundID_UserPreferredAlert
-                // is macOS-only, and undocumented numeric system-sound IDs
-                // can silently no-op on newer iOS, so we build a WAV from
-                // the tone buffer and play THAT (guaranteed audible).
-                prepareFallbackAlertSound()
-                if fallbackAlertSoundID != 0 {
-                    AudioServicesPlaySystemSound(fallbackAlertSoundID)
-                } else {
-                    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
-                }
-                return
+            // Restart asynchronously rather than synchronously waiting on the
+            // audio daemon in the GPS/timer callback. The fallback keeps this
+            // warning audible while the graph comes back.
+            restartAudioEngine()
+            prepareFallbackAlertSound()
+            if fallbackAlertSoundID != 0 {
+                AudioServicesPlaySystemSound(fallbackAlertSoundID)
+            } else {
+                AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
             }
+            return
         }
         
         // Step 3: Schedule the buffer WITHOUT stopping the player node.

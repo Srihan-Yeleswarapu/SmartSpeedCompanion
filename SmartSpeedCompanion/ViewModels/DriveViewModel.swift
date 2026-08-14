@@ -8,6 +8,12 @@ import WidgetKit
 import FirebaseAuth
 import FirebaseFirestore
 
+/// Sendable hand-off from a background SwiftData context. The managed model
+/// instances themselves never cross actors; only their stable IDs do.
+private struct DriveModelIDLoadResult: Sendable {
+    let ids: [UUID]
+}
+
 /// Main observable view model that combines LocationManager, SpeedEngine, AlertEngine, and SessionRecorder.
 @MainActor
 public final class DriveViewModel: NSObject, ObservableObject {
@@ -213,24 +219,60 @@ public final class DriveViewModel: NSObject, ObservableObject {
     @Published public var namingAddress: String? = nil
     /// If non-nil, we are editing an existing named location.
     public var editingNamedLocation: NamedLocation? = nil
-    
-    // MARK: - Buffer Profile Management
-    
-    /// Loads all buffer profiles from SwiftData, activating the first one if none are active.
+
+    // MARK: - Deferred SwiftData Loading
+
+    private var alertProfilesLoadTask: Task<Void, Never>?
+    private var vehicleProfilesLoadTask: Task<Void, Never>?
+    private var namedLocationsLoadTask: Task<Void, Never>?
+    private var alertProfilesLoaded = false
+    private var vehicleProfilesLoaded = false
+    private var namedLocationsLoaded = false
+
+    /// Fetches model IDs and ordering off the main actor, then resolves those
+    /// IDs in the UI context. SwiftData's ordered SQL fetch is synchronous; the
+    /// old implementation ran it directly from `.onAppear` while SwiftUI was
+    /// laying out the root view, which is the `NSManagedObjectContext.fetch`
+    /// hang signature in the XR reports.
     public func loadAlertProfiles(context: ModelContext) {
-        let descriptor = FetchDescriptor<SpeedAlertProfile>(sortBy: [SortDescriptor(\.createdAt, order: .forward)])
-        if let profiles = try? context.fetch(descriptor) {
-            alertProfiles = profiles
-            if let activeProfile = profiles.first(where: { $0.isActive }) {
+        guard !alertProfilesLoaded, alertProfilesLoadTask == nil else { return }
+        let container = context.container
+        alertProfilesLoadTask = Task { @MainActor [weak self] in
+            defer { self?.alertProfilesLoadTask = nil }
+            let result = await Task.detached(priority: .utility) { () -> DriveModelIDLoadResult in
+                let backgroundContext = ModelContext(container)
+                let descriptor = FetchDescriptor<SpeedAlertProfile>(
+                    sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+                )
+                let profiles = (try? backgroundContext.fetch(descriptor)) ?? []
+                if !profiles.contains(where: { $0.isActive }), let first = profiles.first {
+                    first.isActive = true
+                    try? backgroundContext.save()
+                }
+                return DriveModelIDLoadResult(ids: profiles.map(\.id))
+            }.value
+
+            // Let the initial SwiftUI appearance/layout transaction finish
+            // before hydrating the main-context model objects. The ordered
+            // fetch is already off-main; this small hand-off avoids starting
+            // even the bounded UI-context fetch in the same frame as the
+            // iPhone XR's cold MapKit initialization.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+
+            guard let self else { return }
+            let ids = result.ids
+            let descriptor = FetchDescriptor<SpeedAlertProfile>(
+                predicate: #Predicate { ids.contains($0.id) }
+            )
+            let profiles = (try? context.fetch(descriptor)) ?? []
+            let byID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+            self.alertProfiles = ids.compactMap { byID[$0] }
+            if let activeProfile = self.alertProfiles.first(where: { $0.isActive }) {
                 // Re-apply the active profile's buffer to the SpeedEngine.
-                // TestFlight feedback: "Profile. Not active" — on app launch
-                // the @AppStorage value could be stale if the profile was
-                // edited in a previous session. Force-sync from SwiftData
-                // so the engine always matches the persisted profile.
                 speedEngine.userBuffer = activeProfile.defaultBuffer
-            } else if let first = profiles.first {
-                activateProfile(first.id, context: context)
             }
+            self.alertProfilesLoaded = true
         }
     }
     
@@ -315,32 +357,59 @@ public final class DriveViewModel: NSObject, ObservableObject {
     
     /// Loads all vehicle profiles from SwiftData, creating a default profile if none exist.
     public func loadVehicleProfiles(context: ModelContext) {
-        let descriptor = FetchDescriptor<VehicleProfile>(sortBy: [SortDescriptor(\.createdAt, order: .forward)])
-        if let profiles = try? context.fetch(descriptor) {
-            if profiles.isEmpty {
-                // Create default "Primary Vehicle" profile from current @AppStorage values
-                let ud = UserDefaults.standard
-                let defaultProfile = VehicleProfile(
-                    name: "Primary Vehicle",
-                    isActive: true,
-                    userBuffer: Int(ud.double(forKey: "userBuffer")),
-                    audioAlertsEnabled: ud.bool(forKey: "audioAlertsEnabled"),
-                    hapticAlertsEnabled: ud.bool(forKey: "hapticAlertsEnabled"),
-                    hapticAlertStyle: ud.string(forKey: "hapticAlertStyle") ?? "strong",
-                    avoidHighways: ud.bool(forKey: "avoidHighways"),
-                    vehicleIconId: ud.string(forKey: "selectedVehicleIconId") ?? "default_blue",
-                    measurementSystem: ud.string(forKey: "measurementSystem") ?? "Imperial"
+        guard !vehicleProfilesLoaded, vehicleProfilesLoadTask == nil else { return }
+        let container = context.container
+        vehicleProfilesLoadTask = Task { @MainActor [weak self] in
+            defer { self?.vehicleProfilesLoadTask = nil }
+            let result = await Task.detached(priority: .utility) { () -> DriveModelIDLoadResult in
+                let backgroundContext = ModelContext(container)
+                let descriptor = FetchDescriptor<VehicleProfile>(
+                    sortBy: [SortDescriptor(\.createdAt, order: .forward)]
                 )
-                context.insert(defaultProfile)
-                try? context.save()
-                vehicleProfiles = [defaultProfile]
-            } else {
-                vehicleProfiles = profiles
-                // Ensure at least one profile is active
-                if !profiles.contains(where: { $0.isActive }), let first = profiles.first {
-                    activateVehicleProfile(first.id, context: context)
+                var profiles = (try? backgroundContext.fetch(descriptor)) ?? []
+                if profiles.isEmpty {
+                    // Create the default in the background context as well;
+                    // the previous main-actor insert/save happened during the
+                    // same SwiftUI appearance pass as the blocking fetch.
+                    let ud = UserDefaults.standard
+                    let defaultProfile = VehicleProfile(
+                        name: "Primary Vehicle",
+                        isActive: true,
+                        userBuffer: Int(ud.double(forKey: "userBuffer")),
+                        audioAlertsEnabled: ud.bool(forKey: "audioAlertsEnabled"),
+                        hapticAlertsEnabled: ud.bool(forKey: "hapticAlertsEnabled"),
+                        hapticAlertStyle: ud.string(forKey: "hapticAlertStyle") ?? "strong",
+                        avoidHighways: ud.bool(forKey: "avoidHighways"),
+                        vehicleIconId: ud.string(forKey: "selectedVehicleIconId") ?? "default_blue",
+                        measurementSystem: ud.string(forKey: "measurementSystem") ?? "Imperial"
+                    )
+                    backgroundContext.insert(defaultProfile)
+                    try? backgroundContext.save()
+                    profiles = [defaultProfile]
+                } else if !profiles.contains(where: { $0.isActive }), let first = profiles.first {
+                    first.isActive = true
+                    try? backgroundContext.save()
                 }
+                return DriveModelIDLoadResult(ids: profiles.map(\.id))
+            }.value
+
+            // Stagger the main-context hydration from the alert-profile load;
+            // both are launched by DriveRootView.onAppear on a cold store.
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+
+            guard let self else { return }
+            let ids = result.ids
+            let descriptor = FetchDescriptor<VehicleProfile>(
+                predicate: #Predicate { ids.contains($0.id) }
+            )
+            let profiles = (try? context.fetch(descriptor)) ?? []
+            let byID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+            self.vehicleProfiles = ids.compactMap { byID[$0] }
+            if let active = self.vehicleProfiles.first(where: { $0.isActive }) {
+                self.applyVehicleProfileSettings(active)
             }
+            self.vehicleProfilesLoaded = true
         }
     }
     
@@ -2441,11 +2510,38 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// (Look Around scratch state was removed in TestFlight 2.2.0 / FB10.)
     // MARK: - Named Locations
     
-    /// Loads all saved named locations from SwiftData.
+    /// Loads all saved named locations from SwiftData without performing the
+    /// ordered SQL fetch on the main actor. The IDs preserve the background
+    /// query's newest-first order when the main-context models are assembled.
     public func loadNamedLocations(context: ModelContext) {
-        let fetchDescriptor = FetchDescriptor<NamedLocation>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
-        if let results = try? context.fetch(fetchDescriptor) {
-            self.namedLocations = results
+        guard !namedLocationsLoaded, namedLocationsLoadTask == nil else { return }
+        let container = context.container
+        namedLocationsLoadTask = Task { @MainActor [weak self] in
+            defer { self?.namedLocationsLoadTask = nil }
+            let result = await Task.detached(priority: .utility) { () -> DriveModelIDLoadResult in
+                let backgroundContext = ModelContext(container)
+                let descriptor = FetchDescriptor<NamedLocation>(
+                    sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+                )
+                let locations = (try? backgroundContext.fetch(descriptor)) ?? []
+                return DriveModelIDLoadResult(ids: locations.map(\.id))
+            }.value
+
+            // Named locations are not needed to draw the first map frame;
+            // hydrate them after the profile loads so the XR never receives
+            // three SwiftData fetches in one appearance transaction.
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+
+            guard let self else { return }
+            let ids = result.ids
+            let descriptor = FetchDescriptor<NamedLocation>(
+                predicate: #Predicate { ids.contains($0.id) }
+            )
+            let locations = (try? context.fetch(descriptor)) ?? []
+            let byID = Dictionary(uniqueKeysWithValues: locations.map { ($0.id, $0) })
+            self.namedLocations = ids.compactMap { byID[$0] }
+            self.namedLocationsLoaded = true
         }
     }
     
