@@ -123,10 +123,17 @@ public final class BackgroundHapticBridge {
 
         let content = UNMutableNotificationContent()
         content.title = "Speed Alert"
-        let unit = SpeedFormatting.measurementSystem() == "Metric" ? "km/h" : "mph"
+        let measurementSystem = SpeedFormatting.measurementSystem()
+        let unit = measurementSystem == "Metric" ? "km/h" : "mph"
+        // Speed is already in the active display unit; the stored limit is
+        // canonical MPH and must be converted for a metric notification.
+        let displayLimit = SpeedFormatting.displayLimit(
+            forMph: limit,
+            measurementSystem: measurementSystem
+        )
         let speedText = "\(Int(speed.rounded())) \(unit)"
         content.body = limit > 0
-            ? "You're over the speed limit — \(speedText) (limit \(limit) \(unit))"
+            ? "You're over the speed limit — \(speedText) (limit \(displayLimit) \(unit))"
             : "You're over the speed limit — \(speedText)"
         content.threadIdentifier = "speeding-alert"
 

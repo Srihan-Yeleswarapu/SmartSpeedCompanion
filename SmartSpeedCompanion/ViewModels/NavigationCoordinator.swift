@@ -334,8 +334,10 @@ public final class NavigationCoordinator: ObservableObject {
 
     /// Index of the current MKRoute.Step being guided through.
     private var currentStepIndex: Int = 0
-    /// Most recent navigation fix used to refresh Apple's traffic-aware ETA.
+    /// Most recent navigation fix used to refresh Apple's traffic-aware ETA
+    /// and distinguish real vehicle movement from stationary GPS jitter.
     private var lastNavigationLocation: CLLocation?
+    private var lastNavigationIsMoving = false
     /// Last matched remaining distance. GPS can briefly snap to an earlier
     /// parallel segment; never let that turn make the ETA jump backward.
     private var lastMatchedRemainingDistance: CLLocationDistance = 0
@@ -356,9 +358,14 @@ public final class NavigationCoordinator: ObservableObject {
     private var rerouteTimer: Timer?
     private var trafficRefreshInFlight = false
     /// Per-step announcement gating: key is step index, value is a set of
-    /// stage flags ("initial", "approaching", "immediate") so each cue
-    /// fires AT MOST ONCE per step.
+    /// stage flags ("initial", "immediate") so each cue fires AT MOST ONCE
+    /// per step. Guidance is also globally time-gated below so adjacent plaza
+    /// steps cannot produce a rapid stream of spoken prompts.
     private var stepStageFlags: [Int: Set<String>] = [:]
+    private var lastGuidanceAnnouncementAt: Date = .distantPast
+    private let minimumGuidanceAnnouncementInterval: TimeInterval = 4.0
+    private let guidanceMovementSpeedMps: CLLocationSpeed = 2.2
+    private let guidanceMinimumDisplacementSpeedMps: CLLocationSpeed = 0.75
     /// Distance to turn on the previous tick, used to detect "passed the
     /// turn" (distance was very close, now it's climbing again).
     private var lastDistanceToTurn: CLLocationDistance? = nil
@@ -1095,9 +1102,12 @@ public final class NavigationCoordinator: ObservableObject {
         arrivalTeardownTask?.cancel()
         arrivalTeardownTask = nil
 
-        // Reset flags so we can re-announce the approach to the first turn
+        // Reset flags so we can re-announce the first turn on a new route.
         self.stepStageFlags.removeAll()
+        self.lastGuidanceAnnouncementAt = .distantPast
         self.lastDistanceToTurn = nil
+        self.lastNavigationLocation = nil
+        self.lastNavigationIsMoving = false
         self.spokenCameraKeys.removeAll()
 
         // Stop edits or a newer navigation start can occur while route setup
@@ -1289,6 +1299,8 @@ public final class NavigationCoordinator: ObservableObject {
         let teardownGeneration = navigationLifecycleGeneration
         self.currentRoute = nil
         self.lastNavigationLocation = nil
+        self.lastNavigationIsMoving = false
+        self.lastGuidanceAnnouncementAt = .distantPast
         self.lastMatchedRemainingDistance = 0
         self.lastTrafficRefreshDistance = 0
         self.trafficRefreshGeneration &+= 1
@@ -1349,7 +1361,10 @@ public final class NavigationCoordinator: ObservableObject {
     /// step progression, voice announcements, and ETA refresh.
     public func updateNavigationProgress(at location: CLLocation) {
         guard !isCompletingNavigation, let route = currentRoute else { return }
+        let previousLocation = lastNavigationLocation
+        let isMoving = isReliablyMoving(location, comparedTo: previousLocation)
         lastNavigationLocation = location
+        lastNavigationIsMoving = isMoving
         let steps = route.steps
 
         // Arrival must not depend on the driver still moving. A final GPS fix
@@ -1386,10 +1401,11 @@ public final class NavigationCoordinator: ObservableObject {
         let distanceToRoute = location.distance(from: CLLocation(latitude: nearestPoint.latitude, longitude: nearestPoint.longitude))
 
         if distanceToRoute > 150 { // 150 m is the industry standard for "Off Route"
-            // Do NOT reroute when stationary or very slow (stopped at a light, parking lot).
-            // This prevents both false positives and the map going "bonkers" in car parks.
-            let currentSpeed = location.speed // m/s
-            if currentSpeed < 2.2 { // < ~5 mph
+            // Do NOT reroute when stationary or very slow (stopped at a light,
+            // parking lot, or while the user is still setting directions). This
+            // prevents GPS jitter from changing the route and speaking over the
+            // driver before the vehicle has actually moved.
+            if !isMoving {
                 return
             }
             if !self.isRerouting {
@@ -1455,11 +1471,18 @@ public final class NavigationCoordinator: ObservableObject {
                 self.nextManeuverImageName = getImageForManeuver(activeInstruction)
             }
 
-            // Trigger spoken alerts
-            processVoiceAnnouncements(for: currentStepIndex, distanceToTurn: distanceToTurn, steps: steps, speed: location.speed)
+            // Trigger spoken alerts only after a real movement fix. A parked
+            // phone can report changing distances from GPS jitter, but it must
+            // not progress or announce route steps while stationary.
+            processVoiceAnnouncements(
+                for: currentStepIndex,
+                distanceToTurn: distanceToTurn,
+                steps: steps,
+                speed: location.speed,
+                isMoving: isMoving
+            )
 
             // 3. STEP PROGRESSION: Advance to next step once we pass the point
-            let isMoving = location.speed > 2.0
             // Higher thresholds prevent premature advancement at traffic lights.
             // At speed (>20 m/s) use 40m; otherwise 25m.
             let advanceThreshold = location.speed > 20 ? 40.0 : 25.0
@@ -1476,7 +1499,7 @@ public final class NavigationCoordinator: ObservableObject {
             // Do not continue this tick with the completed leg's local route.
             if advancedToNextLeg { return }
 
-            lastDistanceToTurn = distanceToTurn
+            lastDistanceToTurn = isMoving ? distanceToTurn : nil
         }
 
         // 4. ETA REFRESH: Use the latest Apple traffic-aware snapshot,
@@ -1544,7 +1567,9 @@ public final class NavigationCoordinator: ObservableObject {
     /// 500 ms GPS sink). Triggers a recalc via `onRerouteRequest` if the
     /// user drifts > 35 m AND the last reroute was more than 3 s ago.
     public func checkOffRouteStatus(at location: CLLocation) {
-        guard let route = currentRoute, !isCalculatingReroute else { return }
+        guard let route = currentRoute,
+              !isCalculatingReroute,
+              lastNavigationIsMoving else { return }
 
         let distance = distanceToPolyline(location, polyline: route.polyline)
 
@@ -1568,22 +1593,51 @@ public final class NavigationCoordinator: ObservableObject {
         }
     }
 
+    /// Returns true only when Core Location reports vehicle-scale movement
+    /// and the coordinates corroborate it. Speed alone can be non-zero when a
+    /// phone is stationary in a plaza, so the displacement check prevents
+    /// route-step advancement and speech from being driven by GPS jitter.
+    private func isReliablyMoving(_ location: CLLocation, comparedTo previous: CLLocation?) -> Bool {
+        guard location.speed >= guidanceMovementSpeedMps else { return false }
+        if location.speedAccuracy >= 0 && location.speedAccuracy > 5.0 {
+            return false
+        }
+        guard let previous else { return true }
+
+        let interval = location.timestamp.timeIntervalSince(previous.timestamp)
+        guard interval > 0, interval <= 10 else { return false }
+        let displacementSpeed = location.distance(from: previous) / interval
+        return displacementSpeed >= guidanceMinimumDisplacementSpeedMps
+    }
+
     /**
      Handles the logic for spoken turn-by-turn guidance.
      Provides exactly two announcements per step:
      1) Right after turning onto a new road (long distance)
      2) Right before the upcoming turn
 
-     Plus a "Merging in <dist>." / "In <dist>, <instr>." third cue at the
-     643 m / 0.4 mi mark (TestFlight 2.2.x enhancement).
+     There are only two cues per step: an advance warning and the immediate
+     maneuver. A global four-second cooldown prevents adjacent short steps
+     from producing a rapid stream of prompts.
      */
-    private func processVoiceAnnouncements(for stepIndex: Int, distanceToTurn: Double, steps: [MKRoute.Step], speed: Double) {
+    private func processVoiceAnnouncements(
+        for stepIndex: Int,
+        distanceToTurn: Double,
+        steps: [MKRoute.Step],
+        speed: Double,
+        isMoving: Bool
+    ) {
+        // The route can be previewed and GPS can wander while the phone is
+        // sitting still. Turn-by-turn speech is intentionally movement-gated;
+        // arrival detection remains separate and still works at a stop.
+        guard isMoving else { return }
+
         if stepStageFlags[stepIndex] == nil {
             stepStageFlags[stepIndex] = []
         }
         var flags = stepStageFlags[stepIndex]!
 
-        // Use current instruction unless it's generic, then use next
+        // Use current instruction unless it's generic, then use next.
         var activeInstruction = steps[stepIndex].instructions
         if instructionIsGenericLabel(activeInstruction) {
             var nextIdx = stepIndex + 1
@@ -1595,80 +1649,65 @@ public final class NavigationCoordinator: ObservableObject {
             }
         }
 
-        if activeInstruction.isEmpty { return }
+        guard !activeInstruction.isEmpty else {
+            stepStageFlags[stepIndex] = flags
+            return
+        }
 
-        // Immediate announcement threshold based on speed (higher speed = more warning)
-        // Adjusting downwards to prevent "too early" announcements reported by user.
-        // Highway (~50mph+): 220m (720ft / 0.15 mile) for the final "Turn" prompt.
-        // City: 60m (~200ft) for the final prompt.
+        // Highway (~50mph+): 220m (720ft / 0.15 mile) for the final prompt.
+        // City: 60m (~200ft). There are deliberately only TWO cues per step:
+        // an advance warning and the immediate maneuver. The former 643m
+        // "approaching" cue made an 800ft prompt followed by a 700ft prompt
+        // even when the vehicle had barely moved.
         let immediateThreshold = speed > 22.0 ? 220.0 : 60.0
 
-        // 1. Initial Advance Warning (Right after previous turn or start)
+        // Do not let adjacent short plaza steps speak more often than once
+        // every four seconds. This is independent of AVSpeechSynthesizer's
+        // rendering state, so a short completed utterance cannot immediately
+        // unlock another GPS-jitter prompt.
+        func canSpeakCue() -> Bool {
+            !voiceAnnouncer.isSpeaking &&
+            Date().timeIntervalSince(lastGuidanceAnnouncementAt) >= minimumGuidanceAnnouncementInterval
+        }
+
+        func recordCue(_ message: String) {
+            announce(message)
+            lastGuidanceAnnouncementAt = Date()
+        }
+
+        // 1. Initial advance warning.
         if !flags.contains("initial") {
-            // Only give advance warning if we aren't already right on top of the turn.
-            // Do not mark the stage until it was actually accepted by the
-            // announcer; this lets the next GPS tick retry after a prior cue
-            // finishes instead of silently losing the instruction.
             if distanceToTurn > immediateThreshold + 50 {
-                guard !voiceAnnouncer.isSpeaking else {
+                guard canSpeakCue() else {
                     stepStageFlags[stepIndex] = flags
                     return
                 }
                 let formattedDist = formatDistance(distanceToTurn)
-                if distanceToTurn > 3218 { // > 2 miles, give a "continue"
+                if distanceToTurn > 3218 {
                     let routeName = currentRoute?.name ?? "the road"
-                    announce("Continue on \(routeName) for \(formattedDist).")
+                    recordCue("Continue on \(routeName) for \(formattedDist).")
                 } else {
-                    announce("In \(formattedDist), \(activeInstruction)")
+                    recordCue("In \(formattedDist), \(activeInstruction)")
                 }
             }
+            // Once the turn is inside the advance window, there is no reason
+            // to issue a late advance cue; the immediate cue below owns it.
             flags.insert("initial")
         }
 
-        // 1.5 Approaching Warning (TestFlight 2.2.x enhancement): the third
-        // cue, sitting ~643 m / 0.4 mi out from the maneuver — between the
-        // initial "advance" and the immediate "turn" cues. Fires ONCE per
-        // step (gated by the new "approaching" flag in stepStageFlags),
-        // and only AFTER `initial` has spoken while we're still above the
-        // immediate threshold — that gates the cue to genuine long steps
-        // (e.g. blocks >= 643 m) so we don't compress three back-to-back
-        // utterances on short turns.
-        //
-        // Highway maneuvers whose instruction text contains "Merge onto" /
-        // "Take exit" get a "Merging in .4 mile" prefix so the user hears
-        // a clean highway-transition reminder BEFORE the bare instruction
-        // fires at 220 m (e.g. "Take exit 142"). City/local steps fall
-        // through to the existing "In <dist>, <instruction>" phrasing.
-        if flags.contains("initial") &&
-           distanceToTurn <= 643.0 &&
-           distanceToTurn > immediateThreshold &&
-           !flags.contains("approaching") {
-            guard !voiceAnnouncer.isSpeaking else {
-                stepStageFlags[stepIndex] = flags
-                return
-            }
-            let approachingDist = formatDistance(distanceToTurn)
-            let lower = activeInstruction.lowercased()
-            if lower.contains("merge onto") || lower.contains("take exit") {
-                announce("Merging in \(approachingDist).")
-            } else {
-                announce("In \(approachingDist), \(activeInstruction)")
-            }
-            flags.insert("approaching")
-        }
-
-        // 2. Immediate Turning Warning (Right before the turn)
+        // 2. Immediate turning warning.
         if distanceToTurn <= immediateThreshold && !flags.contains("immediate") {
-            guard !voiceAnnouncer.isSpeaking else {
+            guard canSpeakCue() else {
                 stepStageFlags[stepIndex] = flags
                 return
             }
-            announce(activeInstruction)
+            recordCue(activeInstruction)
             flags.insert("immediate")
         }
 
         stepStageFlags[stepIndex] = flags
     }
+
 
     /// Gives the arrival utterance time to reach the CarPlay audio route
     /// before endNavigation tears down the shared AVAudioSession. The old

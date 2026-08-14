@@ -22,8 +22,17 @@ public final class SpeedEngine: ObservableObject {
     private let roadGeocoder = RoadGeocoder.shared
     private var cancellables = Set<AnyCancellable>()
 
+    /// Internal speed state is always MPH. The prior 0.15 EMA plus a half-speed
+    /// seed made the HUD materially under-report for the first several seconds
+    /// after acceleration, and the under-report also delayed overspeed alerts.
+    /// Keep a modest filter for GPS jitter while responding quickly to real
+    /// acceleration/deceleration.
     private var smoothedSpeed: Double = 0.0
-    private let smoothingFactor: Double = 0.15
+    private let smoothingFactor: Double = 0.35
+    private let rapidSmoothingFactor: Double = 0.65
+    private let rapidChangeThresholdMph: Double = 10.0
+    private var lastSpeedSampleTimestamp: Date?
+    private var lastValidSpeedTimestamp: Date?
 
     // ── Zero-speed deadband ──────────────────────────────────
     /// Number of consecutive raw readings that must fall below the
@@ -36,11 +45,20 @@ public final class SpeedEngine: ObservableObject {
     private let minSpeedThreshold: Double = 3.0
     /// Raw speed (mph) below which we force the display to exactly 0.
     private let forceZeroThreshold: Double = 0.8
+    /// If Core Location cannot provide a trustworthy speed for this long,
+    /// do not leave the last moving speed frozen on screen indefinitely.
+    private let invalidSpeedTimeout: TimeInterval = 3.0
 
     /// Fires the initial HERE batch cache setup once when the first valid,
     /// accurate GPS location arrives. After the first trigger, this flag
     /// is set so it never fires again.
     private var hasFiredInitialSetup: Bool = false
+
+    /// Only one location-driven HERE resolution may publish at a time. A
+    /// slower response for an older coordinate must never replace the limit
+    /// for the road the user is currently on.
+    private var speedLimitResolutionTask: Task<Void, Never>?
+    private var speedLimitResolutionGeneration: UInt64 = 0
 
     // No own throttle on road-name resolution. `RoadGeocoder` carries its
     // own 50m grid-cell cache (see SmartSpeedCompanion/Core/RoadGeocoder.swift)
@@ -71,28 +89,44 @@ public final class SpeedEngine: ObservableObject {
     
     private func processLocation(_ location: CLLocation) {
         let isMetric = measurementSystem == "Metric"
-        
-        // 1. Validation & Quality Filtering
-        // If GPS returns -1 speed (invalid) or accuracy is extremely poor (>10m/s), 
-        // we skip the update to prevent beeping from jitter.
-        guard location.speed >= 0 else { return }
-        
-        // Use speedAccuracy if available
-        if location.speedAccuracy >= 0 && location.speedAccuracy > 5.0 {
-            // If GPS is reporting +/- 11 mph of uncertainty, it's too noisy for live display
-            return
+
+        // Speed can be unavailable (-1) or too uncertain for a live speedometer.
+        // We still run the coordinate-driven speed-limit lookup below so a
+        // stationary user can resolve the posted limit before moving.
+        if let rawSpeedMph = trustworthySpeedMph(from: location) {
+            updateDisplayedSpeed(rawSpeedMph, timestamp: location.timestamp, isMetric: isMetric)
+        } else {
+            expireUnavailableSpeedIfNeeded()
         }
 
-        // 2. Conversion and Smoothing
-        // Use m/s to mph as the base internal unit for smoothing
-        let rawSpeedMph = location.speed * 2.23694
+        scheduleSpeedLimitResolution(for: location)
+    }
 
-        // ── Zero-speed deadband ────────────────────────────────
-        // If GPS says we're barely moving, accumulate a deadband counter.
-        // Once enough consecutive sub-threshold readings stack up, force
-        // the displayed speed to 0 — this kills the "phone on desk shows
-        // 5 mph" noise.  We do NOT return early; the speed-limit Task
-        // below must still run for initial HERE setup and limit fetching.
+    /// Core Location's `speedAccuracy` is measured in m/s. Reject only fixes
+    /// whose error exceeds 5 m/s; a missing accuracy value (-1) is allowed when
+    /// the speed itself is valid (common on simulators and some background
+    /// fixes).
+    private func trustworthySpeedMph(from location: CLLocation) -> Double? {
+        guard location.speed >= 0 else { return nil }
+        if location.speedAccuracy >= 0 && location.speedAccuracy > 5.0 {
+            return nil
+        }
+        return location.speed * 2.23694
+    }
+
+    private func updateDisplayedSpeed(
+        _ rawSpeedMph: Double,
+        timestamp: Date,
+        isMetric: Bool
+    ) {
+        lastValidSpeedTimestamp = timestamp
+
+        // A new drive, foreground return, or GPS gap must not inherit the
+        // previous drive's filtered speed.
+        let hasSampleGap = lastSpeedSampleTimestamp.map {
+            timestamp.timeIntervalSince($0) > 5.0
+        } ?? true
+
         if rawSpeedMph < minSpeedThreshold {
             zeroDeadbandCount += 1
         } else {
@@ -100,91 +134,119 @@ public final class SpeedEngine: ObservableObject {
         }
 
         if rawSpeedMph < forceZeroThreshold || zeroDeadbandCount >= minZerosBeforeStop {
-            // Clamp display to zero without early-returning
             smoothedSpeed = 0
             zeroDeadbandCount = minZerosBeforeStop
-            self.speed = 0
-            self.status = .safe
+            speed = 0
+            status = .safe
+        } else if rawSpeedMph < minSpeedThreshold {
+            // Decelerations into the low-speed range should be visible now;
+            // the deadband only decides when to clamp persistent GPS noise to
+            // zero, not whether the HUD may remain at the old cruising speed.
+            smoothedSpeed = rawSpeedMph
+            let displaySpeed = isMetric ? smoothedSpeed * 1.60934 : smoothedSpeed
+            speed = max(0, displaySpeed)
+            updateStatus(speed: speed, limit: Double(limit))
         } else {
-            // Apply EMA filter: Smoothed = (New × Alpha) + (Old × (1 − Alpha))
-            // The lower factor (0.15 vs the old 0.4) aggressively dampens
-            // GPS noise spikes without feeling sluggish on acceleration
-            // because the raw input is still blended at 1 Hz.
-            if smoothedSpeed == 0 && rawSpeedMph > 0 {
-                // First movement — seed with a damped start
-                smoothedSpeed = rawSpeedMph * 0.5
+            if smoothedSpeed == 0 || hasSampleGap {
+                // Seed with the actual validated speed. Seeding at 50% was the
+                // main source of an obviously wrong speed immediately after
+                // starting or accelerating into traffic.
+                smoothedSpeed = rawSpeedMph
             } else {
-                smoothedSpeed = (rawSpeedMph * smoothingFactor) + (smoothedSpeed * (1.0 - smoothingFactor))
+                let factor = abs(rawSpeedMph - smoothedSpeed) >= rapidChangeThresholdMph
+                    ? rapidSmoothingFactor
+                    : smoothingFactor
+                smoothedSpeed += factor * (rawSpeedMph - smoothedSpeed)
             }
 
             let displaySpeed = isMetric ? smoothedSpeed * 1.60934 : smoothedSpeed
-            let finalSpeed = max(0, displaySpeed)
-            self.speed = finalSpeed
-            updateStatus(speed: finalSpeed, limit: Double(self.limit))
+            speed = max(0, displaySpeed)
+            updateStatus(speed: speed, limit: Double(limit))
         }
 
-        // ── Speed-limit & initial-setup Task block always runs ──
-        
-        Task { @MainActor in
-            // 1. Accurate GPS check
-            guard location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 15 else {
-                return
-            }
-            
-            // 2. Movement check — dynamic interval: 80m on surface streets, 250m on highways.
-            let threshold: CLLocationDistance = location.speed >= 20 ? highwayFetchDistance : surfaceFetchDistance
-            if let lastLoc = lastFetchLocation,
-            location.distance(from: lastLoc) < threshold {
-                return
-            }
-            lastFetchLocation = location
-            // The previous answer is no longer authoritative while this
-            // location is being resolved. This immediately stops an old
-            // overspeed alert instead of allowing it to fire during the
-            // network/provider wait.
-            // SpeedEngine is the single source of truth for the limit shown
-            // by the HUD and for alert eligibility. Clear the old value before
-            // the async HERE lookup so a stale limit can never remain paired
-            // with a new location while the UI already shows No Data.
-            self.limit = 0
-            self.isLimitResolved = false
-            self.status = .safe
-            speedLimitService.beginResolution()
+        lastSpeedSampleTimestamp = timestamp
+    }
 
-            // ── Initial HERE batch cache setup ───────────────────
-            // Fire once on the first valid GPS tick to populate the
-            // local batch cache with speed limits from a 2.5km grid.
-            if !hasFiredInitialSetup {
-                hasFiredInitialSetup = true
-                Task {
-                    // Fire initial batch cache setup to populate the
-                    // local cache with speed limits for a ~2.5km grid.
-                    await HEREGeofenceManager.shared.performInitialSetup(
-                        around: location.coordinate
-                    )
-                    // Start geofence monitoring for just-in-time batch
-                    // fetches when driving into uncached areas.
-                    HEREGeofenceManager.shared.configure(
-                        locationManager: self.locationManager
-                    )
-                }
+    private func expireUnavailableSpeedIfNeeded() {
+        guard let lastValidSpeedTimestamp,
+              Date().timeIntervalSince(lastValidSpeedTimestamp) >= invalidSpeedTimeout else {
+            return
+        }
+        smoothedSpeed = 0
+        speed = 0
+        status = .safe
+        zeroDeadbandCount = minZerosBeforeStop
+    }
+
+    /// Starts a coordinate-driven HERE resolution if the user has moved far
+    /// enough for a new lookup. Results are generation-checked before they can
+    /// update the HUD, which prevents an older network response from restoring
+    /// a wrong limit and suppressing or triggering the wrong alert.
+    private func scheduleSpeedLimitResolution(for location: CLLocation) {
+        guard location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 15 else {
+            return
+        }
+
+        let threshold: CLLocationDistance = location.speed >= 20
+            ? highwayFetchDistance
+            : surfaceFetchDistance
+        if let lastLoc = lastFetchLocation,
+           location.distance(from: lastLoc) < threshold {
+            return
+        }
+
+        lastFetchLocation = location
+        speedLimitResolutionTask?.cancel()
+        speedLimitResolutionGeneration &+= 1
+        let generation = speedLimitResolutionGeneration
+
+        // The previous answer is no longer authoritative while this location
+        // is being resolved. This immediately stops an old overspeed alert
+        // instead of allowing it to fire during the network/provider wait.
+        limit = 0
+        isLimitResolved = false
+        status = .safe
+        speedLimitService.beginResolution()
+
+        // ── Initial HERE batch cache setup ───────────────────
+        // Fire once on the first valid GPS tick to populate the local batch
+        // cache with speed limits from a 2.5km grid.
+        if !hasFiredInitialSetup {
+            hasFiredInitialSetup = true
+            Task {
+                await HEREGeofenceManager.shared.performInitialSetup(
+                    around: location.coordinate
+                )
+                HEREGeofenceManager.shared.configure(
+                    locationManager: self.locationManager
+                )
             }
+        }
 
-            let carHeading = location.course >= 0 ? location.course : nil
-            let currentMph = isMetric ? self.speed * 0.621371 : self.speed
+        let currentSpeedMph = trustworthySpeedMph(from: location) ?? 0
+        speedLimitResolutionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
 
-            // 3. The Corrected Call
-            // No 'try' or 'do-catch' needed anymore
-            let currentLimit = await speedLimitService.updateSpeedLimit(
+            let roadName = await self.resolvedRoadName(at: location.coordinate)
+            guard !Task.isCancelled,
+                  self.speedLimitResolutionGeneration == generation else { return }
+
+            let currentLimit = await self.speedLimitService.updateSpeedLimit(
                 at: location.coordinate,
-                heading: carHeading,
-                currentSpeedMph: currentMph,
-                roadName: await resolvedRoadName(at: location.coordinate)
+                heading: location.course >= 0 ? location.course : nil,
+                currentSpeedMph: currentSpeedMph,
+                roadName: roadName
             )
+
+            guard !Task.isCancelled,
+                  self.speedLimitResolutionGeneration == generation else { return }
 
             self.limit = currentLimit
             self.isLimitResolved = currentLimit > 0
-            updateStatus(speed: self.speed, limit: Double(currentLimit))
+            self.updateStatus(speed: self.speed, limit: Double(currentLimit))
+            if self.speedLimitResolutionGeneration == generation {
+                self.speedLimitResolutionTask = nil
+            }
         }
     }
 
@@ -204,10 +266,35 @@ public final class SpeedEngine: ObservableObject {
         return await roadGeocoder.resolveRoadContext(at: coordinate)?.roadName
     }
     
+    /// Resets transient GPS and limit state at the beginning of a new drive.
+    /// Without this boundary, a quick stop/start could inherit the previous
+    /// drive's filtered speed or skip the first HERE lookup because the new
+    /// coordinate was still inside the prior distance throttle.
+    public func resetForNewDrive() {
+        speedLimitResolutionTask?.cancel()
+        speedLimitResolutionTask = nil
+        speedLimitResolutionGeneration &+= 1
+        smoothedSpeed = 0
+        lastSpeedSampleTimestamp = nil
+        lastValidSpeedTimestamp = nil
+        zeroDeadbandCount = 0
+        lastFetchLocation = nil
+        speed = 0
+        limit = 0
+        isLimitResolved = false
+        status = .safe
+        speedLimitService.beginResolution()
+    }
+
     /// Marks the current limit as unresolved before a direct/manual lookup.
     /// DriveViewModel uses this when it asks SmartSpeedLimitService outside
     /// the normal GPS-resolution task.
-    public func beginLimitResolution() {
+    @discardableResult
+    public func beginLimitResolution() -> UInt64 {
+        speedLimitResolutionTask?.cancel()
+        speedLimitResolutionGeneration &+= 1
+        let token = speedLimitResolutionGeneration
+
         // Clear the displayed limit immediately. Manual and heading-triggered
         // refreshes must have the same unknown-limit semantics as GPS refreshes:
         // neutral HUD, no red state, and no alert audio/haptics while HERE is
@@ -216,11 +303,19 @@ public final class SpeedEngine: ObservableObject {
         isLimitResolved = false
         status = .safe
         speedLimitService.beginResolution()
+        return token
     }
 
     /// Applies a limit returned by a direct lookup (manual refresh or a
     /// heading-triggered fetch) through the same state path as GPS updates.
-    public func applyResolvedLimit(_ newLimit: Int) {
+    /// If a newer GPS/manual resolution started while the request was in
+    /// flight, discard this stale completion.
+    public func applyResolvedLimit(_ newLimit: Int, resolutionToken: UInt64? = nil) {
+        if let resolutionToken,
+           resolutionToken != speedLimitResolutionGeneration {
+            return
+        }
+        speedLimitResolutionTask = nil
         limit = newLimit
         isLimitResolved = newLimit > 0
         updateStatus(speed: speed, limit: Double(newLimit))

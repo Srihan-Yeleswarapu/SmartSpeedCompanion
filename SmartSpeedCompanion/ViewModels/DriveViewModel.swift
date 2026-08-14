@@ -1059,6 +1059,10 @@ public final class DriveViewModel: NSObject, ObservableObject {
         // Live Activity.
         guard !isRecording else { return }
         DebugLogger.shared.log("Drive session STARTED")
+        // Reset filtered speed and location-limit throttle at the explicit
+        // drive boundary. A new session must not inherit a prior drive's
+        // speed or wait 80m before its first HERE resolution.
+        speedEngine.resetForNewDrive()
         locationManager.requestAuthorization()
         // If the background-vibration fallback is enabled, settle
         // notification permission while the app is foregrounded at this
@@ -2249,7 +2253,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
         }
 
         isRefreshingSpeedLimit = true
-        speedEngine.beginLimitResolution()
+        let resolutionToken = speedEngine.beginLimitResolution()
         defer { isRefreshingSpeedLimit = false }
 
         // Call SmartSpeedLimitService directly so we hit the freshly-plumbed
@@ -2275,7 +2279,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
             roadName: roadName,
             forceRefresh: true
         )
-        speedEngine.applyResolvedLimit(refreshedLimit)
+        speedEngine.applyResolvedLimit(refreshedLimit, resolutionToken: resolutionToken)
         DebugLogger.shared.log("manualRefetchSpeedLimit: completed (limit=\(refreshedLimit)).")
     }
 
@@ -2355,7 +2359,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
         // fetch. Passing nil here forced the resolver into spatial-only mode
         // exactly at turns, which could select a nearby 25 mph cross-street.
         let roadName = await RoadGeocoder.shared.resolveRoadContext(at: coord)?.roadName
-        speedEngine.beginLimitResolution()
+        let resolutionToken = speedEngine.beginLimitResolution()
         let refreshedLimit = await SmartSpeedLimitService.shared.updateSpeedLimit(
             at: coord,
             heading: heading,
@@ -2363,7 +2367,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
             roadName: roadName,
             forceRefresh: false
         )
-        speedEngine.applyResolvedLimit(refreshedLimit)
+        speedEngine.applyResolvedLimit(refreshedLimit, resolutionToken: resolutionToken)
         lastSpeedLimitFetchHeading = heading
         DebugLogger.shared.log("DriveViewModel: heading-delta refetch (delta=\(Int(delta))°).")
     }

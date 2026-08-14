@@ -229,6 +229,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     // MARK: - Monitoring
     private func startMonitoring() {
         consecutiveSeconds = 0
+        lastBeepTime = .distantPast
         
         // Keep media interrupted for the whole speeding episode. The user
         // must not miss the next warning while the car remains over the
@@ -246,6 +247,21 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         HapticAlertManager.shared.startSpeedingPulse(
             severity: computedSeverity()
         )
+
+        // Do not make the driver wait for the first one-second timer tick.
+        // A valid over-limit transition should produce an audible cue now;
+        // the timer below supplies the sustained reminders.
+        consecutiveSeconds = 1
+        audioAlertActive = isAudioAlertsEnabled
+        if !isSnoozed {
+            lastBeepTime = Date()
+            triggerAlert()
+            BackgroundHapticBridge.shared.handleSpeedingTick(
+                hapticsEnabled: isHapticAlertsEnabled,
+                speed: speedEngine?.speed ?? 0,
+                limit: speedEngine?.limit ?? 0
+            )
+        }
 
         timerCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
@@ -292,7 +308,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 }
 
                 if self.consecutiveSeconds >= 1 {
-                    self.audioAlertActive = true
+                    self.audioAlertActive = self.isAudioAlertsEnabled
 
                     let now = Date()
                     if now.timeIntervalSince(self.lastBeepTime) >= 2.0 {
@@ -303,6 +319,11 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                         // when the beep resumes.
                         if !self.isSnoozed {
                             self.triggerAlert()
+                            BackgroundHapticBridge.shared.handleSpeedingTick(
+                                hapticsEnabled: self.isHapticAlertsEnabled,
+                                speed: self.speedEngine?.speed ?? 0,
+                                limit: self.speedEngine?.limit ?? 0
+                            )
                         }
                     }
                 }
@@ -321,6 +342,8 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // kill the looping pulse immediately so the phone stops
         // vibrating.
         HapticAlertManager.shared.stopSpeedingPulse()
+        BackgroundHapticBridge.shared.reset()
+        lastBeepTime = .distantPast
         
         // Restore the previous media app as soon as the user is no longer
         // over the limit. Navigation speech can keep its own independent
@@ -340,8 +363,13 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// ≈ 0.15, +32 km/h ≈ 1.0).
     private func computedSeverity() -> Double {
         guard let engine = speedEngine, engine.limit > 0 else { return 0.5 }
-        // speed and limit are in the active display unit (mph or km/h).
-        let threshold = Double(engine.limit + engine.userBuffer)
+        // `limit` and `userBuffer` are stored in MPH while `speed` is already
+        // in the active display unit. Convert the threshold before measuring
+        // severity so metric users get the same alert intensity as imperial
+        // users.
+        let isMetric = engine.measurementSystem == "Metric"
+        let thresholdMph = Double(engine.limit + engine.userBuffer)
+        let threshold = isMetric ? thresholdMph * 1.60934 : thresholdMph
         let overspeedAmount = max(0, engine.speed - threshold)
         return min(1.0, max(0.1, overspeedAmount / 20.0))
     }
@@ -533,13 +561,14 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// undocumented numeric system-sound IDs can silently no-op on newer
     /// iOS, so a file-based sound is the only guaranteed-audible option.
     private func prepareFallbackAlertSound() {
-        guard fallbackAlertSoundID == 0,
-              let buffer = toneBuffer,
-              let channel = buffer.floatChannelData?[0] else { return }
+        guard fallbackAlertSoundID == 0 else { return }
 
-        let frameCount = Int(buffer.frameLength)
-        guard frameCount > 0 else { return }
-        let sampleRate = Int(buffer.format.sampleRate)
+        // Generate the fallback independently of AVAudioEngine. If the audio
+        // graph failed before its PCM buffer was created, the fallback still
+        // has a real tone to play through AudioServices.
+        let frameCount = 11_025 // 250 ms at 44.1 kHz
+        let sampleRate = 44_100
+        let frequency = 1_052.0
 
         // 16-bit PCM mono WAV (44-byte header).
         func le16(_ v: UInt16) -> [UInt8] {
@@ -567,8 +596,9 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         wav.append(contentsOf: le32(dataSize))
 
         var samples = [UInt8](repeating: 0, count: frameCount * 2)
+        let theta = 2.0 * Double.pi * frequency / Double(sampleRate)
         for i in 0..<frameCount {
-            let value = max(-1.0, min(1.0, Double(channel[i])))
+            let value = sin(theta * Double(i)) >= 0 ? 1.0 : -1.0
             let int16 = Int16(value * 32767.0)
             samples[i * 2] = UInt8(int16 & 0xFF)
             samples[i * 2 + 1] = UInt8((int16 >> 8) & 0xFF)
@@ -606,7 +636,15 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         // LAUNCH-HANG FIX: build the tone engine on the first actual beep
         // (see `ensureToneEngine` / `init` note) instead of at launch.
         ensureToneEngine()
-        guard let buffer = toneBuffer else { return }
+        guard let buffer = toneBuffer else {
+            prepareFallbackAlertSound()
+            if fallbackAlertSoundID != 0 {
+                AudioServicesPlaySystemSound(fallbackAlertSoundID)
+            } else {
+                AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+            }
+            return
+        }
         
         // Step 2: If the engine stopped (e.g. due to interruption),
         // restart it. BEEP-REGRESSION FIX: this is only needed after a
