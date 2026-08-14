@@ -34,6 +34,9 @@ public struct DriveFocusView: View {
 
     // ── Exit hint ─────────────────────────────────────────────────
     @State private var showExitHint = false
+    /// Generation token used to invalidate an older hide deadline when the
+    /// driver taps again before the current three-second hint window ends.
+    @State private var exitHintGeneration = 0
 
     // ── Road name animation hint ──────────────────────────────────
     // Tracks whether the road name has appeared at least once so the
@@ -61,12 +64,17 @@ public struct DriveFocusView: View {
                     portraitContent(geo: geo)
                 }
             }
+            // The focus screen is intentionally a full-screen tap target: a
+            // tap briefly reveals the exit affordance without adding a
+            // permanent control that competes with the speed readout.
+            .contentShape(Rectangle())
             .statusBarHidden()
             .opacity(isExiting ? 0 : 1)
             .scaleEffect(isExiting ? 0.85 : 1.0, anchor: .center)
         }
         .onAppear {
             animateEntry()
+            showExitHintBriefly()
             HapticAlertManager.playFocusModeEnter()
         }
         .task {
@@ -75,6 +83,7 @@ public struct DriveFocusView: View {
             startBreathingAnimations()
         }
         .onLongPressGesture(minimumDuration: 1.5, perform: exitFocusMode)
+        .onTapGesture(perform: showExitHintBriefly)
     }
 
     // MARK: - Ambient Background
@@ -368,11 +377,23 @@ public struct DriveFocusView: View {
                 recEntryOpacity = 1.0
             }
         }
+    }
 
-        // Phase 5: Exit hint after a few seconds
+    /// Show the long-press affordance for a short, resettable window. The
+    /// generation token means a second tap extends the visibility instead of
+    /// allowing the first tap's delayed hide to win.
+    private func showExitHintBriefly() {
+        exitHintGeneration &+= 1
+        let generation = exitHintGeneration
+
+        withAnimation(.easeInOut(duration: 0.25)) {
+            showExitHint = true
+        }
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            guard generation == exitHintGeneration else { return }
             withAnimation(.easeInOut(duration: 0.5)) {
-                showExitHint = true
+                showExitHint = false
             }
         }
     }
@@ -408,6 +429,10 @@ public struct DriveFocusView: View {
     }
 
     private func exitFocusMode() {
+        // Invalidate any pending hint hide callback before dismissing the
+        // full-screen cover.
+        exitHintGeneration &+= 1
+
         // Smooth exit animation before dismissing
         // Duration tuned so the spring settles before the fullScreenCover dismisses
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
