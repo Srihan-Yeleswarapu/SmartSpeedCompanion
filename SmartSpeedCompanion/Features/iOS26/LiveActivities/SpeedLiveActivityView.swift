@@ -9,6 +9,7 @@ import SwiftUI
 import WidgetKit
 import ActivityKit
 import CoreLocation
+import Foundation
 
 @available(iOS 16.1, *)
 struct SpeedLiveActivityView: Widget {
@@ -142,10 +143,11 @@ struct SpeedLiveActivityView: Widget {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(DesignSystem.cyan)
             }
-            Text(maneuver)
+            Text(dynamicIslandManeuverLabel(maneuver))
                 .font(.caption.weight(.bold))
                 .foregroundColor(.white)
                 .lineLimit(1)
+                .accessibilityLabel(maneuver)
         }
         Text(formatDistance(context.state.distanceToNextTurn ?? 0))
             .font(.caption2.weight(.bold))
@@ -203,8 +205,9 @@ struct SpeedLiveActivityView: Widget {
                     .foregroundColor(DesignSystem.cyan)
             }
             VStack(alignment: .leading) {
-                Text(maneuver)
+                Text(dynamicIslandManeuverLabel(maneuver))
                     .font(.headline)
+                    .accessibilityLabel(maneuver)
                 Text(formatDistance(context.state.distanceToNextTurn ?? 0))
                     .font(.subheadline.bold())
                     .foregroundColor(DesignSystem.cyan)
@@ -299,6 +302,24 @@ struct SpeedLiveActivityView: Widget {
     }
 
     // MARK: - Helpers
+
+    /// The arrow already communicates the turn direction in the Dynamic
+    /// Island. Keep the street target in the text so the compact card does
+    /// not redundantly say "Turn right" and then truncate the road name.
+    private func dynamicIslandManeuverLabel(_ instruction: String) -> String {
+        let words = instruction.split(whereSeparator: { $0.isWhitespace })
+        guard let ontoIndex = words.firstIndex(where: {
+            String($0)
+                .lowercased()
+                .trimmingCharacters(in: .punctuationCharacters) == "onto"
+        }), ontoIndex + 1 < words.count else {
+            return instruction
+        }
+
+        let street = words.dropFirst(ontoIndex + 1).joined(separator: " ")
+        return street.isEmpty ? instruction : "Onto \(street)"
+    }
+
     private func formatDistance(_ distance: CLLocationDistance) -> String {
         SpeedFormatting.navigationDistanceLabel(
             forMeters: distance,
