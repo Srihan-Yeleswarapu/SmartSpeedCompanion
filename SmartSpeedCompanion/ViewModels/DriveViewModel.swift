@@ -1860,9 +1860,22 @@ public final class DriveViewModel: NSObject, ObservableObject {
     // MARK: - Search
 
     /// Full manual search for points of interest or addresses.
-    public func searchDestination(query: String) async {
-        guard !query.isEmpty else { searchResults = []; return }
-        searchResults = await searchDestinationItems(query: query)
+    ///
+    /// Callers that manage their own request ordering can set
+    /// `publishResults` to false and publish only the response that still
+    /// matches the visible query.
+    @discardableResult
+    public func searchDestination(query: String, publishResults: Bool = true) async -> [MKMapItem] {
+        guard !query.isEmpty else {
+            if publishResults { searchResults = [] }
+            return []
+        }
+
+        let results = await searchDestinationItems(query: query)
+        if publishResults {
+            searchResults = results
+        }
+        return results
     }
 
     /// Performs a text search and returns the exact response items to the
@@ -1889,7 +1902,10 @@ public final class DriveViewModel: NSObject, ObservableObject {
         let search = MKLocalSearch(request: request)
         do {
             let response = try await search.start()
-            return Array(response.mapItems.prefix(5))
+            // Keep enough resolved places for the submitted-search list to
+            // be useful on a phone. The UI constrains the card height and
+            // exposes a native scroll indicator when there are more rows.
+            return Array(response.mapItems.prefix(10))
         } catch {
             DebugLogger.shared.log("Text search failed for '\(query)': \(error.localizedDescription)")
             return []

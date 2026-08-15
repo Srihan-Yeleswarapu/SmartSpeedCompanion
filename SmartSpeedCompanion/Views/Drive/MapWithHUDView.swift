@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import UIKit
 
 public struct MapWithHUDView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
@@ -327,6 +328,12 @@ fileprivate struct SearchBarView: View {
     /// Focus controls the keyboard; this state controls search-mode visibility.
     @State private var isSearchActive = false
     @State private var searchSelectionGeneration = 0
+    /// True after the keyboard Search action switches from live completions
+    /// to the larger, resolved destination list.
+    @State private var isShowingSubmittedResults = false
+    /// Invalidates an in-flight manual search when the user starts a new one
+    /// or dismisses the search UI.
+    @State private var searchSubmissionGeneration = 0
     @FocusState private var isFocused: Bool
 
     /// Ends the search interaction immediately when the user chooses a
@@ -335,8 +342,10 @@ fileprivate struct SearchBarView: View {
     /// hides the route picker during that wait.
     private func finishSearchSelection() -> Int {
         searchSelectionGeneration &+= 1
+        searchSubmissionGeneration &+= 1
         searchText = ""
         isSearchActive = false
+        isShowingSubmittedResults = false
         isFocused = false
         driveViewModel.isSearchingLocally = false
         return searchSelectionGeneration
@@ -350,8 +359,17 @@ fileprivate struct SearchBarView: View {
         guard generation == searchSelectionGeneration else { return }
         searchText = query
         isSearchActive = true
+        isShowingSubmittedResults = false
         driveViewModel.isSearchingLocally = true
         driveViewModel.updateSearchQuery(query)
+        isFocused = true
+    }
+
+    /// Activates the search field and returns to live completion mode.
+    private func activateSearch() {
+        isSearchActive = true
+        isShowingSubmittedResults = false
+        driveViewModel.isSearchingLocally = true
         isFocused = true
     }
     
@@ -363,9 +381,7 @@ fileprivate struct SearchBarView: View {
                     .font(.system(size: isLandscape ? 12 : 14, weight: .bold))
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        isSearchActive = true
-                        driveViewModel.isSearchingLocally = true
-                        isFocused = true
+                        activateSearch()
                     }
                 
                 TextField("Where to?", text: $searchText)
@@ -376,20 +392,20 @@ fileprivate struct SearchBarView: View {
                     .focused($isFocused)
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        isSearchActive = true
-                        driveViewModel.isSearchingLocally = true
-                        isFocused = true
+                        activateSearch()
                     }
                     .submitLabel(.search)
                     .onSubmit {
                         dismissKeyboardForResults()
                     }
                     .onChange(of: searchText) { _, newValue in
+                        isShowingSubmittedResults = false
                         driveViewModel.updateSearchQuery(newValue)
                     }
                     .onChange(of: isFocused) { _, newValue in
                         if newValue {
                             isSearchActive = true
+                            isShowingSubmittedResults = false
                             driveViewModel.isSearchingLocally = true
                         }
                     }
@@ -397,7 +413,9 @@ fileprivate struct SearchBarView: View {
                 if isSearchActive || !searchText.isEmpty {
                     Button(action: {
                         searchSelectionGeneration &+= 1
+                        searchSubmissionGeneration &+= 1
                         searchText = ""
+                        isShowingSubmittedResults = false
                         driveViewModel.updateSearchQuery("")
                         isSearchActive = false
                         isFocused = false
@@ -437,9 +455,7 @@ fileprivate struct SearchBarView: View {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        isSearchActive = true
-                        driveViewModel.isSearchingLocally = true
-                        isFocused = true
+                        activateSearch()
                     }
             }
             
@@ -462,7 +478,7 @@ fileprivate struct SearchBarView: View {
                             .padding(.top, 12)
                             .padding(.bottom, 8)
                         
-                        ScrollView {
+                        ScrollView(.vertical, showsIndicators: true) {
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(filteredNamed.prefix(5)) { namedLoc in
                                     Button(action: {
@@ -519,6 +535,7 @@ fileprivate struct SearchBarView: View {
                             }
                         }
                         .frame(maxHeight: 180)
+                        .scrollIndicators(.visible)
                     }
                     .liquidGlass(cornerRadius: 16, interactive: true)
                     .padding(.top, 2)
@@ -537,7 +554,7 @@ fileprivate struct SearchBarView: View {
                             .padding(.top, 12)
                             .padding(.bottom, 8)
                         
-                        ScrollView {
+                        ScrollView(.vertical, showsIndicators: true) {
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(filteredSearches.prefix(5), id: \.self) { search in
                                     HStack(spacing: 0) {
@@ -592,15 +609,16 @@ fileprivate struct SearchBarView: View {
                             }
                         }
                         .frame(maxHeight: 200)
+                        .scrollIndicators(.visible)
                     }
                     .liquidGlass(cornerRadius: 16, interactive: true)
                     .padding(.top, 2)
                 }
             }
             
-            if !driveViewModel.searchCompletions.isEmpty && isSearchActive && !searchText.isEmpty {
+            if !driveViewModel.searchCompletions.isEmpty && isSearchActive && !searchText.isEmpty && !isShowingSubmittedResults {
                 VStack(spacing: 0) {
-                    ScrollView {
+                    ScrollView(.vertical, showsIndicators: true) {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(driveViewModel.searchCompletions, id: \.self) { completion in
                                 Button(action: {
@@ -645,21 +663,19 @@ fileprivate struct SearchBarView: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 240)
+                    .frame(maxHeight: isLandscape ? 220 : 360)
+                    .scrollIndicators(.visible)
                 }
                 .liquidGlass(cornerRadius: 16, interactive: true)
                 .padding(.top, 2)
             }
 
-            // Natural-language fallback results. MapKit completions are not
-            // guaranteed for every query; show the exact results fetched by
-            // `searchDestination(query:)` instead of silently discarding them
-            // after the keyboard's Search action. This keeps the list visible
-            // and lets the user choose deliberately rather than routing to an
-            // arbitrary first result.
-            if driveViewModel.searchCompletions.isEmpty && isSearchActive && !searchText.isEmpty && !driveViewModel.searchResults.isEmpty {
+            // Resolved destination results from the keyboard's Search action.
+            // Manual search results intentionally replace live completions so
+            // the keyboard can go away and the user can inspect more choices.
+            if isShowingSubmittedResults && isSearchActive && !searchText.isEmpty && !driveViewModel.searchResults.isEmpty {
                 VStack(spacing: 0) {
-                    ScrollView {
+                    ScrollView(.vertical, showsIndicators: true) {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(driveViewModel.searchResults.enumerated()), id: \.offset) { index, item in
                                 Button {
@@ -701,7 +717,8 @@ fileprivate struct SearchBarView: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 240)
+                    .frame(maxHeight: isLandscape ? 220 : 360)
+                    .scrollIndicators(.visible)
                 }
                 .liquidGlass(cornerRadius: 16, interactive: true)
                 .padding(.top, 2)
@@ -709,23 +726,55 @@ fileprivate struct SearchBarView: View {
         }
     }
     
-    /// The keyboard's Search action dismisses the keyboard without selecting
-    /// a destination. Keep suggestions open so the user can inspect the full
-    /// list, while preserving the natural-language fallback used when MapKit
-    /// has not produced completions yet.
-    private func dismissKeyboardForResults() {
-        isSearchActive = true
-        driveViewModel.isSearchingLocally = true
+    /// Explicitly resign the UIKit first responder as well as the SwiftUI
+    /// focus binding. The direct responder call makes the keyboard collapse
+    /// reliably on device before the larger result card is laid out.
+    private func dismissKeyboard() {
         isFocused = false
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+    }
 
-        guard driveViewModel.searchCompletions.isEmpty,
-              !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    /// The keyboard's Search action dismisses the keyboard and replaces the
+    /// live completions with a larger resolved destination list. Keeping the
+    /// search active lets the user scroll and choose deliberately instead of
+    /// routing to the first completion.
+    private func dismissKeyboardForResults() {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        isSearchActive = true
+        dismissKeyboard()
+
+        guard !query.isEmpty else {
+            isShowingSubmittedResults = false
+            driveViewModel.isSearchingLocally = false
             return
         }
 
-        let query = searchText
+        searchSubmissionGeneration &+= 1
+        isShowingSubmittedResults = true
+        driveViewModel.isSearchingLocally = true
+        // A completion callback can arrive after submit. Hide it while the
+        // manual search is in flight so stale suggestions do not block the
+        // resolved result list.
+        driveViewModel.searchCompletions = []
+        driveViewModel.searchResults = []
+
+        let generation = searchSubmissionGeneration
         Task {
-            await driveViewModel.searchDestination(query: query)
+            let results = await driveViewModel.searchDestination(
+                query: query,
+                publishResults: false
+            )
+            // Publish only the response that still matches the visible query;
+            // an older MapKit request must not replace a newer result list.
+            guard generation == searchSubmissionGeneration,
+                  isSearchActive,
+                  searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+            driveViewModel.searchResults = results
         }
     }
 }
