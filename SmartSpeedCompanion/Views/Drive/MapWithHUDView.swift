@@ -346,8 +346,13 @@ fileprivate struct SearchBarView: View {
         searchText = ""
         isSearchActive = false
         isShowingSubmittedResults = false
-        isFocused = false
         driveViewModel.isSearchingLocally = false
+        // Clear both local and published search state before starting route
+        // calculation. This removes the result card immediately instead of
+        // leaving it visible while MapKit resolves the route.
+        driveViewModel.searchCompletions = []
+        driveViewModel.searchResults = []
+        dismissKeyboard()
         return searchSelectionGeneration
     }
 
@@ -418,8 +423,10 @@ fileprivate struct SearchBarView: View {
                         isShowingSubmittedResults = false
                         driveViewModel.updateSearchQuery("")
                         isSearchActive = false
-                        isFocused = false
                         driveViewModel.isSearchingLocally = false
+                        driveViewModel.searchCompletions = []
+                        driveViewModel.searchResults = []
+                        dismissKeyboard()
                         // Clear any proposed route alternatives + map polylines
                         // that were rendered for the previous search so they
                         // don't linger on the map after the user dismisses
