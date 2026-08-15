@@ -10,6 +10,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// Set to `.all` when entering Drive Focus Mode (to allow landscape),
     /// and back to `.portrait` when exiting.
     static var orientationLock: UIInterfaceOrientationMask = .portrait
+
+    /// CarPlay uses the current iOS 26 implementation only. The phone app
+    /// keeps its existing deployment target and remains available on older iOS.
+    static var isCarPlaySupported: Bool {
+        if #available(iOS 26.0, *) { return true }
+        return false
+    }
     
     // Shared ModelContainer for SwiftData - initialized early so CarPlay can access it
     // This must be created before any scene (including CarPlay) connects
@@ -88,16 +95,52 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
     }
     
-    // Required for multi-scene support (iPhone + CarPlay)
+    // Required for multi-scene support (iPhone + CarPlay).
+    // The CarPlay entries must remain in the manifest so iOS 26+ can discover
+    // the app, but older iOS versions receive a no-op scene and are immediately
+    // disconnected instead of initializing the full CarPlay experience.
     func application(
         _ application: UIApplication,
         configurationForConnecting connectingSceneSession: UISceneSession,
         options: UIScene.ConnectionOptions
     ) -> UISceneConfiguration {
-        if connectingSceneSession.role == .carTemplateApplication {
-            return UISceneConfiguration(name: "CarPlay Configuration", sessionRole: connectingSceneSession.role)
+        let role = connectingSceneSession.role
+
+        if Self.isCarPlaySceneRole(role) {
+            guard Self.isCarPlaySupported else {
+                return Self.unavailableCarPlayConfiguration(for: role)
+            }
+
+            if role == .carTemplateApplication {
+                return UISceneConfiguration(name: "CarPlay Configuration", sessionRole: role)
+            }
         }
-        return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+
+        return UISceneConfiguration(name: "Default Configuration", sessionRole: role)
+    }
+
+    /// CarPlay has several scene roles, including Dashboard. Keep this check
+    /// string-based so every CarPlay role is gated without relying on a newer
+    /// UIKit role constant than the app's existing iOS deployment target.
+    private static func isCarPlaySceneRole(_ role: UISceneSession.Role) -> Bool {
+        role.rawValue.hasPrefix("CPTemplateApplication")
+    }
+
+    /// Build a harmless CarPlay scene for unsupported OS versions. UIKit still
+    /// requires a configuration for the requested role, so the delegate rejects
+    /// the scene without constructing any map, navigation, audio, or ViewModel
+    /// CarPlay state.
+    private static func unavailableCarPlayConfiguration(for role: UISceneSession.Role) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: nil, sessionRole: role)
+        configuration.delegateClass = UnsupportedCarPlaySceneDelegate.self
+
+        if role.rawValue == "CPTemplateApplicationDashboardSceneSessionRoleApplication" {
+            configuration.sceneClass = CPTemplateApplicationDashboardScene.self
+        } else {
+            configuration.sceneClass = CPTemplateApplicationScene.self
+        }
+
+        return configuration
     }
     
     /// Dynamically returns the allowed interface orientations based on the current mode.
@@ -108,5 +151,42 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         supportedInterfaceOrientationsFor window: UIWindow?
     ) -> UIInterfaceOrientationMask {
         return Self.orientationLock
+    }
+
+}
+
+/// Rejects CarPlay connections on iOS versions below the supported CarPlay
+/// floor without touching the production CarPlay scene delegate.
+private final class UnsupportedCarPlaySceneDelegate: UIResponder,
+                                                     CPTemplateApplicationSceneDelegate,
+                                                     CPTemplateApplicationDashboardSceneDelegate {
+    func templateApplicationScene(
+        _ templateApplicationScene: CPTemplateApplicationScene,
+        didConnect interfaceController: CPInterfaceController,
+        to window: CPWindow
+    ) {
+        reject(templateApplicationScene)
+    }
+
+    func templateApplicationScene(
+        _ templateApplicationScene: CPTemplateApplicationScene,
+        didConnect interfaceController: CPInterfaceController
+    ) {
+        reject(templateApplicationScene)
+    }
+
+    func templateApplicationDashboardScene(
+        _ templateApplicationDashboardScene: CPTemplateApplicationDashboardScene,
+        didConnect dashboardController: CPDashboardController,
+        to window: UIWindow
+    ) {
+        reject(templateApplicationDashboardScene)
+    }
+
+    private func reject(_ scene: UIScene) {
+        let session = scene.session
+        DispatchQueue.main.async {
+            UIApplication.shared.requestSceneSessionDestruction(session, options: nil, errorHandler: nil)
+        }
     }
 }

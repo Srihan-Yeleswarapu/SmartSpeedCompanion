@@ -42,6 +42,11 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         didConnect interfaceController: CPInterfaceController,
         to window: CPWindow
     ) {
+        guard AppDelegate.isCarPlaySupported else {
+            rejectUnsupportedCarPlayScene(templateApplicationScene)
+            return
+        }
+
         self.interfaceController = interfaceController
         installMapViewInCarPlayWindow(window)
         setupNavigationRoot(interfaceController: interfaceController)
@@ -61,11 +66,25 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         _ templateApplicationScene: CPTemplateApplicationScene,
         didConnect interfaceController: CPInterfaceController
     ) {
+        guard AppDelegate.isCarPlaySupported else {
+            rejectUnsupportedCarPlayScene(templateApplicationScene)
+            return
+        }
+
         self.interfaceController = interfaceController
         // No CPWindow in this path, so the MKMapView is not installed.
         // The CPMapTemplate overlay chrome will still render correctly;
         // the map tiles will appear once the system delivers a window.
         setupNavigationRoot(interfaceController: interfaceController)
+    }
+
+    /// Defense in depth for scene configurations restored directly from the
+    /// manifest: never initialize the full CarPlay stack below iOS 26.
+    private func rejectUnsupportedCarPlayScene(_ scene: UIScene) {
+        let session = scene.session
+        DispatchQueue.main.async {
+            UIApplication.shared.requestSceneSessionDestruction(session, options: nil, errorHandler: nil)
+        }
     }
 
     // MARK: - Setup Helpers
@@ -139,6 +158,11 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         didConnect dashboardController: CPDashboardController,
         to window: UIWindow
     ) {
+        guard AppDelegate.isCarPlaySupported else {
+            rejectUnsupportedCarPlayScene(templateApplicationDashboardScene)
+            return
+        }
+
         self.dashboardController = dashboardController
         let vm = AppDelegate.sharedDriveViewModel
         self.dashboardManager = CarPlayDashboardController(dashboardController: dashboardController, viewModel: vm)
