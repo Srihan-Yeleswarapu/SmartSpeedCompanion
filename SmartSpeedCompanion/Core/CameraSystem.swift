@@ -143,8 +143,6 @@ public enum CameraMode: String, Sendable {
     case postTurnHold
     /// Merge/ramp recovery — camera is slowly zooming back out.
     case mergeRecovery
-    /// First few seconds of navigation — fly-over overview settling in.
-    case routeInitiation
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -160,11 +158,11 @@ public struct TargetCameraState: Sendable {
     /// Camera pitch in degrees (0 = top-down, 60 = nearly horizon).
     public var pitch: Double
     /// If set, overrides the animator's default animation time constant.
-    /// Used for route initiation fly-out (fast), highway deceleration (slow),
-    /// and post-turn hold (very slow).
+    /// Used for highway deceleration (slow), merge recovery, and post-turn
+    /// hold (very slow).
     public var requestedAnimationTau: TimeInterval?
     /// Priority level. Higher values bypass the cooldown gate.
-    /// 0 = normal, 1 = important (turn critical), 2 = critical (route init).
+    /// 0 = normal, 1 = important (turn or merge critical).
     public var priority: Int
 
     public init(altitude: Double, pitch: Double,
@@ -192,7 +190,7 @@ public struct TargetCameraState: Sendable {
 // is purely cosmetic (debug logging); the math guarantees continuity across
 // mode boundaries.
 //
-// BEHAVIORS (15 new):
+// BEHAVIORS (14 new):
 //   1. Lane-Guidance Zoom Tightening       (DECISION ENGINE)
 //   2. Overlapping Maneuver Awareness       (DECISION ENGINE)
 //   3. Sharp Turn Severity Boost            (DECISION ENGINE)
@@ -204,10 +202,9 @@ public struct TargetCameraState: Sendable {
 //   9. Turn Approach Pitch Arc              (DECISION ENGINE)
 //  10. Free-Drive Exploration Horizon       (DECISION ENGINE)
 //  11. Post-Turn Bearing Stabilization      (ANIMATOR — stateful)
-//  12. Route Initiation Overview Fly-Out    (ANIMATOR — stateful)
-//  13. Merge/Ramp Recovery Hold             (ANIMATOR — stateful)
-//  14. Highway Deceleration Slow Camera     (ANIMATOR — stateful)
-//  15. Ambient Micro-Movement               (ANIMATOR — stateful)
+//  12. Merge/Ramp Recovery Hold             (ANIMATOR — stateful)
+//  13. Highway Deceleration Slow Camera     (ANIMATOR — stateful)
+//  14. Ambient Micro-Movement               (ANIMATOR — stateful)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 public struct CameraDecisionEngine: Sendable {    // ── Key points for altitude interpolation ──────────────────────────────
@@ -816,12 +813,11 @@ public struct CameraDecisionEngine: Sendable {    // ── Key points for altit
 // target. This gives a beautiful, continuous ease-out feel that never overshoots
 // and never oscillates — exactly like Apple Maps.
 //
-// Enhanced with 5 stateful behaviors:
+// Stateful behaviors:
 //   #11 — Post-Turn Bearing Stabilization — Holds turn zoom for 1.5 s after a turn
-//   #12 — Route Initiation Overview Fly-Out — 2.5× altitude on first route, 3 s settle
-//   #13 — Merge/Ramp Recovery Hold — Holds ramp zoom for 2 s, then 2 s ease-out
-//   #14 — Highway Deceleration Slow Camera — Slower tau when exiting highway
-//   #15 — Ambient Micro-Movement — Subtle ±1.5° pitch oscillation when stable
+//   #12 — Merge/Ramp Recovery Hold — Holds ramp zoom for 2 s, then 2 s ease-out
+//   #13 — Highway Deceleration Slow Camera — Slower tau when exiting highway
+//   #14 — Ambient Micro-Movement — Subtle ±1.5° pitch oscillation when stable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 @MainActor
@@ -879,21 +875,7 @@ public final class CameraAnimator {
     private let postTurnHoldDuration: TimeInterval = 1.5
 
     // ═══════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #12 — Route Initiation Overview Fly-Out
-    //
-    // When navigation first starts, briefly zoom OUT to ~2.5× the normal
-    // altitude so the user sees the full route context — exactly like the
-    // "Route Overview" animation Apple Maps and Google Maps both show when
-    // first starting navigation. Over 3 seconds, the camera smoothly
-    // settles into the normal driving altitude.
-    // ═══════════════════════════════════════════════════════════════════
-    private var routeStartTime: Date = .distantPast
-    private var wasNavigating: Bool = false
-    private let routeInitSettleDuration: TimeInterval = 3.5
-    private var routeInitAltitudeBoost: Double = 1.0 // decays from 2.0 → 1.0
-
-    // ═══════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #13 — Merge/Ramp Recovery Hold
+    // NEW BEHAVIOR #12 — Merge/Ramp Recovery Hold
     //
     // After merging onto a highway (instruction transitions from
     // "merge/ramp" to a straight instruction), hold the exit/ramp zoom
@@ -909,7 +891,7 @@ public final class CameraAnimator {
     // (merge recovery phase is latch-based; no stored factor needed)
 
     // ═══════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #14 — Highway Deceleration Slow Camera
+    // NEW BEHAVIOR #13 — Highway Deceleration Slow Camera
     //
     // When the user exits the highway (speed drops from > 50 mph to
     // < 35 mph while navigating), use a slower animation tau (0.8 s instead
@@ -923,7 +905,7 @@ public final class CameraAnimator {
     private var highwayDecelUntil: Date = .distantPast
 
     // ═══════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #15 — Ambient Micro-Movement
+    // NEW BEHAVIOR #14 — Ambient Micro-Movement
     //
     // When the camera has been stable (no meaningful altitude/pitch change
     // > 10 m / 2°) for 5+ seconds, apply a very subtle ±1.5° pitch
@@ -989,26 +971,7 @@ public final class CameraAnimator {
             #endif
         }
 
-        // NEW BEHAVIOR #12 — Route Initiation Overview Fly-Out
-        if context.isNavigating && routeStartTime != .distantPast {
-            let elapsed = now.timeIntervalSince(routeStartTime)
-            if elapsed < routeInitSettleDuration {
-                let t = elapsed / routeInitSettleDuration
-                // Smoothstep decay: 2.5 → 1.0 over 3 seconds
-                let s = t * t * (3.0 - 2.0 * t) // smoothstep
-                routeInitAltitudeBoost = 1.0 + (2.0 - 1.0) * (1.0 - s)
-                target.altitude *= routeInitAltitudeBoost
-                target.priority = max(target.priority, 2)
-                target.requestedAnimationTau = 0.3 // snappier for the fly-out
-                #if DEBUG
-                DebugLogger.shared.log("CAM route-init fly-out \(String(format: "%.2f", routeInitAltitudeBoost))×")
-                #endif
-            } else {
-                routeInitAltitudeBoost = 1.0
-            }
-        }
-
-        // NEW BEHAVIOR #13 — Merge/Ramp Recovery Hold
+        // NEW BEHAVIOR #12 — Merge/Ramp Recovery Hold
         // Uses a latch approach: hold the current display altitude during the hold
         // phase, then smoothly blend toward the computed target during recovery.
         // This avoids double-counting the ramp multiplier that might already be
@@ -1041,7 +1004,7 @@ public final class CameraAnimator {
             }
         }
 
-        // NEW BEHAVIOR #14 — Highway Deceleration Slow Camera
+        // NEW BEHAVIOR #13 — Highway Deceleration Slow Camera
         if now < highwayDecelUntil {
             target.requestedAnimationTau = 0.8 // much slower
             #if DEBUG
@@ -1063,7 +1026,7 @@ public final class CameraAnimator {
             freeDriveHorizonPitch = 0
         }
 
-        // NEW BEHAVIOR #15 — Ambient Micro-Movement
+        // NEW BEHAVIOR #14 — Ambient Micro-Movement
         let altDelta = abs(target.altitude - displayAltitude)
         let pitchDelta = abs(target.pitch - displayPitch)
         if altDelta < 10 && pitchDelta < 2 {
@@ -1186,17 +1149,7 @@ public final class CameraAnimator {
         lastInstruction = context.instruction
         lastDTT = context.distanceToNextTurn
 
-        // ── Route initiation detection (#12) ───────────────────────────
-        if context.isNavigating && !wasNavigating {
-            routeStartTime = now
-            routeInitAltitudeBoost = 2.0
-            #if DEBUG
-            DebugLogger.shared.log("CAM route initiated → fly-out 2.0×")
-            #endif
-        }
-        wasNavigating = context.isNavigating
-
-        // ── Merge/ramp recovery detection (#13) ────────────────────────
+        // ── Merge/ramp recovery detection (#12) ────────────────────────
         let lower = context.instruction.lowercased()
         let isOnRamp = lower.contains("merge") || lower.contains("ramp")
                     || lower.contains("exit")
@@ -1211,7 +1164,7 @@ public final class CameraAnimator {
         }
         wasOnRamp = isOnRamp
 
-        // ── Highway deceleration detection (#14) ───────────────────────
+        // ── Highway deceleration detection (#13) ───────────────────────
         if context.speed > 50 && context.isNavigating {
             wasHighwaySpeed = true
         }
@@ -1238,9 +1191,6 @@ public final class CameraAnimator {
         lastDTT = 0
         postTurnHoldUntil = .distantPast
         isPostTurnHold = false
-        routeStartTime = .distantPast
-        wasNavigating = false
-        routeInitAltitudeBoost = 1.0
         wasOnRamp = false
         mergeHoldStartTime = nil
         wasHighwaySpeed = false

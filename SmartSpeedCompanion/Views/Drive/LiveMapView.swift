@@ -727,11 +727,9 @@ public struct LiveMapView: UIViewRepresentable {
                         animated: false
                     )
                     // Sync the camera animator's display altitude with the
-                    // route-fit camera position so it doesn't jump on the
-                    // first frame. The animator's route-init fly-out
-                    // (2.5× boost) re-triggers on the next tick because
-                    // reset() clears `wasNavigating`, and `detectTransitions`
-                    // will re-detect route initiation.
+                    // route-fit camera position so the normal driving target
+                    // starts from the actual map position without a stale
+                    // altitude jump on the first frame.
                     cameraAnimator.reset(to: mapView)
                     hasAutoFramedRoute = true
                 }
