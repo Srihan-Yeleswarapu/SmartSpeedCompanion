@@ -978,8 +978,13 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
                             measurementSystem: system
                         )
                         let distanceValue = distanceMeasurement.value
-                        let distanceUnit = SpeedFormatting.isMetric(system) ? "km" : "mi"
-                        let distStr = String(format: "%.1f %@", distanceValue, distanceUnit)
+                        let distanceUnit = SpeedFormatting.navigationDistanceUnit(
+                            forMeters: route.distance,
+                            measurementSystem: system
+                        )
+                        let distStr = distanceUnit == "ft" || distanceUnit == "m"
+                            ? "\(Int(distanceValue.rounded())) \(distanceUnit)"
+                            : String(format: "%.1f %@", distanceValue, distanceUnit)
                         let title = index == 0 ? "Fastest Route" : "Route \(index + 1)"
                         return CPRouteChoice(
                             summaryVariants: [title],

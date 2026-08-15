@@ -302,21 +302,10 @@ fileprivate struct NavigationInstructionCard: View {
     }
 
     private func formatDistance(_ distance: CLLocationDistance) -> String {
-        let system = SpeedFormatting.measurementSystem()
-        if SpeedFormatting.isMetric(system) {
-            if distance < 1000 {
-                let rounded = Int(round(distance / 50.0) * 50)
-                return "\(max(50, rounded)) m"
-            }
-            return String(format: "%.1f km", distance / SpeedFormatting.metersPerKilometer)
-        }
-
-        let feet = distance * SpeedFormatting.feetPerMeter
-        if feet < 1000 {
-            let rounded = Int(round(feet / 100.0) * 100)
-            return "\(max(100, rounded)) ft"
-        }
-        return String(format: "%.1f mi", distance / SpeedFormatting.metersPerMile)
+        SpeedFormatting.navigationDistanceLabel(
+            forMeters: distance,
+            measurementSystem: SpeedFormatting.measurementSystem()
+        )
     }
 }
 

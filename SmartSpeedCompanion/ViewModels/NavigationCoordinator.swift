@@ -1179,7 +1179,12 @@ public final class NavigationCoordinator: ObservableObject {
             return currentRoute != nil && !isCompletingNavigation
         }
 
-        // Setup initial UI text based on the first meaningful step
+        // Setup initial UI text based on the first meaningful step.
+        // Keep a concrete first maneuver as well so the opening voice prompt
+        // can give the driver useful context immediately, even while the car
+        // is still stationary and movement-gated turn alerts have not started.
+        var firstSpokenInstruction: String?
+        var firstSpokenInstructionDistance: CLLocationDistance?
         if !route.steps.isEmpty {
             var targetIndex = 0
             while targetIndex < route.steps.count && route.steps[targetIndex].instructions.isEmpty {
@@ -1199,25 +1204,44 @@ public final class NavigationCoordinator: ObservableObject {
 
             self.nextManeuverInstruction = displayInstruction
             self.nextManeuverImageName = getImageForManeuver(displayInstruction)
+
+            if let firstGuidanceStep = route.steps.first(where: {
+                !$0.instructions.isEmpty && !instructionIsGenericLabel($0.instructions)
+            }) {
+                firstSpokenInstruction = firstGuidanceStep.instructions
+                firstSpokenInstructionDistance = firstGuidanceStep.distance
+            } else if !displayInstruction.isEmpty && !instructionIsGenericLabel(displayInstruction) {
+                firstSpokenInstruction = displayInstruction
+                firstSpokenInstructionDistance = activeStep.distance
+            }
         }
 
-        // One-shot spoken ETA + distance announcement on initial navigation
-        // start. Skips on reroute so we don't speak "Starting route to X"
-        // every time the algorithm picks a faster path mid-drive. Uses
-        // formatDistance() so the units match the user's chosen measurement
-        // system, and DateFormatter(.short) so the time renders in 12-h or
-        // 24-h per the device locale. announce() already honors the
-        // voiceNavEnabled user toggle so a quieted user hears nothing.
+        // One-shot opening announcement on initial navigation. Include the
+        // destination, total route, travel time, ETA, and first maneuver in a
+        // single utterance so the driver gets a complete handoff instead of
+        // hearing only a short standalone turn label. Omit it on reroutes so
+        // traffic changes do not repeatedly say "Starting route" mid-drive.
         if !isReroute, let etaValue = self.eta {
             let destinationName = (destination?.name?.isEmpty == false)
                 ? destination!.name!
                 : "your destination"
-            let distanceText = formatDistance(route.distance)
+            let totalDistance = routeStops.isEmpty ? route.distance : distanceToDestination
+            let distanceText = formatDistance(totalDistance)
+            let durationText = formatTravelTimeForSpeech(routeStops.isEmpty
+                ? route.expectedTravelTime
+                : max(0, etaValue.timeIntervalSinceNow))
             let etaFormatter = DateFormatter()
             etaFormatter.timeStyle = .short
             etaFormatter.dateStyle = .none
             let timeText = etaFormatter.string(from: etaValue)
-            announce("Starting route to \(destinationName), \(distanceText), arriving at \(timeText).")
+
+            var message = "Directions to \(destinationName). The route is \(distanceText) and takes \(durationText), arriving at \(timeText)."
+            if let firstSpokenInstruction,
+               let firstSpokenInstructionDistance,
+               firstSpokenInstructionDistance > 0 {
+                message += " In \(formatDistance(firstSpokenInstructionDistance)), \(firstSpokenInstruction)."
+            }
+            announce(message)
         }
 
         // Display the route in a Live Activity on the lock screen.
@@ -1685,9 +1709,9 @@ public final class NavigationCoordinator: ObservableObject {
                 let formattedDist = formatDistance(distanceToTurn)
                 if distanceToTurn > 3218 {
                     let routeName = currentRoute?.name ?? "the road"
-                    recordCue("Continue on \(routeName) for \(formattedDist).")
+                    recordCue("Continue on \(routeName) for \(formattedDist), then \(activeInstruction).")
                 } else {
-                    recordCue("In \(formattedDist), \(activeInstruction)")
+                    recordCue("In \(formattedDist), \(activeInstruction).")
                 }
             }
             // Once the turn is inside the advance window, there is no reason
@@ -1701,7 +1725,10 @@ public final class NavigationCoordinator: ObservableObject {
                 stepStageFlags[stepIndex] = flags
                 return
             }
-            recordCue(activeInstruction)
+            let turnMessage = distanceToTurn <= 30
+                ? "Now, \(activeInstruction)."
+                : "In \(formatDistance(distanceToTurn)), \(activeInstruction)."
+            recordCue(turnMessage)
             flags.insert("immediate")
         }
 
@@ -1916,8 +1943,9 @@ public final class NavigationCoordinator: ObservableObject {
                 let km = meters / SpeedFormatting.metersPerKilometer
                 return formatDecimalForSpeech(km) + " kilometers"
             } else {
-                // Round to nearest 50m for more natural speech
-                return "\(Int(meters / 50) * 50) meters"
+                // Round to the nearest 50m and avoid a useless "0 meters"
+                // prompt when the GPS fix is already close to the maneuver.
+                return "\(max(50, Int((meters / 50).rounded()) * 50)) meters"
             }
         } else {
             let miles = meters / SpeedFormatting.metersPerMile
@@ -1939,10 +1967,26 @@ public final class NavigationCoordinator: ObservableObject {
                 return "a quarter mile"
             } else {
                 let feet = meters * SpeedFormatting.feetPerMeter
-                // Round to nearest 100ft
-                return "\(Int(feet / 100) * 100) feet"
+                // Round to the nearest 100ft and avoid a useless "0 feet"
+                // prompt when the GPS fix is already close to the maneuver.
+                return "\(max(100, Int((feet / 100).rounded()) * 100)) feet"
             }
         }
+    }
+
+    /// Formats a route duration as natural speech rather than a bare number
+    /// of seconds. This is used only for the opening directions handoff.
+    private func formatTravelTimeForSpeech(_ seconds: TimeInterval) -> String {
+        let totalMinutes = max(1, Int((seconds / 60).rounded()))
+        if totalMinutes < 60 {
+            return "\(totalMinutes) \(totalMinutes == 1 ? "minute" : "minutes")"
+        }
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if minutes == 0 {
+            return "\(hours) \(hours == 1 ? "hour" : "hours")"
+        }
+        return "\(hours) \(hours == 1 ? "hour" : "hours") and \(minutes) \(minutes == 1 ? "minute" : "minutes")"
     }
 
     /// Converts a decimal number to a speakable English string so TTS

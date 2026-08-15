@@ -136,38 +136,66 @@ public enum SpeedFormatting {
 
     // MARK: - Navigation distance helpers
 
-    /// Formats a navigation distance using the user's large-distance display
-    /// unit. Metric navigation uses kilometers consistently (including short
-    /// distances) so a route never appears as a large raw-meter count.
+    /// Formats a navigation distance with the same short-distance policy on
+    /// the phone, CarPlay, and Live Activity. Imperial drivers see feet below
+    /// 1,000 feet; metric drivers see meters below 1 kilometer. Keeping the
+    /// threshold here prevents an 800-foot maneuver from becoming `0.2 mi`
+    /// on CarPlay while the phone says `800 ft`.
     public static func navigationDistanceLabel(
         forMeters meters: Double,
         measurementSystem: String
     ) -> String {
+        let distance = max(0, meters)
         if isMetric(measurementSystem) {
-            return String(format: "%.1f km", meters / metersPerKilometer)
+            guard distance >= metersPerKilometer else {
+                let roundedMeters = max(50, Int((distance / 50).rounded() * 50))
+                return "\(roundedMeters) m"
+            }
+            return String(format: "%.1f km", distance / metersPerKilometer)
         }
-        let miles = meters / metersPerMile
-        if miles < 0.1 {
-            return String(format: "%.0f ft", meters * feetPerMeter)
+
+        let feet = distance * feetPerMeter
+        guard feet < 1000 else {
+            return String(format: "%.1f mi", distance / metersPerMile)
         }
-        return String(format: "%.1f mi", miles)
+        let roundedFeet = Int((feet / 100).rounded() * 100)
+        return "\(roundedFeet) ft"
     }
 
-    /// Builds the unit CarPlay should display for a navigation distance.
-    ///
-    /// CarPlay renders the unit carried by `CPTravelEstimates`; passing raw
-    /// meters makes an imperial route appear as `38,619 m` on some head units
-    /// and bypasses the user's app-level units preference. Keep navigation
-    /// values in meters internally, but hand CarPlay a locale-independent
-    /// miles or kilometers measurement at the presentation boundary.
+    /// Builds the exact unit CarPlay should display for a navigation
+    /// distance. Short distances intentionally use feet/meters rather than
+    /// letting CarPlay convert them to a coarse `0.2 mi` or `0.3 km` label.
+    /// Internal route geometry remains in meters; this is only a presentation
+    /// boundary.
     public static func navigationDistanceMeasurement(
         forMeters meters: Double,
         measurementSystem: String
     ) -> Measurement<UnitLength> {
+        let distance = max(0, meters)
         if isMetric(measurementSystem) {
-            return Measurement(value: meters / metersPerKilometer, unit: .kilometers)
+            guard distance >= metersPerKilometer else {
+                return Measurement(value: max(50, (distance / 50).rounded() * 50), unit: .meters)
+            }
+            return Measurement(value: distance / metersPerKilometer, unit: .kilometers)
         }
-        return Measurement(value: meters / metersPerMile, unit: .miles)
+
+        let feet = distance * feetPerMeter
+        guard feet < 1000 else {
+            return Measurement(value: distance / metersPerMile, unit: .miles)
+        }
+        return Measurement(value: (feet / 100).rounded() * 100, unit: .feet)
+    }
+
+    /// A stable short unit symbol for route-preview strings that use the
+    /// same measurement policy as `navigationDistanceMeasurement`.
+    public static func navigationDistanceUnit(
+        forMeters meters: Double,
+        measurementSystem: String
+    ) -> String {
+        navigationDistanceMeasurement(
+            forMeters: meters,
+            measurementSystem: measurementSystem
+        ).unit.symbol
     }
 
     /// MARK: - Combined convenience
