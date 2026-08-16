@@ -72,6 +72,11 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     // `selectedResult` delegate for the same tap. Cleared once the preview
     // has been handed to CPMapTemplate.
     @MainActor private var isPresentingTripPreview = false
+    // Search result callbacks can arrive through both CarPlay's delegate and
+    // an older CPListItem handler during an SDK transition. Serialize the
+    // dismissal/presentation handoff so neither path can leave the search
+    // template covering the directions preview.
+    @MainActor private var isSelectingSearchResult = false
     // Prevents duplicate CarPlay result taps while an add-stop route
     // recalculation is in flight.
     @MainActor private var isAddingStopInProgress = false
@@ -902,12 +907,12 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
                     let item = CPListItem(text: mi.name, detailText: mi.placemark.title)
                     self.searchItemMap[ObjectIdentifier(item)] = mi
                     if let icon = self.searchResultIcon(for: mi) { item.setImage(icon) }
-                    item.handler = { [weak self] _, c in
-                        Task { @MainActor in
-                            self?.presentTripPreviewAfterSearchDismissal(for: mi)
-                        }
-                        c()
-                    }
+                    // CPSearchTemplate delivers selection through its
+                    // `selectedResult` delegate callback. Do not attach a
+                    // second CPListItem handler here: on some CarPlay/iOS
+                    // versions that creates a grey selected row while the
+                    // search template remains on screen and the route preview
+                    // is left underneath it.
                     return item
                 }
                 completionHandler(items)
@@ -991,6 +996,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             sections: [CPListSection(items: listItems, header: header, sectionIndexTitle: nil)]
         )
         activeSubmittedSearchResultsTemplate = template
+        activeSearchTemplate = nil
         isTemplatePushInFlight = true
         interfaceController.pushTemplate(template, animated: true) { [weak self] _, _ in
             Task { @MainActor in self?.isTemplatePushInFlight = false }
@@ -998,8 +1004,12 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     }
 
     func searchTemplate(_ searchTemplate: CPSearchTemplate, selectedResult item: CPListItem, completionHandler: @escaping () -> Void) {
-        // completionHandler() tells CarPlay to dismiss the search template,
-        // so we must NOT call popTemplate — the search is already gone.
+        // CarPlay calls this delegate when the driver taps a search result.
+        // The completion handler only finishes delegate processing; it does
+        // not reliably remove the CPSearchTemplate on every iOS/CarPlay
+        // version. Explicitly pop the template before showing directions so
+        // the selected row cannot remain grey with the keyboard/search panel
+        // covering the trip preview.
         let mapItem: MKMapItem? = {
             let id = ObjectIdentifier(item)
             if let direct = searchItemMap[id] { return direct }
@@ -1011,18 +1021,48 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         }()
         completionHandler()
         guard let mapItem else { return }
-        Task { @MainActor in
-            self.presentTripPreviewOnce(for: mapItem)
-        }
+        presentTripPreviewAfterSearchDismissal(for: mapItem)
     }
 
-    /// Pops the search template (if it is still on the stack) and only then
-    /// presents the trip preview. Used by the row-tap handler so the preview
-    /// is shown on the clean map template instead of mid-dismissal.
+    /// Dismisses the live CPSearchTemplate and only then presents the route
+    /// preview. The latch covers both the framework callback and any late
+    /// duplicate callback from the selected row.
     @MainActor
     private func presentTripPreviewAfterSearchDismissal(for destination: MKMapItem) {
-        interfaceController?.popTemplate(animated: true) { [weak self] _, _ in
-            Task { @MainActor in self?.presentTripPreviewOnce(for: destination) }
+        guard !isSelectingSearchResult else { return }
+        isSelectingSearchResult = true
+        searchItemMap.removeAll()
+        latestSearchResults.removeAll()
+        latestSearchResultsQuery = ""
+
+        let finish: @MainActor () -> Void = { [weak self] in
+            guard let self else { return }
+            self.activeSearchTemplate = nil
+            self.isSelectingSearchResult = false
+            self.presentTripPreviewOnce(for: destination)
+        }
+
+        guard let interfaceController,
+              let searchTemplate = activeSearchTemplate,
+              isTemplateOnStack(searchTemplate) else {
+            finish()
+            return
+        }
+
+        interfaceController.popTemplate(animated: true) { [weak self] success, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if success {
+                    finish()
+                } else {
+                    // If CarPlay rejected the animated pop, do not strand the
+                    // destination behind the search surface. Try a direct
+                    // non-animated pop once, then still release the latch.
+                    self.interfaceController?.popTemplate(animated: false) { _, _ in
+                        Task { @MainActor in finish() }
+                    }
+                }
+            }
         }
     }
 
