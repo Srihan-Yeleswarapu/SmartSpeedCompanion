@@ -59,6 +59,14 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     // call `updatedSearchText` (clearing the map) right before/after a tap,
     // which previously made result selection silently do nothing.
     @MainActor private var latestSearchResults: [MKMapItem] = []
+    // Query that produced `latestSearchResults`. The search-button delegate
+    // callback does not provide the text itself, so retain the latest query
+    // and only reuse results when they belong to that exact query.
+    @MainActor private var latestSearchQuery: String = ""
+    @MainActor private var latestSearchResultsQuery: String = ""
+    // The list pushed after the keyboard Search button is pressed. Keeping a
+    // reference prevents repeated Search presses from stacking duplicate lists.
+    @MainActor private weak var activeSubmittedSearchResultsTemplate: CPListTemplate?
     // Single-flight latch so a result tap presents the trip preview at most
     // once, even when CarPlay fires BOTH the row handler and the
     // `selectedResult` delegate for the same tap. Cleared once the preview
@@ -870,12 +878,16 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         // PREVIOUS search session and present the wrong trip preview.
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
+            searchGeneration &+= 1
+            latestSearchQuery = ""
+            latestSearchResultsQuery = ""
             searchItemMap.removeAll()
             latestSearchResults.removeAll()
             completionHandler([])
             return
         }
-        searchGeneration += 1
+        latestSearchQuery = trimmed
+        searchGeneration &+= 1
         let generation = searchGeneration
         navigationManager.searchDestination(query: trimmed) { [weak self] results in
             guard let self = self else { return }
@@ -885,6 +897,7 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
                 guard generation == self.searchGeneration else { return }
                 self.searchItemMap.removeAll()
                 self.latestSearchResults = results
+                self.latestSearchResultsQuery = trimmed
                 let items = results.map { mi in
                     let item = CPListItem(text: mi.name, detailText: mi.placemark.title)
                     self.searchItemMap[ObjectIdentifier(item)] = mi
@@ -901,6 +914,89 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             }
         }
     }
+
+    /// The blue Search key is a separate CarPlay delegate event from text
+    /// changes. Without this callback CarPlay keeps the CPSearchTemplate and
+    /// its keyboard on screen, which is exactly the state shown in the
+    /// TestFlight screenshot. Push a regular list template so CarPlay closes
+    /// the keyboard and gives the driver the full result list to scroll.
+    func searchTemplateSearchButtonPressed(_ searchTemplate: CPSearchTemplate) {
+        let query = latestSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty,
+              !isTemplatePushInFlight,
+              !isTemplateOnStack(activeSubmittedSearchResultsTemplate) else { return }
+
+        // Keystroke search normally has already delivered these results. If
+        // the driver presses Search before that response arrives, issue one
+        // authoritative request rather than showing an older query's places.
+        if latestSearchResultsQuery == query {
+            presentSubmittedSearchResults(query: query, results: latestSearchResults)
+            return
+        }
+
+        searchGeneration &+= 1
+        let generation = searchGeneration
+        navigationManager.searchDestination(query: query) { [weak self] results in
+            guard let self else { return }
+            Task { @MainActor in
+                guard generation == self.searchGeneration else { return }
+                self.latestSearchResults = results
+                self.latestSearchResultsQuery = query
+                self.presentSubmittedSearchResults(query: query, results: results)
+            }
+        }
+    }
+
+    /// Builds the scrollable destination list requested by the keyboard Search
+    /// action. Selecting a row returns to the map before showing the route
+    /// preview, keeping the template stack shallow and deterministic.
+    @MainActor
+    private func presentSubmittedSearchResults(query: String, results: [MKMapItem]) {
+        guard !isTemplatePushInFlight,
+              !isTemplateOnStack(activeSubmittedSearchResultsTemplate),
+              let interfaceController else { return }
+
+        let displayResults = Array(results.prefix(10))
+        let listItems: [CPListItem]
+        if displayResults.isEmpty {
+            let item = CPListItem(text: "No Results", detailText: "Try a different search")
+            item.isEnabled = false
+            listItems = [item]
+        } else {
+            listItems = displayResults.map { mapItem in
+                let item = CPListItem(
+                    text: mapItem.name ?? "Unknown destination",
+                    detailText: mapItem.placemark.title
+                )
+                if let icon = searchResultIcon(for: mapItem) { item.setImage(icon) }
+                item.handler = { [weak self] _, completion in
+                    completion()
+                    guard let self else { return }
+                    self.interfaceController?.popToRootTemplate(animated: true) { [weak self] success, _ in
+                        guard let self, success else { return }
+                        self.activeSubmittedSearchResultsTemplate = nil
+                        self.activeSearchTemplate = nil
+                        self.presentTripPreviewOnce(for: mapItem)
+                    }
+                }
+                return item
+            }
+        }
+
+        let header = displayResults.isEmpty
+            ? "SEARCH RESULTS"
+            : "\(displayResults.count) destinations"
+        let template = CPListTemplate(
+            title: query,
+            sections: [CPListSection(items: listItems, header: header, sectionIndexTitle: nil)]
+        )
+        activeSubmittedSearchResultsTemplate = template
+        isTemplatePushInFlight = true
+        interfaceController.pushTemplate(template, animated: true) { [weak self] _, _ in
+            Task { @MainActor in self?.isTemplatePushInFlight = false }
+        }
+    }
+
     func searchTemplate(_ searchTemplate: CPSearchTemplate, selectedResult item: CPListItem, completionHandler: @escaping () -> Void) {
         // completionHandler() tells CarPlay to dismiss the search template,
         // so we must NOT call popTemplate — the search is already gone.
