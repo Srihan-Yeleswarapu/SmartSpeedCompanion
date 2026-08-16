@@ -15,8 +15,12 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
     private let mapView: MKMapView
     private let viewModel: DriveViewModel
     private var cancellables = Set<AnyCancellable>()
+    private let cameraAnimator = CameraAnimator()
+    private var hasReceivedLocationFix = false
     private var scheduledRender = false
     private var lastRenderFingerprint: Int?
+    private var lastNavigationCameraFingerprint: Int?
+    private var hasInitializedNavigationCamera = false
 
     init(mapView: MKMapView, viewModel: DriveViewModel) {
         self.mapView = mapView
@@ -32,6 +36,21 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.scheduleRender()
+            }
+            .store(in: &cancellables)
+
+        // DriveViewModel publishes navigation state, but the location manager
+        // owns the GPS publisher. Subscribe to both so the CarPlay camera keeps
+        // following the vehicle even when the route geometry itself has not
+        // changed.
+        viewModel.locationManager.$latestLocation
+            .receive(on: RunLoop.main)
+            .sink { [weak self] location in
+                guard let self else { return }
+                if location != nil {
+                    self.hasReceivedLocationFix = true
+                }
+                self.scheduleRender()
             }
             .store(in: &cancellables)
 
@@ -60,25 +79,38 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
 
     private func renderIfNeeded() {
         let fingerprint = renderFingerprint()
-        guard fingerprint != lastRenderFingerprint else { return }
-        lastRenderFingerprint = fingerprint
-
-        mapView.removeOverlays(mapView.overlays)
-        mapView.removeAnnotations(mapView.annotations.filter { !($0 is MKUserLocation) })
-
-        if viewModel.isNavigating, let route = viewModel.navigationCoordinator.currentRoute {
-            renderActiveRoute(route)
-            addDestinationAnnotation(for: viewModel.destination)
-            frameMapIfNeeded(for: activeRoutesIncludingLaterLegs(fallback: route))
-            return
+        let navigationCameraFingerprint = activeNavigationCameraFingerprint()
+        if navigationCameraFingerprint != lastNavigationCameraFingerprint {
+            lastNavigationCameraFingerprint = navigationCameraFingerprint
+            hasInitializedNavigationCamera = false
         }
 
-        // Keep the route visible while the driver is choosing an alternate
-        // route from the CarPlay preview flow.
-        if viewModel.isSelectingRoute, !viewModel.availableRoutes.isEmpty {
-            renderPreviewRoutes(viewModel.availableRoutes)
-            addDestinationAnnotation(for: viewModel.destination)
-            frameMapIfNeeded(for: viewModel.availableRoutes)
+        if fingerprint != lastRenderFingerprint {
+            lastRenderFingerprint = fingerprint
+            mapView.removeOverlays(mapView.overlays)
+            mapView.removeAnnotations(mapView.annotations.filter { !($0 is MKUserLocation) })
+
+            if viewModel.isNavigating, let route = viewModel.navigationCoordinator.currentRoute {
+                renderActiveRoute(route)
+                addDestinationAnnotation(for: viewModel.destination)
+                // Do not fit the entire route during active guidance. That
+                // produces the broad city-wide framing visible in the
+                // TestFlight screenshot and leaves the custom MKMapView in an
+                // overview camera indefinitely. The navigation camera below
+                // owns the close, vehicle-centered framing instead.
+            } else if viewModel.isSelectingRoute, !viewModel.availableRoutes.isEmpty {
+                // Route previews should still show the complete alternatives so
+                // the driver can compare them before starting navigation.
+                renderPreviewRoutes(viewModel.availableRoutes)
+                addDestinationAnnotation(for: viewModel.destination)
+                frameMapIfNeeded(for: viewModel.availableRoutes)
+            }
+        }
+
+        if viewModel.isNavigating, viewModel.navigationCoordinator.currentRoute != nil {
+            updateNavigationCamera()
+        } else {
+            hasInitializedNavigationCamera = false
         }
     }
 
@@ -122,11 +154,6 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
         }
     }
 
-    private func activeRoutesIncludingLaterLegs(fallback route: MKRoute) -> [MKRoute] {
-        let laterRoutes = viewModel.routeLegs.compactMap(\.route)
-        return laterRoutes.isEmpty ? [route] : [route] + laterRoutes
-    }
-
     private func addDestinationAnnotation(for destination: MKMapItem?) {
         guard let destination else { return }
         let annotation = MKPointAnnotation()
@@ -157,6 +184,77 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
             rect,
             edgePadding: UIEdgeInsets(top: 100, left: 60, bottom: 150, right: 60),
             animated: false
+        )
+    }
+
+    /// Returns a stable key for the active route/destination. Speed, turn
+    /// distance, and location are intentionally excluded so a progressing
+    /// vehicle updates the camera without repeatedly resetting its animation.
+    private func activeNavigationCameraFingerprint() -> Int? {
+        guard viewModel.isNavigating,
+              let route = viewModel.navigationCoordinator.currentRoute else { return nil }
+
+        var hasher = Hasher()
+        hasher.combine(Self.routeFingerprint(for: route))
+        hasher.combine(Self.destinationFingerprint(for: viewModel.destination))
+        return hasher.finalize()
+    }
+
+    /// Maintains the same turn-aware camera policy used by the iPhone map,
+    /// but applies it to the dedicated CarPlay MKMapView. The route renderer
+    /// must not call `setVisibleMapRect` for active guidance: that operation
+    /// fits the entire trip and overrides the close vehicle-following camera.
+    private func updateNavigationCamera() {
+        guard viewModel.isNavigating,
+              viewModel.navigationCoordinator.currentRoute != nil else { return }
+
+        let context = navigationCameraContext()
+        if !hasInitializedNavigationCamera {
+            // If CarPlay connects before Core Location has delivered a fix,
+            // keep the system's follow camera temporarily. Applying a camera
+            // centered on MapKit's default coordinate (or a stale old fix)
+            // would create a second framing bug during handoff. Initialize the
+            // close camera on the first real location update instead.
+            guard hasReceivedLocationFix,
+                  viewModel.locationManager.latestLocation != nil else { return }
+
+            mapView.userTrackingMode = .followWithHeading
+
+            let target = CameraDecisionEngine.computeTarget(from: context)
+            let camera = mapView.camera.copy() as! MKMapCamera
+            if let location = viewModel.locationManager.latestLocation {
+                camera.centerCoordinate = location.coordinate
+            }
+            camera.centerCoordinateDistance = target.altitude
+            camera.pitch = CGFloat(target.pitch)
+            mapView.camera = camera
+
+            // Start the EMA from the close camera we just installed instead of
+            // from CarPlay's stale/default overview altitude.
+            cameraAnimator.reset(to: mapView)
+            hasInitializedNavigationCamera = true
+        }
+
+        cameraAnimator.update(mapView: mapView, context: context)
+    }
+
+    private func navigationCameraContext() -> CameraContext {
+        let measurementSystem = SpeedFormatting.measurementSystem()
+        let cameraSpeedMph = SpeedFormatting.isMetric(measurementSystem)
+            ? viewModel.speed * 0.621371
+            : viewModel.speed
+
+        return CameraContext(
+            speed: cameraSpeedMph,
+            speedLimit: viewModel.limit,
+            isNavigating: viewModel.isNavigating,
+            isRecording: viewModel.isRecording,
+            distanceToNextTurn: viewModel.distanceToNextTurn,
+            instruction: viewModel.nextManeuverInstruction,
+            maneuverImageName: viewModel.nextManeuverImageName,
+            destinationDistance: viewModel.distanceToDestination,
+            hasRoute: viewModel.currentRoute != nil,
+            userPitchOverride: viewModel.mapPitchMode
         )
     }
 
