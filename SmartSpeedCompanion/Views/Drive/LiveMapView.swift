@@ -252,6 +252,13 @@ public struct LiveMapView: UIViewRepresentable {
             return
         }
 
+        // Remember this transition so the tracking controller can be
+        // re-engaged first and the camera can then be restored to the current
+        // driving target. Merely switching tracking back on preserves the
+        // user's manual zoom, which is the wide framing reported in
+        // TestFlight after the 10-second auto-resume.
+        let isReattachingFromManualDetach = context.coordinator.wasMapDetached
+
         // Re-engage native tracking if it was released. Do not combine
         // MapKit's `.followWithHeading` camera controller with our own
         // altitude/pitch animator: the XR traces show both controllers
@@ -339,10 +346,35 @@ public struct LiveMapView: UIViewRepresentable {
             hasRoute: viewModel.currentRoute != nil,
             userPitchOverride: viewModel.mapPitchMode
         )
-        context.coordinator.cameraAnimator.update(mapView: uiView, context: cameraCtx)
+        if isReattachingFromManualDetach {
+            // An active route may still need its first overlay rebuild while
+            // the map is detached. Let that route-fit operation finish first,
+            // then restore the close camera so the overview fit cannot win the
+            // same update pass.
+            if viewModel.isNavigating {
+                context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
+            }
 
-        // Update overlays only when necessary (not every single frame)
-        context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
+            // A re-center is a camera restore, not just a tracking-mode
+            // change. Apply the same speed/turn-aware target used during
+            // normal guidance so a map that was manually zoomed out returns
+            // to the close navigation framing immediately.
+            context.coordinator.cameraAnimator.restoreCamera(
+                on: uiView,
+                context: cameraCtx
+            )
+            context.coordinator.wasMapDetached = false
+
+            // Preserve route-preview framing when the user re-centers before
+            // starting navigation; active guidance was handled above.
+            if !viewModel.isNavigating {
+                context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
+            }
+        } else {
+            context.coordinator.cameraAnimator.update(mapView: uiView, context: cameraCtx)
+            // Update overlays only when necessary (not every single frame)
+            context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
+        }
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -352,6 +384,12 @@ public struct LiveMapView: UIViewRepresentable {
     public class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: LiveMapView
         private var interactionTimer: Timer?
+
+        /// Set when the user manually detaches (pan/pinch). Cleared on the
+        /// first `updateUIView` pass after `isMapDetached` flips back to
+        /// false, so we can sync the camera animator with the real camera
+        /// before it resumes auto-zoom.
+        var wasMapDetached: Bool = false
 
         /// The camera system — replaces all previous `updateSmartAltitude`
         /// logic, cooldown timers, and altitude thresholds.
@@ -492,6 +530,10 @@ public struct LiveMapView: UIViewRepresentable {
             self.parent = parent
         }
 
+        deinit {
+            interactionTimer?.invalidate()
+        }
+
         @objc func handleManualInteraction(_ gesture: UIGestureRecognizer) {
             if gesture.state == .began || gesture.state == .changed {
                 startManualMode(gesture.view as? MKMapView)
@@ -520,6 +562,7 @@ public struct LiveMapView: UIViewRepresentable {
 
             if !parent.viewModel.isMapDetached {
                 parent.viewModel.isMapDetached = true
+                wasMapDetached = true
                 mapView?.userTrackingMode = .none
                 DebugLogger.shared.log("MAP DETACHED: Manual Control")
             }

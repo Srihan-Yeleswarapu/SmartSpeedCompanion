@@ -1177,6 +1177,29 @@ public final class CameraAnimator {
         }
     }
 
+    /// Restore the camera after MapKit resumes user tracking following a
+    /// manual pan or pinch. Tracking re-centers the vehicle, but it does not
+    /// restore the app's camera altitude; apply the current decision-engine
+    /// target explicitly so auto-recenter returns to the same close framing
+    /// used during navigation instead of preserving the user's overview zoom.
+    public func restoreCamera(on mapView: MKMapView, context: CameraContext) {
+        let target = CameraDecisionEngine.computeTarget(from: context)
+        let camera = mapView.camera.copy() as! MKMapCamera
+        camera.centerCoordinateDistance = target.altitude
+        camera.pitch = CGFloat(target.pitch)
+        // Use the property setter so restoring altitude does not release the
+        // user-tracking mode that was re-enabled by LiveMapView.
+        mapView.camera = camera
+
+        // Start smoothing from the restored camera, not from the manual
+        // camera that existed while tracking was detached. Seed the speed
+        // filter with the current reading as well; restarting it at zero
+        // would briefly apply the parked-camera target while the vehicle is
+        // already moving.
+        reset(to: mapView)
+        smoothedSpeed = context.speed
+    }
+
     /// Reset internal state (e.g., when navigation starts fresh or style changes dramatically).
     public func reset(to mapView: MKMapView) {
         displayAltitude = mapView.camera.centerCoordinateDistance
