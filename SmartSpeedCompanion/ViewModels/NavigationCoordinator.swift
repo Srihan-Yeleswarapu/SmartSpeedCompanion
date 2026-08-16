@@ -1216,32 +1216,18 @@ public final class NavigationCoordinator: ObservableObject {
             }
         }
 
-        // One-shot opening announcement on initial navigation. Include the
-        // destination, total route, travel time, ETA, and first maneuver in a
-        // single utterance so the driver gets a complete handoff instead of
-        // hearing only a short standalone turn label. Omit it on reroutes so
-        // traffic changes do not repeatedly say "Starting route" mid-drive.
-        if !isReroute, let etaValue = self.eta {
-            let destinationName = (destination?.name?.isEmpty == false)
-                ? destination!.name!
-                : "your destination"
-            let totalDistance = routeStops.isEmpty ? route.distance : distanceToDestination
-            let distanceText = formatDistance(totalDistance)
-            let durationText = formatTravelTimeForSpeech(routeStops.isEmpty
-                ? route.expectedTravelTime
-                : max(0, etaValue.timeIntervalSinceNow))
-            let etaFormatter = DateFormatter()
-            etaFormatter.timeStyle = .short
-            etaFormatter.dateStyle = .none
-            let timeText = etaFormatter.string(from: etaValue)
-
-            var message = "Directions to \(destinationName). The route is \(distanceText) and takes \(durationText), arriving at \(timeText)."
-            if let firstSpokenInstruction,
-               let firstSpokenInstructionDistance,
-               firstSpokenInstructionDistance > 0 {
-                message += " In \(formatDistance(firstSpokenInstructionDistance)), \(firstSpokenInstruction)."
+        // Keep the opening cue focused on the first maneuver. The route
+        // distance, ETA, and destination are already visible in the route
+        // preview; reading the whole summary before the useful instruction
+        // delayed the turn cue and sounded like unnecessary narration.
+        if !isReroute, let firstSpokenInstruction {
+            let message = conciseManeuverAnnouncement(
+                distance: firstSpokenInstructionDistance ?? 0,
+                instruction: firstSpokenInstruction
+            )
+            if !message.isEmpty {
+                announce(message)
             }
-            announce(message)
         }
 
         // Display the route in a Live Activity on the lock screen.
@@ -1706,12 +1692,12 @@ public final class NavigationCoordinator: ObservableObject {
                     stepStageFlags[stepIndex] = flags
                     return
                 }
-                let formattedDist = formatDistance(distanceToTurn)
-                if distanceToTurn > 3218 {
-                    let routeName = currentRoute?.name ?? "the road"
-                    recordCue("Continue on \(routeName) for \(formattedDist), then \(activeInstruction).")
-                } else {
-                    recordCue("In \(formattedDist), \(activeInstruction).")
+                let message = conciseManeuverAnnouncement(
+                    distance: distanceToTurn,
+                    instruction: activeInstruction
+                )
+                if !message.isEmpty {
+                    recordCue(message)
                 }
             }
             // Once the turn is inside the advance window, there is no reason
@@ -1725,10 +1711,13 @@ public final class NavigationCoordinator: ObservableObject {
                 stepStageFlags[stepIndex] = flags
                 return
             }
-            let turnMessage = distanceToTurn <= 30
-                ? "Now, \(activeInstruction)."
-                : "In \(formatDistance(distanceToTurn)), \(activeInstruction)."
-            recordCue(turnMessage)
+            let message = conciseManeuverAnnouncement(
+                distance: distanceToTurn,
+                instruction: activeInstruction
+            )
+            if !message.isEmpty {
+                recordCue(message)
+            }
             flags.insert("immediate")
         }
 
@@ -1974,19 +1963,22 @@ public final class NavigationCoordinator: ObservableObject {
         }
     }
 
-    /// Formats a route duration as natural speech rather than a bare number
-    /// of seconds. This is used only for the opening directions handoff.
-    private func formatTravelTimeForSpeech(_ seconds: TimeInterval) -> String {
-        let totalMinutes = max(1, Int((seconds / 60).rounded()))
-        if totalMinutes < 60 {
-            return "\(totalMinutes) \(totalMinutes == 1 ? "minute" : "minutes")"
-        }
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        if minutes == 0 {
-            return "\(hours) \(hours == 1 ? "hour" : "hours")"
-        }
-        return "\(hours) \(hours == 1 ? "hour" : "hours") and \(minutes) \(minutes == 1 ? "minute" : "minutes")"
+    /// Builds the compact distance-first voice cue requested for turn-by-turn
+    /// guidance, for example: "In 800 feet, Turn right onto W Queen Creek Rd."
+    /// The voice announcer expands street abbreviations for speech; the
+    /// underlying maneuver label shown in the UI remains unchanged.
+    private func conciseManeuverAnnouncement(
+        distance: CLLocationDistance,
+        instruction: String
+    ) -> String {
+        let trimmedInstruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInstruction.isEmpty else { return "" }
+
+        let sentence = trimmedInstruction.hasSuffix(".")
+            ? trimmedInstruction
+            : "\(trimmedInstruction)."
+        guard distance > 30 else { return sentence }
+        return "In \(formatDistance(distance)), \(sentence)"
     }
 
     /// Converts a decimal number to a speakable English string so TTS
