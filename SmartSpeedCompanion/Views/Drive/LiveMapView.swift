@@ -361,7 +361,8 @@ public struct LiveMapView: UIViewRepresentable {
             // to the close navigation framing immediately.
             context.coordinator.cameraAnimator.restoreCamera(
                 on: uiView,
-                context: cameraCtx
+                context: cameraCtx,
+                centerCoordinate: viewModel.locationManager.latestLocation?.coordinate
             )
             context.coordinator.wasMapDetached = false
 

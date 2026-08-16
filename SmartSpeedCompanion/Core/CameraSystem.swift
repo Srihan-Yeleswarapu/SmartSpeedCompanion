@@ -1182,14 +1182,51 @@ public final class CameraAnimator {
     /// restore the app's camera altitude; apply the current decision-engine
     /// target explicitly so auto-recenter returns to the same close framing
     /// used during navigation instead of preserving the user's overview zoom.
-    public func restoreCamera(on mapView: MKMapView, context: CameraContext) {
+    ///
+    /// MapKit can preserve the detached camera center when tracking is turned
+    /// back on, and it can also apply its default tracking altitude after the
+    /// first camera assignment. To make re-center deterministic, install the
+    /// complete camera while tracking is temporarily disabled, re-enable the
+    /// previous tracking mode, and apply the distance/pitch once more on the
+    /// next main-queue turn after MapKit has settled.
+    public func restoreCamera(
+        on mapView: MKMapView,
+        context: CameraContext,
+        centerCoordinate: CLLocationCoordinate2D? = nil
+    ) {
         let target = CameraDecisionEngine.computeTarget(from: context)
-        let camera = mapView.camera.copy() as! MKMapCamera
-        camera.centerCoordinateDistance = target.altitude
-        camera.pitch = CGFloat(target.pitch)
-        // Use the property setter so restoring altitude does not release the
-        // user-tracking mode that was re-enabled by LiveMapView.
-        mapView.camera = camera
+        let trackingMode = mapView.userTrackingMode
+        let restoreTracking = trackingMode != .none
+
+        if restoreTracking {
+            mapView.setUserTrackingMode(.none, animated: false)
+        }
+
+        // The center coordinate is just as important as the zoom. Without an
+        // explicit center, re-center could leave the map over the last manual
+        // pan until Core Location delivered another fix, which is why paired
+        // screenshots taken seconds apart showed different positions.
+        applyTargetCamera(
+            on: mapView,
+            target: target,
+            centerCoordinate: centerCoordinate
+        )
+
+        if restoreTracking {
+            mapView.setUserTrackingMode(trackingMode, animated: false)
+            // Tracking mode may restore MapKit's own altitude asynchronously.
+            // Reapply only after the mode is back; this does not fight manual
+            // interaction because a user gesture changes the mode to `.none`.
+            Task { @MainActor [weak self, weak mapView] in
+                guard let self, let mapView,
+                      mapView.userTrackingMode == trackingMode else { return }
+                self.applyTargetCamera(
+                    on: mapView,
+                    target: target,
+                    centerCoordinate: centerCoordinate
+                )
+            }
+        }
 
         // Start smoothing from the restored camera, not from the manual
         // camera that existed while tracking was detached. Seed the speed
@@ -1198,6 +1235,20 @@ public final class CameraAnimator {
         // already moving.
         reset(to: mapView)
         smoothedSpeed = context.speed
+    }
+
+    private func applyTargetCamera(
+        on mapView: MKMapView,
+        target: TargetCameraState,
+        centerCoordinate: CLLocationCoordinate2D?
+    ) {
+        let camera = mapView.camera.copy() as! MKMapCamera
+        if let centerCoordinate {
+            camera.centerCoordinate = centerCoordinate
+        }
+        camera.centerCoordinateDistance = target.altitude
+        camera.pitch = CGFloat(target.pitch)
+        mapView.camera = camera
     }
 
     /// Reset internal state (e.g., when navigation starts fresh or style changes dramatically).
