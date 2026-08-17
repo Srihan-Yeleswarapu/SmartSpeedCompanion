@@ -357,10 +357,16 @@ public final class NavigationCoordinator: ObservableObject {
     /// without hammering Apple's directions service.
     private var rerouteTimer: Timer?
     private var trafficRefreshInFlight = false
-    /// Per-step announcement gating: key is step index, value is a set of
-    /// stage flags ("initial", "immediate") so each cue fires AT MOST ONCE
-    /// per step. Guidance is also globally time-gated below so adjacent plaza
-    /// steps cannot produce a rapid stream of spoken prompts.
+    /// Per-maneuver announcement gating: key is the RESOLVED maneuver's step
+    /// index (the step that actually carries the spoken instruction, which may
+    /// be ahead of the current step when MapKit emits short steps with empty
+    /// instructions along the approach), value is a set of stage flags
+    /// ("initial", "immediate") so each cue fires AT MOST ONCE per maneuver.
+    /// Keying on the resolved maneuver — not the current step index — prevents
+    /// the same turn from being re-spoken at every ~100 ft step boundary
+    /// ("In 800 feet, turn right…", then "In 700 feet, turn right…").
+    /// Guidance is also globally time-gated below so adjacent plaza steps
+    /// cannot produce a rapid stream of spoken prompts.
     private var stepStageFlags: [Int: Set<String>] = [:]
     private var lastGuidanceAnnouncementAt: Date = .distantPast
     private let minimumGuidanceAnnouncementInterval: TimeInterval = 4.0
@@ -1642,13 +1648,15 @@ public final class NavigationCoordinator: ObservableObject {
         // arrival detection remains separate and still works at a stop.
         guard isMoving else { return }
 
-        if stepStageFlags[stepIndex] == nil {
-            stepStageFlags[stepIndex] = []
-        }
-        var flags = stepStageFlags[stepIndex]!
-
         // Use current instruction unless it's generic, then use next.
+        // Track WHICH step carries the spoken instruction: when the route's
+        // approach is split into several short steps whose instructions are
+        // empty, they all resolve to the same upcoming maneuver. The flags
+        // below must be keyed on that resolved maneuver step so crossing each
+        // intermediate step boundary cannot re-arm the cue and re-speak the
+        // same turn at a smaller distance on every tick.
         var activeInstruction = steps[stepIndex].instructions
+        var maneuverStepIndex = stepIndex
         if instructionIsGenericLabel(activeInstruction) {
             var nextIdx = stepIndex + 1
             while nextIdx < steps.count && steps[nextIdx].instructions.isEmpty {
@@ -1656,13 +1664,16 @@ public final class NavigationCoordinator: ObservableObject {
             }
             if nextIdx < steps.count {
                 activeInstruction = steps[nextIdx].instructions
+                maneuverStepIndex = nextIdx
             }
         }
 
-        guard !activeInstruction.isEmpty else {
-            stepStageFlags[stepIndex] = flags
-            return
+        guard !activeInstruction.isEmpty else { return }
+
+        if stepStageFlags[maneuverStepIndex] == nil {
+            stepStageFlags[maneuverStepIndex] = []
         }
+        var flags = stepStageFlags[maneuverStepIndex]!
 
         // Highway (~50mph+): 220m (720ft / 0.15 mile) for the final prompt.
         // City: 60m (~200ft). There are deliberately only TWO cues per step:
@@ -1689,7 +1700,7 @@ public final class NavigationCoordinator: ObservableObject {
         if !flags.contains("initial") {
             if distanceToTurn > immediateThreshold + 50 {
                 guard canSpeakCue() else {
-                    stepStageFlags[stepIndex] = flags
+                    stepStageFlags[maneuverStepIndex] = flags
                     return
                 }
                 let message = conciseManeuverAnnouncement(
@@ -1708,7 +1719,7 @@ public final class NavigationCoordinator: ObservableObject {
         // 2. Immediate turning warning.
         if distanceToTurn <= immediateThreshold && !flags.contains("immediate") {
             guard canSpeakCue() else {
-                stepStageFlags[stepIndex] = flags
+                stepStageFlags[maneuverStepIndex] = flags
                 return
             }
             let message = conciseManeuverAnnouncement(
@@ -1721,7 +1732,7 @@ public final class NavigationCoordinator: ObservableObject {
             flags.insert("immediate")
         }
 
-        stepStageFlags[stepIndex] = flags
+        stepStageFlags[maneuverStepIndex] = flags
     }
 
 
