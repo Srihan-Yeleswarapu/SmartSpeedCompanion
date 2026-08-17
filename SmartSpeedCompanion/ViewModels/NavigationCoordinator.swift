@@ -1878,20 +1878,74 @@ public final class NavigationCoordinator: ObservableObject {
         )
     }
 
-    /// Strided polyline distance for the 35 m off-route detector. Walks
-    /// every 5th point and short-circuits when an early-exit of < 10 m is
-    /// found; less precise than `findNearestPointOnPolyline` but cheaper
-    /// to call on every location tick.
+    /// True distance from `location` to the route polyline for the 35 m
+    /// off-route detector. Measures point-to-SEGMENT distance across every
+    /// segment (not distance to every 5th vertex), so a driver perfectly on
+    /// a long straight highway is correctly measured as on-route even when
+    /// the nearest sampled vertex is hundreds of meters away — the old
+    /// stride-5 vertex sampling reported false off-route there, buzzing the
+    /// phone every few seconds for the whole trip (TestFlight feedback).
+    /// Short-circuits once a distance under 10 m is found.
     private func distanceToPolyline(_ location: CLLocation, polyline: MKPolyline) -> CLLocationDistance {
-        var minDistance: CLLocationDistance = .greatestFiniteMagnitude
         let points = polyline.points()
-        for i in stride(from: 0, to: polyline.pointCount, by: 5) {
-            let routeLocation = CLLocation(latitude: points[i].coordinate.latitude, longitude: points[i].coordinate.longitude)
-            let distance = location.distance(from: routeLocation)
+        let count = polyline.pointCount
+        guard count > 0 else { return .greatestFiniteMagnitude }
+        if count == 1 {
+            return location.distance(from: CLLocation(
+                latitude: points[0].coordinate.latitude,
+                longitude: points[0].coordinate.longitude
+            ))
+        }
+
+        var minDistance: CLLocationDistance = .greatestFiniteMagnitude
+        for i in 0..<(count - 1) {
+            let distance = distanceFrom(
+                location.coordinate,
+                toSegment: points[i].coordinate,
+                points[i + 1].coordinate
+            )
             if distance < minDistance { minDistance = distance }
             if minDistance < 10 { return minDistance }
         }
         return minDistance
+    }
+
+    /// Distance in meters from `coord` to the finite segment `a`–`b`.
+    /// Uses a local equirectangular projection around `coord` (accurate at
+    /// city scale) so the math is planar and avoids per-segment CLLocation
+    /// allocation on the 500 ms GPS path.
+    private func distanceFrom(
+        _ coord: CLLocationCoordinate2D,
+        toSegment a: CLLocationCoordinate2D,
+        _ b: CLLocationCoordinate2D
+    ) -> CLLocationDistance {
+        let metersPerDegLat = 111_132.0
+        let metersPerDegLon = 111_132.0 * cos(coord.latitude * .pi / 180.0)
+
+        // Project everything into meters relative to `a`.
+        let ax = 0.0
+        let ay = 0.0
+        let bx = (b.longitude - a.longitude) * metersPerDegLon
+        let by = (b.latitude - a.latitude) * metersPerDegLat
+        let px = (coord.longitude - a.longitude) * metersPerDegLon
+        let py = (coord.latitude - a.latitude) * metersPerDegLat
+
+        let dx = bx - ax
+        let dy = by - ay
+        let lengthSquared = dx * dx + dy * dy
+        guard lengthSquared > 0 else {
+            return sqrt(px * px + py * py)
+        }
+
+        // Clamped projection of P onto the segment: t in [0, 1].
+        var t = ((px - ax) * dx + (py - ay) * dy) / lengthSquared
+        t = max(0, min(1, t))
+        let cx = ax + t * dx
+        let cy = ay + t * dy
+
+        let ex = px - cx
+        let ey = py - cy
+        return sqrt(ex * ex + ey * ey)
     }
 
     /// Walks the route polyline to find exactly where `location` sits on
