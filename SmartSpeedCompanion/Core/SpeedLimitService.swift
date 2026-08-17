@@ -1,16 +1,24 @@
 // SpeedLimitService.swift
 // Orchestrator that picks the best speed-limit answer for the user's current coord.
 //
-// Decision tree (live-first; HERE-only):
-//   1. If online, query HERE REST first so fresh data wins.
-//   2. If HERE is throttled/unavailable, use the short-lived HERE response cache.
-//   3. Use the validated HERE batch cache as an offline/last-resort fallback.
+// Decision tree (cache-first / rate-limit-first; HERE-only):
+//   1. Consult the short-lived HERE response cache (local memory, 30 min TTL,
+//      spatial grid keyed by the user's location). If we already know this
+//      location, we send NO network request at all.
+//   2. Consult the validated HERE batch cache (SQLite, populated by the
+//      initial 2.5km setup grid + just-in-time geofence triggers).
+//   3. Only when BOTH local caches miss (or the user tapped manual refresh)
+//      do we query HERE REST live — and the provider's own 100 m success
+//      distance throttle further caps how often genuinely-new locations
+//      actually hit the API.
 //   4. If all HERE paths miss, return No Data and let the continuity guard
 //      apply its normal miss-grace window.
 //
-// Trade-off note: live-first means a recently-installed sign change is requested
-// immediately whenever HERE is reachable; the short-lived caches are used only
-// when HERE is throttled, unavailable, or the device is offline.
+// Trade-off note: cache-first means a recently-installed sign change is only
+// picked up after the response cache TTL expires (30 min) or the batch cache
+// is refreshed — the deliberate cost of protecting the HERE freemium rate
+// limit (250k requests/month) from a 1-Hz GPS loop. Manual refresh still
+// bypasses every cache so the driver can force a live answer anytime.
 //
 // @Published dataSource retains legacy localDB cases for decoding compatibility,
 // but this service never creates or publishes them.
@@ -254,24 +262,18 @@ public class SmartSpeedLimitService: ObservableObject {
         roadName: String?,
         forceRefresh: Bool = false
     ) async -> Candidate {
-        // 1. Prefer a live HERE answer whenever the network is available.
-        //    Batch/response caches can be days or weeks old and are useful for
-        //    offline driving, but they must never mask a current HERE answer.
-        //    The REST provider's own distance throttle returns nil when a live
-        //    request is intentionally suppressed; only then do we fall through
-        //    to a nearby cached segment.
-        if reachability.isConnected,
-           let live = await liveHERECandidate(
-                at: coordinate,
-                heading: heading,
-                forceRefresh: forceRefresh
-           ) {
-            return live
-        }
+        // RATE-LIMIT-FIRST (cache-first) ordering. The user asked for local
+        // memory to be consulted BEFORE any network request: if we already
+        // have the answer for this location cached (response cache in memory,
+        // then the SQLite batch cache), we do NOT send a HERE request at all.
+        // HERE REST is only contacted when BOTH local caches miss — a brand
+        // new road or cell. Manual refresh (`forceRefresh`) still bypasses
+        // every cache so the user's tap always runs the live provider chain.
 
-        // 2. Response-cache fallback. When offline (or while HERE is throttled),
-        //    use the short-lived in-memory response cache before the longer-lived
-        //    batch cache. Manual refresh still bypasses both caches.
+        // 1. Response cache — the short-lived in-memory (30 min) spatial grid
+        //    cache keyed by the user's location. This is the "do we already
+        //    know this place?" check: a location we have cached costs zero
+        //    network requests, which protects the HERE freemium rate limit.
         if !forceRefresh,
            let roadName,
            !roadName.isEmpty,
@@ -287,16 +289,12 @@ public class SmartSpeedLimitService: ObservableObject {
             )
         }
 
-        // 3. Batch cache lookup (HERE Route Matching API results).
-        //    Uses SQLite-backed road-based cache. Primary path: look up by
-        //    road name + direction (fast, O(log n)). Fallback: spatial
-        //    nearest-neighbor query for the closest cached road point
-        //    within 50m of the user's coordinate.
-        //    Used only after the live and response-cache paths miss or are
-        //    throttled, so cached data cannot mask a fresh HERE answer.
-        //    Like the response cache above, skip this when `forceRefresh`
-        //    is true so the user's tap runs the live provider chain and
-        //    can override a wrong batch-cached limit.
+        // 2. Batch cache lookup (HERE Route Matching API results) — SQLite,
+        //    populated by the initial 2.5km setup grid and just-in-time
+        //    geofence triggers as the user drives. Primary path: road name +
+        //    direction (O(log n)); fallback: spatial nearest-neighbor within
+        //    50m. Also skips when `forceRefresh` so the tap can override a
+        //    wrong batch-cached limit.
         if !forceRefresh,
            let roadName,
            !roadName.isEmpty {
@@ -317,12 +315,22 @@ public class SmartSpeedLimitService: ObservableObject {
             }
         }
 
+        // 3. Live HERE — ONLY when both local caches missed (brand new
+        //    location or the user tapped manual refresh). The REST provider's
+        //    own distance throttle (100 m since last success) further limits
+        //    how often a genuinely-new location actually hits the API.
+        if reachability.isConnected,
+           let live = await liveHERECandidate(
+                at: coordinate,
+                heading: heading,
+                forceRefresh: forceRefresh
+           ) {
+            return live
+        }
+
         // 4. HERE and local caches have no data. Returning a miss keeps all
         // regions on the same path and prevents an unrelated map-data source
         // from becoming authoritative.
-        //
-        // The live provider is intentionally isolated in a helper above so the
-        // ordering is obvious: live HERE first, cache only as a fallback.
         return Candidate(
             limit: 0, source: .noData,
             roadKey: "", providerName: "", detail: "",

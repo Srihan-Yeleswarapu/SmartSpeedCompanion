@@ -9,16 +9,18 @@
 //                                         // HERE resolves the actual segment
 //                                         // rather than straddle a junction).
 //     &routingMode=fast
-//     &return=summary
+//     &return=summary,polyline
 //     &units=imperial
 //     &spans=names,maxSpeed
 //     &apiKey={access_key_id}
 //
-// Speed limits are span attributes, not `return` values. Without the `spans`
-// query item HERE returns a valid route with no speed-limit field; the old
-// `return=summary,speedLimit` request therefore made every live lookup
-// resolve to No Data. Current HERE v8 exposes the limit as `maxSpeed` and the
-// explicit imperial unit makes the returned value directly usable as MPH.
+// Speed limits are span attributes, not `return` values, and HERE ONLY
+// returns spans when `return` includes `polyline` — the span offsets are
+// derived from the polyline geometry ("To get spans, the request must
+// include ... the return=polyline parameter"). Sending `spans=names,maxSpeed`
+// without `return=polyline` makes HERE return a valid route with NO span
+// attributes, so every live lookup resolves to No Data. The explicit
+// imperial unit makes the returned `maxSpeed` directly usable as MPH.
 // The parser still accepts the deprecated `speedLimit` object for older
 // deployments.
 //
@@ -93,11 +95,12 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             URLQueryItem(name: "origin", value: origin),
             URLQueryItem(name: "destination", value: dest),
             URLQueryItem(name: "routingMode", value: "fast"),
-            // HERE exposes speed limits through the `spans` parameter. They
-            // are not valid members of the `return` list. `maxSpeed` is the
-            // current v8 attribute; the parser retains a legacy speedLimit
-            // fallback for older API deployments.
-            URLQueryItem(name: "return", value: "summary"),
+            // HERE exposes speed limits through the `spans` parameter, but
+            // spans are only returned when `return` includes `polyline`
+            // (span offsets are derived from the polyline geometry).
+            // Without it HERE returns a valid route with no speed-limit
+            // field and every live lookup resolves to No Data.
+            URLQueryItem(name: "return", value: "summary,polyline"),
             URLQueryItem(name: "units", value: "imperial"),
             URLQueryItem(name: "spans", value: "names,maxSpeed"),
             URLQueryItem(name: "apiKey", value: creds.accessKeyId)
