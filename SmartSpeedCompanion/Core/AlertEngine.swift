@@ -456,8 +456,33 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     private func endAlertAudioFocus() {
         guard alertSessionHeld else { return }
         alertSessionHeld = false
+        // Suspend the tone engine BEFORE releasing the cue. A running
+        // AVAudioEngine holds the AVAudioSession active, so the coordinator's
+        // setActive(false) would fail and `.notifyOthersOnDeactivation` would
+        // never reach the interrupted media app — leaving YouTube/Music
+        // paused for the rest of the drive (regression from the 24/7 tone
+        // engine). Pausing the engine first lets the session deactivate and
+        // the previous media resume, exactly like it did before the engine
+        // was left running.
+        suspendToneEngine()
         AudioSessionCoordinator.shared.endCue()
         DebugLogger.shared.log("AlertEngine: audio focus released after speeding episode")
+    }
+
+    /// Stops the tone engine's rendering so the shared audio session can be
+    /// deactivated between overspeed episodes. Uses `pause()` rather than
+    /// `stop()`: a paused AVAudioEngine can be resumed with a plain
+    /// `start()`, while a stopped one throws -10851 on restart unless it is
+    /// reset first — the exact bug that broke every beep after the first in
+    /// the old per-beep stop()/start() cycle. The engine is built lazily, so
+    /// if it never fired yet there is nothing to suspend.
+    private func suspendToneEngine() {
+        guard toneEngineReady else { return }
+        if audioEngine.isRunning {
+            playerNode.stop()
+            audioEngine.pause()
+            DebugLogger.shared.log("AlertEngine: tone engine paused (media can resume)")
+        }
     }
 
     /// Rebuilds the tone-engine graph after an interruption. A phone call
