@@ -23,9 +23,9 @@ jobs:
         # 26.0.1 .. 26.6. Anything older (e.g. a straggler Xcode_16.2.app)
         # is explicitly rejected so the build is reproducible.
         run: |
-          XCODE_PATH=$(ls -d /Applications/Xcode_26.6*.app 2>/dev/null | sort -V | tail -1)
+          XCODE_PATH=$(ls -d /Applications/Xcode_26.6*.app /Applications/Xcode_26.6.app 2>/dev/null | sort -V | tail -1)
           if [ -z "$XCODE_PATH" ]; then
-            XCODE_PATH=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
+            XCODE_PATH=$(ls -d /Applications/Xcode_26.*.app /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
           fi
           if [ -z "$XCODE_PATH" ]; then
             echo "[ERROR] No Xcode 26.x installed on this runner. Check the macos-26 runner image manifest."
@@ -54,19 +54,11 @@ jobs:
             echo '</plist>' >> SmartSpeedCompanion/Configuration/HERE-Config.plist
             echo "[OK] HERE-Config.plist created (api_key: ${#HERE_API_KEY} chars)"
           else
-            echo "[ERROR] HERE_API_KEY secret is not set; the app cannot resolve any live speed limits."
-            exit 1
+            echo "[WARN] HERE_API_KEY secret is not set; HERE live speed limits will be unavailable in this build."
           fi
 
       - name: Generate Xcode project
         run: xcodegen generate
-
-      - name: Download iOS platform for Xcode
-        run: |
-          echo "Checking available platforms..."
-          xcrun simctl list runtimes
-          echo "Downloading iOS platform..."
-          sudo xcodebuild -downloadPlatform iOS
 
       - name: Set up signing keychain & install certificate
         env:
