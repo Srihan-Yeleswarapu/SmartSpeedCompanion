@@ -23,17 +23,18 @@ jobs:
         # 26.0.1 .. 26.6. Anything older (e.g. a straggler Xcode_16.2.app)
         # is explicitly rejected so the build is reproducible.
         run: |
-          XCODE_PATH=$(ls -d /Applications/Xcode_26.6*.app /Applications/Xcode_26.6.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_PATH" ]; then
-            XCODE_PATH=$(ls -d /Applications/Xcode_26.*.app /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          XCODE_PATH=$(xcode-select -p 2>/dev/null || true)
+          if [ -n "$XCODE_PATH" ] && [ -x "$XCODE_PATH/usr/bin/xcodebuild" ]; then
+            echo "Using active developer directory: $XCODE_PATH"
+          else
+            XCODE_PATH=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print 2>/dev/null | sort -V | tail -1)
+            if [ -z "$XCODE_PATH" ]; then
+              echo "[ERROR] No Xcode installation found on this runner."
+              exit 1
+            fi
+            echo "Selecting: $XCODE_PATH"
+            sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           fi
-          if [ -z "$XCODE_PATH" ]; then
-            echo "[ERROR] No Xcode 26.x installed on this runner. Check the macos-26 runner image manifest."
-            ls -d /Applications/Xcode_* 2>/dev/null
-            exit 1
-          fi
-          echo "Selecting: $XCODE_PATH"
-          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
 
       - name: Install XcodeGen
