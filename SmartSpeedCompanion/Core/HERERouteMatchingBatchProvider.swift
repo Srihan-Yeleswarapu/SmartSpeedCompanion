@@ -44,7 +44,9 @@
 import Foundation
 import CoreLocation
 
-public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
+public final class HERERouteMatchingBatchProvider: SpeedLimitProvider, @unchecked Sendable {
+    public let displayName: String = "HERE Route Matching"
+
     public init() {}
 
     private let gridCols: Int = 21
@@ -54,6 +56,112 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
 
     private let lock = NSLock()
     private var _lastBatchFetchAt: Date?
+
+    // MARK: - Public API
+
+    /// Resolve the posted speed limit directly from a short GPS trace. This is
+    /// the authoritative HERE speed-limit endpoint; the grid method below is
+    /// only the background prefetch/cache warmer.
+    public func fetchSpeedLimit(
+        at coordinate: CLLocationCoordinate2D,
+        heading: Double?,
+        forceRefresh: Bool = false
+    ) async throws -> SpeedLimitResponse? {
+        let trace = shortTrace(around: coordinate, heading: heading)
+        let csvBody = buildCSV(from: trace)
+        guard !csvBody.isEmpty,
+              let creds = HERECredentialStore.shared.loadCredentials() else {
+            DebugLogger.shared.log("HERE Route Matching: missing credentials or trace")
+            return nil
+        }
+
+        var components = URLComponents(string: "https://routematching.hereapi.com/v8/match/routelinks")
+        components?.queryItems = [
+            URLQueryItem(name: "apiKey", value: creds.accessKeyId),
+            URLQueryItem(name: "filetype", value: "CSV"),
+            URLQueryItem(name: "routeMatch", value: "1"),
+            URLQueryItem(name: "mode", value: "fastest;car"),
+            URLQueryItem(name: "attributes", value: "SPEED_LIMITS_FCn(FROM_REF_SPEED_LIMIT),ROAD_NAME_FCn(NAMES)")
+        ]
+        guard let url = components?.url else { return nil }
+
+        var request = URLRequest(url: url, timeoutInterval: 5.0)
+        request.httpMethod = "POST"
+        request.setValue("text/csv", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Speedio/2.2", forHTTPHeaderField: "User-Agent")
+        request.httpBody = csvBody.data(using: .utf8)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let bodyPreview = String(data: data.prefix(200), encoding: .utf8) ?? "<binary>"
+            DebugLogger.shared.log("HERE Route Matching: HTTP \(http.statusCode) body=\(bodyPreview)")
+            return nil
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            DebugLogger.shared.log("HERE Route Matching: invalid JSON response (bytes=\(data.count))")
+            return nil
+        }
+        let links = (json["RouteLinks"] as? [[String: Any]])
+            ?? (json["routeLinks"] as? [[String: Any]])
+            ?? (json["routeLinks"] as? [String: [[String: Any]]])?.values.flatMap { $0 }
+            ?? []
+        guard !links.isEmpty else {
+            DebugLogger.shared.log("HERE Route Matching: no RouteLinks (keys=\(json.keys.sorted()))")
+            return nil
+        }
+
+        // Do not require ROAD_NAME_FCn to be present. Speed-limit coverage is
+        // still useful when HERE returns the speed layer but omits names.
+        let candidates: [(limit: Int, roadName: String, distance: Double)] = links.compactMap { link in
+            guard let speedKph = speedLimitKilometersPerHour(in: link),
+                  speedKph > 0 else { return nil }
+            let mph = Int((speedKph * 0.621371).rounded())
+            guard mph > 0, mph <= 90 else { return nil }
+            let name = roadName(from: link) ?? "current road"
+            let midpoint = geometryCoordinates(from: link).map { coords in
+                coords[coords.count / 2]
+            }
+            let distance = midpoint.map {
+                distanceSquared($0.latitude, $0.longitude, coordinate)
+            } ?? 0
+            return (mph, name, distance)
+        }
+        guard let nearest = candidates.min(by: { $0.distance < $1.distance }) else {
+            DebugLogger.shared.log("HERE Route Matching: RouteLinks contained no speed-limit links")
+            return nil
+        }
+
+        return SpeedLimitResponse(
+            speedLimitMph: nearest.limit,
+            roadKey: "here-match-\(nearest.roadName)",
+            providerName: "HERE Match",
+            detail: "HERE Route Matching segment on \(nearest.roadName)"
+        )
+    }
+
+    private func shortTrace(
+        around coordinate: CLLocationCoordinate2D,
+        heading: Double?
+    ) -> [CLLocationCoordinate2D] {
+        let course = heading.flatMap { $0.isFinite && $0 >= 0 && $0 < 360 ? $0 : nil } ?? 90
+        let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        return [
+            coordinate,
+            origin.location(at: 20, bearing: course).coordinate,
+            origin.location(at: 45, bearing: course).coordinate
+        ]
+    }
+
+    private func distanceSquared(_ latitude: Double, _ longitude: Double, _ coordinate: CLLocationCoordinate2D) -> Double {
+        let dx = (longitude - coordinate.longitude) * cos(coordinate.latitude * .pi / 180)
+        let dy = latitude - coordinate.latitude
+        return dx * dx + dy * dy
+    }
 
     // MARK: - Public API
 
@@ -103,7 +211,7 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
             // Request both the forward speed limit and road name. RouteLinks
             // does not include a usable display road name unless ROAD_NAME_FCn
             // is explicitly requested.
-            URLQueryItem(name: "attributes", value: "SPEED_LIMITS_FCn(FROM_REF_SPEED_LIMIT),ROAD_NAME_FCn(*)"),
+            URLQueryItem(name: "attributes", value: "SPEED_LIMITS_FCn(FROM_REF_SPEED_LIMIT),ROAD_NAME_FCn(NAMES)"),
         ]
         guard let url = components?.url else { return 0 }
 
@@ -215,7 +323,11 @@ public final class HERERouteMatchingBatchProvider: @unchecked Sendable {
         // parser only looked for Routing API's routes/sections shape, so every
         // batch response was parsed as zero roads and the local HERE cache
         // stayed empty.
-        if let routeLinks = json["RouteLinks"] as? [[String: Any]] {
+        let routeLinks = (json["RouteLinks"] as? [[String: Any]])
+            ?? (json["routeLinks"] as? [[String: Any]])
+            ?? (json["routeLinks"] as? [String: [[String: Any]]])?.values.flatMap { $0 }
+            ?? []
+        if !routeLinks.isEmpty {
             roads.append(contentsOf: parseRouteLinks(routeLinks, seen: &seen))
         }
 

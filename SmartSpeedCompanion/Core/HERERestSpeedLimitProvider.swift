@@ -36,6 +36,7 @@
 
 import Foundation
 import CoreLocation
+import Darwin
 
 public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Sendable {
     public let displayName: String = "HERE REST"
@@ -45,11 +46,10 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
     private var _lastFailureAt: Date?
     private let successMinDistance: CLLocationDistance = 100
     private let failureRetryInterval: TimeInterval = 10
-    // ~35 m probe. 5 m is too tight — HERE sometimes returned the speed of an
-    // adjacent street segment. The probe follows the vehicle course whenever
-    // one is available, so it samples the road ahead instead of an arbitrary
-    // eastward segment at intersections.
-    private let selfLoopMeters: Double = 35
+    // Probe far enough for HERE to identify the current road, but keep the
+    // destination on the same segment in normal driving. The probe follows
+    // the vehicle course whenever one is available.
+    private let selfLoopMeters: Double = 60
 
     public init() {}
 
@@ -64,10 +64,14 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         let nowLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         guard !shouldSkipRequest(at: nowLoc, forceRefresh: forceRefresh) else { return nil }
 
-        // Credentials gate. No creds == the user hasn't onboarded yet, so we
-        // silently fall through instead of crashing the chain on auth errors.
+        // Credentials gate. A missing key is a deployment failure, so log it
+        // explicitly rather than making it indistinguishable from no map data.
         guard let creds = HERECredentialStore.shared.loadCredentials() else {
             DebugLogger.shared.log("HERE REST: credentials missing; active HERE source unavailable")
+            return nil
+        }
+        guard !creds.accessKeyId.isEmpty else {
+            DebugLogger.shared.log("HERE REST: credential value is empty")
             return nil
         }
 
@@ -85,9 +89,20 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         let headingRadians = normalizedCourse * .pi / 180.0
         let dLat = selfLoopMeters * cos(headingRadians) * meterDegLat
         let dLon = selfLoopMeters * sin(headingRadians) * meterDegLon
-        let origin = String(format: "%.6f,%.6f", coordinate.latitude, coordinate.longitude)
-        let dest = String(format: "%.6f,%.6f",
-                          coordinate.latitude + dLat, coordinate.longitude + dLon)
+        // Use POSIX formatting: a device locale with comma decimal separators
+        // would otherwise produce an invalid HERE coordinate query.
+        let origin = String(
+            format: "%.6f,%.6f",
+            locale: Locale(identifier: "en_US_POSIX"),
+            coordinate.latitude,
+            coordinate.longitude
+        )
+        let dest = String(
+            format: "%.6f,%.6f",
+            locale: Locale(identifier: "en_US_POSIX"),
+            coordinate.latitude + dLat,
+            coordinate.longitude + dLon
+        )
 
         var components = URLComponents(string: "https://router.hereapi.com/v8/routes")
         components?.queryItems = [
@@ -95,18 +110,22 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             URLQueryItem(name: "origin", value: origin),
             URLQueryItem(name: "destination", value: dest),
             URLQueryItem(name: "routingMode", value: "fast"),
-            // HERE exposes speed limits through the `spans` parameter, but
-            // spans are only returned when `return` includes `polyline`
-            // (span offsets are derived from the polyline geometry).
-            // Without it HERE returns a valid route with no speed-limit
-            // field and every live lookup resolves to No Data.
-            URLQueryItem(name: "return", value: "summary,polyline"),
+            // HERE exposes speed limits through route spans. The span
+            // boundaries are derived from the returned polyline, so polyline
+            // is mandatory; include summary as well for a stable section.
+            URLQueryItem(name: "return", value: "summary,polyline,actions"),
             URLQueryItem(name: "units", value: "imperial"),
-            URLQueryItem(name: "spans", value: "names,maxSpeed"),
+            // Keep this list to documented span attributes. `segmentRef` is
+            // a route response field, not a requestable span attribute on all
+            // HERE deployments; an unsupported attribute can make the entire
+            // request fail or omit every span.
+            URLQueryItem(name: "spans", value: "maxSpeed"),
             URLQueryItem(name: "apiKey", value: creds.accessKeyId)
         ]
 
         guard let url = components?.url else { return nil }
+        let headingText = String(format: "%.0f", locale: Locale(identifier: "en_US_POSIX"), course)
+        DebugLogger.shared.log("HERE REST: requesting route probe \(origin) -> \(dest) heading=\(headingText)")
         var request = URLRequest(url: url, timeoutInterval: 4.0)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -125,6 +144,7 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             recordFailure()
             throw URLError(.badServerResponse)
         }
+        DebugLogger.shared.log("HERE REST: HTTP \(http.statusCode) responseBytes=\(data.count)")
         guard (200..<300).contains(http.statusCode) else {
             recordFailure()
             let bodyPreview = String(data: data.prefix(200), encoding: .utf8) ?? "<binary>"
@@ -137,25 +157,30 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
             return nil
         }
 
-        guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let routes = payload["routes"] as? [[String: Any]],
+        guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            DebugLogger.shared.log("HERE REST: invalid JSON response (bytes=\(data.count))")
+            return nil
+        }
+        guard let routes = payload["routes"] as? [[String: Any]],
               let firstRoute = routes.first,
               let sections = firstRoute["sections"] as? [[String: Any]],
               let firstSection = sections.first else {
-            DebugLogger.shared.log("HERE REST: response contained no usable route section")
+            let topLevelKeys = payload.keys.sorted()
+            DebugLogger.shared.log("HERE REST: no route section (topLevelKeys=\(topLevelKeys), bytes=\(data.count))")
             return nil
         }
 
-        // Reject a route that HERE snapped away from the requested GPS fix.
-        // Without this check, the first/lowest-offset span can legitimately be
-        // a nearby 25-mph side street even though the driver is on the arterial.
-        guard sectionStartMatchesOrigin(firstSection, origin: coordinate) else {
-            DebugLogger.shared.log("HERE REST: rejected route whose departure is not near the GPS fix")
-            return nil
+        // Do not discard a valid HERE route solely because a deployment omits
+        // or rounds departure metadata differently. The span at offset 0 is
+        // already the route's origin span and is the authoritative match for
+        // this short probe. Keep the departure check diagnostic-only.
+        if !sectionStartMatchesOrigin(firstSection, origin: coordinate) {
+            DebugLogger.shared.log("HERE REST: departure metadata is over 120m from GPS fix; parsing origin span anyway")
         }
 
         guard let speedMph = speedLimitMilesPerHour(in: firstSection) else {
-            DebugLogger.shared.log("HERE REST: response contained no usable speed-limit field")
+            let spanCount = (firstSection["spans"] as? [[String: Any]])?.count ?? 0
+            DebugLogger.shared.log("HERE REST: no usable maxSpeed (spans=\(spanCount), sectionKeys=\(firstSection.keys.sorted()), responseBytes=\(data.count))")
             return nil
         }
 
@@ -199,10 +224,11 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
     }
 
     /// Extract HERE's speed-limit value across the v8 response variants used
-    /// by different Routing API deployments. Current responses put `maxSpeed`
-    /// on a requested route span; older responses put `maxSpeed`/`speed` in a
-    /// `speedLimit` object. Because the request explicitly asks for imperial
-    /// units, a unit-less current value is already MPH.
+    /// by different Routing API deployments. Current Routing API v8 responses
+    /// encode `maxSpeed` as meters per second (for example 13.888889 = 50 km/h)
+    /// even when the request asks for imperial distances. Older responses put
+    /// `maxSpeed`/`speed` in a `speedLimit` object. Unit metadata, when present,
+    /// always wins over the m/s default.
     ///
     /// A route can contain more than one span when the short probe crosses an
     /// intersection. The span with the smallest HERE `offset` is the one at
@@ -213,7 +239,9 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         let unit: String?
     }
 
-    private func speedLimitMilesPerHour(in section: [String: Any]) -> Double? {
+    /// Pure response parser exposed to the test target so wire-format
+    /// regressions can be caught without credentials or a network request.
+    internal func speedLimitMilesPerHour(in section: [String: Any]) -> Double? {
         if let spans = section["spans"] as? [[String: Any]], !spans.isEmpty {
             let candidates: [(reading: SpeedReading, offset: Double?, index: Int)] = spans.enumerated().compactMap { index, span in
                 guard let reading = speedReading(in: span), reading.value > 0 else { return nil }
@@ -243,13 +271,14 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
     }
 
     private func speedReading(in container: [String: Any]) -> SpeedReading? {
-        // Current HERE v8 maxSpeed span attribute.
-        if let direct = numericValue(container["maxSpeed"]), direct > 0 {
-            return SpeedReading(value: direct, unit: unit(in: container))
-        }
+        // Current HERE v8 maxSpeed span attribute. A scalar is the normal
+        // wire shape; a dictionary is accepted for proxy/legacy responses.
         if let maxSpeed = container["maxSpeed"] as? [String: Any],
            let reading = numericSpeed(in: maxSpeed) {
             return reading
+        }
+        if let direct = numericValue(container["maxSpeed"]), direct > 0 {
+            return SpeedReading(value: direct, unit: unit(in: container))
         }
         // Legacy/deprecated span shape retained for compatibility.
         if let direct = numericValue(container["speedLimit"]), direct > 0 {
@@ -295,10 +324,11 @@ public final class HERERestSpeedLimitProvider: SpeedLimitProvider, @unchecked Se
         case "mps", "m/s", "meterpersecond", "meterspersecond":
             return reading.value * 2.23694
         default:
-            // The request includes units=imperial, so current unit-less
-            // maxSpeed values are MPH. This also keeps older numeric responses
-            // usable when HERE omits the unit metadata.
-            return reading.value
+            // HERE Routing API v8's numeric maxSpeed is m/s when no unit
+            // metadata is supplied. The units parameter changes distance/time
+            // formatting but does not make this wire value MPH. Keep the
+            // conversion explicit so 13.888889 becomes 31.1 mph, not 13 mph.
+            return reading.value * 2.23694
         }
     }
 

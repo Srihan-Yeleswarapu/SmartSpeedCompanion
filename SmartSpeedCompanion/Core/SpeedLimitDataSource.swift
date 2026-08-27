@@ -16,6 +16,8 @@ public enum SpeedLimitDataSource: String, Equatable, Codable, Sendable, CaseIter
     /// Data from the HERE Route Matching API batch cache (stored locally from
     /// initial setup grid + just-in-time geofence fetches).
     case batchCache = "Batch (HERE)"
+    /// Live data from HERE Route Matching API v8 trace matching.
+    case liveHEREMatch = "Live (HERE Match)"
     /// Live data from HERE REST v8 `/v8/routes` with
     /// `spans=names,maxSpeed`. Highest accuracy on signed arterials; uses
     /// user-supplied HERE Platform creds from Keychain (HERECredentialStore).

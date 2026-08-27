@@ -4,6 +4,11 @@ import Combine
 
 /// A wrapper around CLLocationManager for high-accuracy GPS and navigation context.
 public final class LocationManager: NSObject, ObservableObject {
+    /// Maximum horizontal error accepted for location-driven map and
+    /// speed-limit work. Keep this policy shared with SpeedEngine so a fix
+    /// accepted by Core Location cannot be silently excluded from lookup.
+    public static let maximumAcceptedHorizontalAccuracy: CLLocationAccuracy = 100.0
+
     private let manager = CLLocationManager()
     
     @Published public var latestLocation: CLLocation?
@@ -158,7 +163,8 @@ extension LocationManager: CLLocationManagerDelegate {
         
         guard isUpdatingLocation, let location = locations.last else { return }
         // Filter out stale or wildly inaccurate fixes to prevent map-going-bonkers
-        guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 100 else { return }
+        guard location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy < Self.maximumAcceptedHorizontalAccuracy else { return }
         DispatchQueue.main.async {
             guard self.isUpdatingLocation else { return }
             self.latestLocation = location

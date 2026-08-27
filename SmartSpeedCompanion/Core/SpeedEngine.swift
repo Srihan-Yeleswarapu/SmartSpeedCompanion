@@ -178,16 +178,31 @@ public final class SpeedEngine: ObservableObject {
         zeroDeadbandCount = minZerosBeforeStop
     }
 
+    /// Returns whether a location is eligible to start a speed-limit lookup.
+    /// This is kept pure so the accuracy boundary can be regression-tested
+    /// without starting Core Location or a network request.
+    internal nonisolated static func isEligibleForSpeedLimitResolution(_ location: CLLocation) -> Bool {
+        location.horizontalAccuracy > 0 &&
+        location.horizontalAccuracy < LocationManager.maximumAcceptedHorizontalAccuracy
+    }
+
     /// Starts a coordinate-driven HERE resolution if the user has moved far
     /// enough for a new lookup. Results are generation-checked before they can
     /// update the HUD, which prevents an older network response from restoring
     /// a wrong limit and suppressing or triggering the wrong alert.
+    ///
+    /// Use the same 100 m quality ceiling as LocationManager. The previous
+    /// 15 m gate silently skipped nearly every real-device fix that the app
+    /// otherwise accepted, leaving the speed-limit badge at `--` while speed
+    /// and map tracking continued normally.
     private func scheduleSpeedLimitResolution(for location: CLLocation) {
-        guard location.horizontalAccuracy > 0 && location.horizontalAccuracy <= 15 else {
+        guard Self.isEligibleForSpeedLimitResolution(location) else {
             return
         }
 
-        let threshold: CLLocationDistance = location.speed >= 20
+        // CLLocation.speed is meters per second. Keep this comparison in the
+        // same unit so highway updates receive the intended 250 m throttle.
+        let threshold: CLLocationDistance = location.speed >= 20.0
             ? highwayFetchDistance
             : surfaceFetchDistance
         if let lastLoc = lastFetchLocation,
@@ -227,15 +242,16 @@ public final class SpeedEngine: ObservableObject {
         speedLimitResolutionTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            let roadName = await self.resolvedRoadName(at: location.coordinate)
-            guard !Task.isCancelled,
-                  self.speedLimitResolutionGeneration == generation else { return }
-
+            // HERE REST is the primary lookup and must not wait for reverse
+            // geocoding. CLGeocoder can take several seconds; the next GPS
+            // fix would cancel this task before the network request ever ran.
+            // Live HERE can resolve by coordinate alone. Road-name enrichment
+            // remains available to the batch cache on later integrations.
             let currentLimit = await self.speedLimitService.updateSpeedLimit(
                 at: location.coordinate,
                 heading: location.course >= 0 ? location.course : nil,
                 currentSpeedMph: currentSpeedMph,
-                roadName: roadName
+                roadName: nil
             )
 
             guard !Task.isCancelled,
@@ -263,7 +279,22 @@ public final class SpeedEngine: ObservableObject {
     /// own 50m grid cache; this method just delegates so the road name
     /// flows through every fetch.
     private func resolvedRoadName(at coordinate: CLLocationCoordinate2D) async -> String? {
-        return await roadGeocoder.resolveRoadContext(at: coordinate)?.roadName
+        // The road name is enrichment for cache matching, not a prerequisite
+        // for HERE REST. A cold CLGeocoder can otherwise delay the only live
+        // speed-limit request long enough for the next GPS tick to cancel it.
+        let geocoder = roadGeocoder
+        return await withTaskGroup(of: String?.self) { group in
+            group.addTask {
+                await geocoder.resolveRoadContext(at: coordinate)?.roadName
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                return nil
+            }
+            let result = await group.next() ?? nil
+            group.cancelAll()
+            return result
+        }
     }
     
     /// Resets transient GPS and limit state at the beginning of a new drive.

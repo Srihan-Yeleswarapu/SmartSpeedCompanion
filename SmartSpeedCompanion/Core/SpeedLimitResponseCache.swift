@@ -257,7 +257,7 @@ public actor SpeedLimitResponseCache {
     // MARK: - Private
 
     private func isHEREProviderName(_ name: String) -> Bool {
-        name == "HERE REST" || name == "HERE Batch"
+        name == "HERE REST" || name == "HERE Match" || name == "HERE Batch"
     }
 
     private func isValidCoordinate(_ coordinate: CLLocationCoordinate2D) -> Bool {

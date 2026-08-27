@@ -52,14 +52,30 @@ public final class HERECredentialStore: Sendable {
     public func loadCredentials() -> Credentials? {
         // 1. Keychain override (development / testing).
         if let fromKeychain = loadFromKeychain() {
+            DebugLogger.shared.log("HERE credentials: using Keychain override (idLength=\(fromKeychain.accessKeyId.count))")
             return fromKeychain
         }
         // 2. Bundled plist (production — single app-wide key).
-        return loadFromBundledPlist()
+        if let bundled = loadFromBundledPlist() {
+            DebugLogger.shared.log("HERE credentials: using bundled HERE-Config.plist (keyLength=\(bundled.accessKeyId.count))")
+            return bundled
+        }
+        DebugLogger.shared.log("HERE credentials: no valid Keychain pair or bundled HERE-Config.plist")
+        return nil
     }
 
     /// Try loading from the iOS Keychain.
     private func loadFromKeychain() -> Credentials? {
+        // Prefer a single HERE Platform API key when one is present. The
+        // previous implementation only accepted the legacy id+secret pair,
+        // so a valid API key stored under `api_key` was silently ignored.
+        if let apiKeyData = keychain.read(service: serviceName, account: apiKeyAccount),
+           let apiKey = String(data: apiKeyData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+           !apiKey.isEmpty {
+            return Credentials(accessKeyId: apiKey, accessKeySecret: "")
+        }
+
         guard let idData = keychain.read(service: serviceName, account: accessKeyIdAccount),
               let secretData = keychain.read(service: serviceName, account: accessKeySecretAccount),
               let id = String(data: idData, encoding: .utf8)?
@@ -82,9 +98,12 @@ public final class HERECredentialStore: Sendable {
     /// In both cases the value is placed into the `accessKeyId` field so the
     /// provider can use it as the `apiKey=` query parameter.
     private func loadFromBundledPlist() -> Credentials? {
-        guard let url = Bundle.main.url(forResource: "HERE-Config", withExtension: "plist"),
-              let data = try? Data(contentsOf: url),
+        guard let url = Bundle.main.url(forResource: "HERE-Config", withExtension: "plist") else {
+            return nil
+        }
+        guard let data = try? Data(contentsOf: url),
               let dict = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: String] else {
+            DebugLogger.shared.log("HERE credentials: bundled HERE-Config.plist could not be read")
             return nil
         }
 
@@ -102,6 +121,14 @@ public final class HERECredentialStore: Sendable {
         return nil
     }
 
+    /// Save a single HERE Platform API key.
+    public func saveAPIKey(_ apiKey: String) {
+        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return }
+        keychain.save(data, service: serviceName, account: apiKeyAccount)
+        DebugLogger.shared.log("HERE API key saved to Keychain")
+    }
+
     /// Save (or overwrite) both credentials. No-op if either input is empty.
     public func saveCredentials(accessKeyId: String, accessKeySecret: String) {
         let trimmedId = accessKeyId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -116,6 +143,7 @@ public final class HERECredentialStore: Sendable {
 
     /// Wipe both credentials. Used by account deletion / debug reset.
     public func clearCredentials() {
+        keychain.delete(service: serviceName, account: apiKeyAccount)
         keychain.delete(service: serviceName, account: accessKeyIdAccount)
         keychain.delete(service: serviceName, account: accessKeySecretAccount)
         DebugLogger.shared.log("HERE credentials cleared from Keychain")

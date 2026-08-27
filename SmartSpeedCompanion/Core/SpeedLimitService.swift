@@ -175,6 +175,7 @@ public class SmartSpeedLimitService: ObservableObject {
     private init() {
         self.liveProviders = [
             HERERestSpeedLimitProvider(),
+            HERERouteMatchingBatchProvider(),
         ]
         // Preload the in-memory response cache from disk so the very first
         // fetch can hit cached data without a network round-trip.
@@ -326,6 +327,10 @@ public class SmartSpeedLimitService: ObservableObject {
                 forceRefresh: forceRefresh
            ) {
             return live
+        } else if !reachability.isConnected {
+            DebugLogger.shared.log("SpeedLimitService: HERE live lookup skipped because NetworkReachability is disconnected")
+        } else {
+            DebugLogger.shared.log("SpeedLimitService: HERE REST returned no usable limit")
         }
 
         // 4. HERE and local caches have no data. Returning a miss keeps all
@@ -350,7 +355,9 @@ public class SmartSpeedLimitService: ObservableObject {
             do {
                 if let resp = try await provider.fetchSpeedLimit(
                     at: coordinate, heading: heading, forceRefresh: forceRefresh
-                ), resp.providerName == "HERE REST", resp.speedLimitMph > 0 {
+                ),
+                   isHEREProviderName(resp.providerName),
+                   resp.speedLimitMph > 0 {
                     return Candidate(
                         limit: resp.speedLimitMph,
                         source: sourceForProviderName(resp.providerName),
@@ -632,13 +639,13 @@ public class SmartSpeedLimitService: ObservableObject {
     // MARK: - Helpers
 
     private func isHEREProviderName(_ name: String) -> Bool {
-        name == "HERE REST" || name == "HERE Batch"
+        name == "HERE REST" || name == "HERE Match" || name == "HERE Batch"
     }
 
     private func sourceForProviderName(_ name: String) -> SpeedLimitDataSource {
         switch name {
         case "HERE Batch": return .batchCache
-        case "HERE REST":  return .liveHERE
+        case "HERE REST", "HERE Match":  return .liveHERE
         // Non-HERE providers are intentionally not active. Keep the legacy
         // enum cases for decoding older persisted state, but do not surface
         // them as current driving data.
