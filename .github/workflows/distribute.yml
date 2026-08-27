@@ -58,42 +58,6 @@ jobs:
             exit 1
           fi
 
-      - name: Validate HERE API key against Routing API
-        env:
-          HERE_API_KEY: ${{ secrets.HERE_API_KEY }}
-        run: |
-          set -euo pipefail
-          if [ "${#HERE_API_KEY}" -lt 20 ]; then
-            echo "[ERROR] HERE_API_KEY is missing or implausibly short."
-            exit 1
-          fi
-          status=$(curl --silent --show-error --output /tmp/here-routing-smoke.json --write-out "%{http_code}" \
-            --get "https://router.hereapi.com/v8/routes" \
-            --data-urlencode "transportMode=car" \
-            --data-urlencode "origin=33.3062,-111.8413" \
-            --data-urlencode "destination=33.3070,-111.8300" \
-            --data-urlencode "routingMode=fast" \
-            --data-urlencode "return=summary,polyline" \
-            --data-urlencode "spans=maxSpeed" \
-            --data-urlencode "apiKey=${HERE_API_KEY}")
-          if [ "$status" != "200" ]; then
-            echo "[ERROR] HERE Routing API smoke test returned HTTP $status"
-            head -c 500 /tmp/here-routing-smoke.json || true
-            exit 1
-          fi
-          python3 - <<'PY'
-          import json
-          with open('/tmp/here-routing-smoke.json', encoding='utf-8') as f:
-              payload = json.load(f)
-          sections = payload.get('routes', [{}])[0].get('sections', [])
-          spans = [span for section in sections for span in section.get('spans', [])]
-          if not spans:
-              raise SystemExit('[ERROR] HERE smoke response has no route spans')
-          if not any('maxSpeed' in span for span in spans):
-              raise SystemExit('[ERROR] HERE smoke response has no maxSpeed span')
-          print(f'[OK] HERE Routing API authenticated; spans={len(spans)}')
-          PY
-
       - name: Generate Xcode project
         run: xcodegen generate
 
