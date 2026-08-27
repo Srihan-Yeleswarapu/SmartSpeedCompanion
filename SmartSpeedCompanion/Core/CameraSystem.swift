@@ -1,35 +1,163 @@
 import Foundation
 import MapKit
+import QuartzCore
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MARK: - Camera tuning source
+// MARK: - Camera System v2 — "steady-cam" architecture
 //
-// The three lookup tables used by `CameraDecisionEngine.computeTarget(...)`
-// — `altitudeLUT`, `pitchLUT`, and `roadTypeMultiplierLUT` — are stored in
-// `SmartSpeedCompanion/Resources/CameraTuning.json` so they can be tuned
-// without touching Swift code. At runtime they are loaded from the main
-// bundle on first reference (see `CameraTuning.loadTuning()`). The hardcoded
-// values below are preserved verbatim as compile-time fallbacks and ship in
-// the binary, so a malformed or missing JSON falls back to the last-known-
-// good behaviour without any user-visible regression.
+// WHY THIS EXISTS
+//
+// v1 recomputed an "ideal" altitude every tick from ~10 stacked continuous
+// multipliers (turn proximity × lane guidance × sharp turn × congestion × exit
+// × overlap × urban cap × long straight × speed boost × ramp), every one keyed
+// to noisy inputs (GPS speed ±2 mph, distance-to-turn shrinking every fix).
+// The target therefore moved on EVERY tick, and two maneuvers produced the
+// signature sawtooth: distance-to-turn decays smoothly into a turn (constant
+// zoom-in drift), the instruction advances, distance-to-turn jumps to 2000+ m,
+// every multiplier snaps back to 1.0 (instant zoom-out). Repeat forever.
+// A deadband + cooldown gate turned that noise into visible 0.5 s steps.
+//
+// HOW PRODUCTION NAVIGATION CAMERAS WORK (validated against Mapbox Navigation
+// SDK's NavigationViewportDataSource docs and observed Apple/Google behaviour):
+//
+//   1. Zoom derives from a SMALL SET OF DISCRETE LEVELS (road class / speed
+//      bands) that change RARELY — never continuously re-derived from raw speed.
+//   2. Level switches use HYSTERESIS + DWELL TIME so GPS noise cannot flap a
+//      boundary (Mapbox: `distanceToCoalesceCompoundManeuvers`; Schmitt-trigger
+//      style band edges).
+//   3. Maneuver framing is ONE envelope with a single pitch-flatten trigger
+//      (~180 m), not compound keyword heuristics ("then", "exit", "merge"...).
+//   4. After passing a maneuver the camera HOLDS its tight framing briefly,
+//      then releases slowly — asymmetric tighten/release. This is what kills
+//      the post-turn zoom-out whiplash.
+//   5. Animation runs on its OWN CLOCK (display link) with bounded rates —
+//      completely decoupled from SwiftUI render ticks and their irregular dt.
+//
+// This file implements exactly that. The public API consumed by LiveMapView,
+// CarPlayMapController and the unit tests is unchanged.
+//
+// Tuning lives in `Resources/CameraTuning.json` (see `CameraTuning` below);
+// compile-time fallbacks ship in the binary so a malformed resource degrades
+// gracefully to last-known-good behaviour.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// One (x, y) point on a camera-tuning lookup table.
-public struct LUTPoint: Codable, Sendable {
-    public let x: Double
-    public let y: Double
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - Tuning schema
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// One discrete cruise framing level. The vehicle occupies level *i* while its
+/// smoothed speed is in `(holdSpeedMph, maxSpeedMph]`; switching INTO the level
+/// requires exceeding `maxSpeedMph` (or dropping below `holdSpeedMph`) and
+/// STAYING there for the governor's dwell time. The wide gap between
+/// `holdSpeedMph` and `maxSpeedMph` is the hysteresis band that makes GPS noise
+/// unable to flap the camera between levels.
+public struct CruiseLevelSpec: Codable, Sendable, Equatable {
+    public var maxSpeedMph: Double
+    public var holdSpeedMph: Double
+    public var altitude: Double
+    public var pitch: Double
+
+    public init(maxSpeedMph: Double, holdSpeedMph: Double, altitude: Double, pitch: Double) {
+        self.maxSpeedMph = maxSpeedMph
+        self.holdSpeedMph = holdSpeedMph
+        self.altitude = altitude
+        self.pitch = pitch
+    }
 }
 
-/// Decoded shape of `CameraTuning.json`. Each property is an array of points
-/// that `CameraDecisionEngine` runs through `smoothInterpolate(x:knots:)`.
-public struct CameraTuning: Codable, Sendable {
-    public let altitudeLUT: [LUTPoint]
-    public let pitchLUT: [LUTPoint]
-    public let roadTypeMultiplierLUT: [LUTPoint]
+/// Single maneuver-zoom envelope (replaces v1's ten stacked multipliers).
+public struct ManeuverTuning: Codable, Sendable, Equatable {
+    /// Distance at which tightening begins.
+    public var startDistanceM: Double
+    /// Distance at which the envelope reaches `minMultiplier` and holds.
+    public var fullTightenDistanceM: Double
+    /// Altitude multiplier at the maneuver (e.g. 0.5 = half the cruise altitude).
+    public var minMultiplier: Double
+
+    public init(startDistanceM: Double, fullTightenDistanceM: Double, minMultiplier: Double) {
+        self.startDistanceM = startDistanceM
+        self.fullTightenDistanceM = fullTightenDistanceM
+        self.minMultiplier = minMultiplier
+    }
+}
+
+/// Mapbox-style single pitch-flatten trigger near a maneuver.
+public struct PitchFlattenTuning: Codable, Sendable, Equatable {
+    public var triggerDistanceM: Double
+    public var fullFlattenDistanceM: Double
+    public var maxFlattenDeg: Double
+
+    public init(triggerDistanceM: Double, fullFlattenDistanceM: Double, maxFlattenDeg: Double) {
+        self.triggerDistanceM = triggerDistanceM
+        self.fullFlattenDistanceM = fullFlattenDistanceM
+        self.maxFlattenDeg = maxFlattenDeg
+    }
+}
+
+public struct DestinationTuning: Codable, Sendable, Equatable {
+    public var startDistanceM: Double
+    public var minMultiplier: Double
+    public var maxPitchReductionDeg: Double
+
+    public init(startDistanceM: Double, minMultiplier: Double, maxPitchReductionDeg: Double) {
+        self.startDistanceM = startDistanceM
+        self.minMultiplier = minMultiplier
+        self.maxPitchReductionDeg = maxPitchReductionDeg
+    }
+}
+
+public struct TimingTuning: Codable, Sendable, Equatable {
+    /// How long the speed must stay inside a neighbouring band before the
+    /// governor commits to it. Multi-band jumps divide this by the jump size.
+    public var dwellSeconds: Double
+    /// Time constant while TIGHTENING (zooming in / flattening). Fast — the
+    /// driver needs the maneuver view promptly.
+    public var tightenTauSeconds: Double
+    /// Time constant while RELEASING (zooming out / tilting up). Slow — the
+    /// gradual release is what reads as "premium" instead of "whiplash".
+    public var releaseTauSeconds: Double
+    /// Hard ceiling on altitude change rate (m/s) regardless of tau.
+    public var altitudeRateCapMPerS: Double
+    /// Hard ceiling on pitch change rate (deg/s).
+    public var pitchRateCapDegPerS: Double
+    /// After passing a maneuver, hold the tight framing this long…
+    public var postManeuverHoldSeconds: Double
+    /// …then blend to the computed target over this long.
+    public var postManeuverReleaseSeconds: Double
+    /// EMA time constant applied to raw GPS speed before the governor sees it.
+    public var speedSmoothingTauSeconds: Double
+
+    public init(
+        dwellSeconds: Double,
+        tightenTauSeconds: Double,
+        releaseTauSeconds: Double,
+        altitudeRateCapMPerS: Double,
+        pitchRateCapDegPerS: Double,
+        postManeuverHoldSeconds: Double,
+        postManeuverReleaseSeconds: Double,
+        speedSmoothingTauSeconds: Double
+    ) {
+        self.dwellSeconds = dwellSeconds
+        self.tightenTauSeconds = tightenTauSeconds
+        self.releaseTauSeconds = releaseTauSeconds
+        self.altitudeRateCapMPerS = altitudeRateCapMPerS
+        self.pitchRateCapDegPerS = pitchRateCapDegPerS
+        self.postManeuverHoldSeconds = postManeuverHoldSeconds
+        self.postManeuverReleaseSeconds = postManeuverReleaseSeconds
+        self.speedSmoothingTauSeconds = speedSmoothingTauSeconds
+    }
+}
+
+/// Decoded shape of `CameraTuning.json`.
+public struct CameraTuning: Codable, Sendable, Equatable {
+    public var cruiseLevels: [CruiseLevelSpec]
+    public var maneuver: ManeuverTuning
+    public var pitchFlatten: PitchFlattenTuning
+    public var destination: DestinationTuning
+    public var timing: TimingTuning
 
     /// Read and decode the bundled `CameraTuning.json`. Returns `nil` if the
-    /// resource is missing or malformed; callers should fall back to the
-    /// compile-time constants defined alongside the LUTs.
+    /// resource is missing or malformed; callers fall back to `CameraTuning.fallback`.
     public static func loadTuning() -> CameraTuning? {
         guard let url = Bundle.main.url(forResource: "CameraTuning", withExtension: "json") else {
             return nil
@@ -38,37 +166,49 @@ public struct CameraTuning: Codable, Sendable {
             let data = try Data(contentsOf: url)
             return try JSONDecoder().decode(CameraTuning.self, from: data)
         } catch {
-            DebugLogger.shared.log("CameraTuning.json decode FAILED: \(error.localizedDescription). Using hardcoded fallback LUTs.")
+            DebugLogger.shared.log("CameraTuning.json decode FAILED: \(error.localizedDescription). Using hardcoded fallback tables.")
             return nil
         }
     }
 
-    /// Convert a `[LUTPoint]` JSON-decoded array into the
-    /// `[(x: Double, y: Double)]` tuple array that
-    /// `CameraDecisionEngine.smoothInterpolate(x:knots:)` already accepts,
-    /// or return `fallback` when the bundle resource is unavailable.
-    /// `static let` in Swift is computed lazily and cached on first access,
-    /// so this is a one-shot cost per LUT per app launch.
-    public static func resolveLUT(
-        _ keyPath: KeyPath<CameraTuning, [LUTPoint]>,
-        fallback: [(x: Double, y: Double)]
-    ) -> [(x: Double, y: Double)] {
-        guard let tuning = loadTuning() else { return fallback }
-        return tuning[keyPath: keyPath].map { ($0.x, $0.y) }
-    }
+    /// Resolved once per launch: bundle resource if valid, else compile-time fallback.
+    public static let current: CameraTuning = {
+        loadTuning() ?? .fallback
+    }()
+
+    /// Compile-time defaults mirroring `Resources/CameraTuning.json`.
+    public static let fallback = CameraTuning(
+        cruiseLevels: [
+            CruiseLevelSpec(maxSpeedMph: 3,   holdSpeedMph: 0,  altitude: 320,  pitch: 0),
+            CruiseLevelSpec(maxSpeedMph: 15,  holdSpeedMph: 11, altitude: 420,  pitch: 16),
+            CruiseLevelSpec(maxSpeedMph: 25,  holdSpeedMph: 19, altitude: 560,  pitch: 26),
+            CruiseLevelSpec(maxSpeedMph: 35,  holdSpeedMph: 27, altitude: 780,  pitch: 34),
+            CruiseLevelSpec(maxSpeedMph: 45,  holdSpeedMph: 35, altitude: 1100, pitch: 42),
+            CruiseLevelSpec(maxSpeedMph: 55,  holdSpeedMph: 43, altitude: 1550, pitch: 48),
+            CruiseLevelSpec(maxSpeedMph: 65,  holdSpeedMph: 51, altitude: 2100, pitch: 53),
+            CruiseLevelSpec(maxSpeedMph: 999, holdSpeedMph: 56, altitude: 2800, pitch: 57)
+        ],
+        maneuver: ManeuverTuning(startDistanceM: 700, fullTightenDistanceM: 90, minMultiplier: 0.5),
+        pitchFlatten: PitchFlattenTuning(triggerDistanceM: 180, fullFlattenDistanceM: 40, maxFlattenDeg: 14),
+        destination: DestinationTuning(startDistanceM: 500, minMultiplier: 0.5, maxPitchReductionDeg: 18),
+        timing: TimingTuning(
+            dwellSeconds: 2.5,
+            tightenTauSeconds: 0.6,
+            releaseTauSeconds: 1.8,
+            altitudeRateCapMPerS: 900,
+            pitchRateCapDegPerS: 25,
+            postManeuverHoldSeconds: 1.2,
+            postManeuverReleaseSeconds: 2.5,
+            speedSmoothingTauSeconds: 1.8
+        )
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MARK: - CameraContext
 //
-// A stateless snapshot of everything the decision engine needs to compute the
-// ideal camera position. Built from `DriveViewModel` state every tick.
-//
-// NOTE: Screen offset (shifting the vehicle lower on screen at higher speeds,
-// requirement #10) is NOT implemented here because `MKMapView.followWithHeading`
-// does not expose a coordinate offset — the system always centers on the user.
-// Instead, higher speeds naturally show more road ahead via higher altitude.
-// This is the same approach Google Maps takes when follow-mode is active.
+// Stateless snapshot consumed by the decision engine. Built by DriveViewModel
+// consumers every tick. Public surface unchanged from v1.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 public struct CameraContext: Sendable {
@@ -111,58 +251,34 @@ public struct CameraContext: Sendable {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MARK: - CameraMode
+// MARK: - CameraMode (diagnostics only)
 //
-// The camera's current high-level behavioral mode. Each mode encodes a
-// different "personality" for altitude, pitch, and responsiveness. Modes
-// are recomputed every tick; there is no stateful transition machine —
-// instead, neighboring modes blend smoothly because the underlying
-// altitude/pitch functions produce continuous outputs across mode boundaries.
+// Retained from v1 for debug logging continuity. Mode transitions carry NO
+// behavioural weight — all framing maths below is continuous by construction.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 public enum CameraMode: String, Sendable {
-    /// Speed < 3 mph — camera stays put, no updates.
     case parked
-    /// Free-driving / recording without a route.
     case freeDrive
-    /// Active route guidance, no special modifiers.
     case navigating
-    /// Navigation with an upcoming turn < 1000 m.
     case approachingTurn
-    /// Very close to a turn (< 125 m).
     case sharpTurn
-    /// Instruction text contains "roundabout" / "rotary".
-    case roundabout
-    /// Long straight road (> 3000 m to next turn + speed > 50 mph).
-    case longStraight
-    /// Within 600 m of the destination.
     case destinationArrival
-    /// User has manually panned the map.
-    case manualDetached
-    /// Just completed a turn — camera is holding zoom briefly.
-    case postTurnHold
-    /// Merge/ramp recovery — camera is slowly zooming back out.
-    case mergeRecovery
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MARK: - TargetCameraState
-//
-// The ideal camera parameters computed by the decision engine. The animator
-// uses this as the target and smoothly interpolates from the current position.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-public struct TargetCameraState: Sendable {
-    /// Center coordinate distance (altitude) in meters.
+public struct TargetCameraState: Sendable, Equatable {
+    /// Camera altitude (`MKMapCamera.centerCoordinateDistance`) in meters.
     public var altitude: Double
-    /// Camera pitch in degrees (0 = top-down, 60 = nearly horizon).
+    /// Camera pitch in degrees (0 = top-down).
     public var pitch: Double
-    /// If set, overrides the animator's default animation time constant.
-    /// Used for highway deceleration (slow), merge recovery, and post-turn
-    /// hold (very slow).
+    /// Retained for API compatibility with v1 callers. v2's kinematics derive
+    /// their time constants from movement direction instead.
     public var requestedAnimationTau: TimeInterval?
-    /// Priority level. Higher values bypass the cooldown gate.
-    /// 0 = normal, 1 = important (turn or merge critical).
+    /// Retained for API compatibility with v1 callers.
     public var priority: Int
 
     public init(altitude: Double, pitch: Double,
@@ -176,566 +292,243 @@ public struct TargetCameraState: Sendable {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MARK: - CameraDecisionEngine
+// MARK: - CameraMath
 //
-// The pure computation unit. Takes a CameraContext and returns the ideal
-// TargetCameraState. No side effects, no state, no timers.
-//
-// DESIGN PHILOSOPHY
-//
-// Every output value is a continuous function of its inputs — there are zero
-// discrete jumps. Speed maps to altitude via a power curve; turn proximity
-// modulates altitude via a smooth decay; road type adjusts through a
-// continuous multiplier based on the speed limit. Even the mode classification
-// is purely cosmetic (debug logging); the math guarantees continuity across
-// mode boundaries.
-//
-// BEHAVIORS (14 new):
-//   1. Lane-Guidance Zoom Tightening       (DECISION ENGINE)
-//   2. Overlapping Maneuver Awareness       (DECISION ENGINE)
-//   3. Sharp Turn Severity Boost            (DECISION ENGINE)
-//   4. Traffic Congestion Adaptive Zoom     (DECISION ENGINE)
-//   5. Highway Exit Aggressive Zoom         (DECISION ENGINE)
-//   6. Urban Canyon Altitude Ceiling        (DECISION ENGINE)
-//   7. Complex Intersection Pitch Adjustment (DECISION ENGINE)
-//   8. High-Speed Straight Road Boost       (DECISION ENGINE)
-//   9. Turn Approach Pitch Arc              (DECISION ENGINE)
-//  10. Free-Drive Exploration Horizon       (DECISION ENGINE)
-//  11. Post-Turn Bearing Stabilization      (ANIMATOR — stateful)
-//  12. Merge/Ramp Recovery Hold             (ANIMATOR — stateful)
-//  13. Highway Deceleration Slow Camera     (ANIMATOR — stateful)
-//  14. Ambient Micro-Movement               (ANIMATOR — stateful)
+// Pure scalar helpers shared by the engine, stabilizer, and tests.
+// Every function is C¹-continuous across its domain — there are no discrete
+// jumps anywhere in the pipeline.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-public struct CameraDecisionEngine: Sendable {    // ── Key points for altitude interpolation ──────────────────────────────
-    // (speed_mph, altitude_m)
-    //
-    // The hardcoded arrays below are fallbacks. The primary source of these
-    // values is `CameraTuning.json` in the app bundle (see file header). If
-    // `CameraTuning.loadTuning()` returns `nil` (bundle resource missing or
-    // malformed), we fall back to the original values.
-    private static let fallbackAltitudeLUT: [(x: Double, y: Double)] = [
-        (0,   300),
-        (10,  380),
-        (20,  550),
-        (30,  780),
-        (40,  1050),
-        (50,  1400),
-        (55,  1600),
-        (60,  1850),
-        (65,  2100),
-        (70,  2400),
-        (75,  2700),
-        (80,  3000),
-        (85,  3300),
-        (100, 4000)
-    ]
-
-    // ── Key points for pitch interpolation ─────────────────────────────────
-    // (speed_mph, pitch_degrees)
-    private static let fallbackPitchLUT: [(x: Double, y: Double)] = [
-        (0,   0),
-        (5,   18),
-        (15,  28),
-        (25,  35),
-        (35,  42),
-        (45,  48),
-        (50,  50),
-        (60,  54),
-        (70,  57),
-        (85,  60)
-    ]
-
-    // ── Road-type altitude multipliers keyed by speed limit ────────────────
-    private static let fallbackRoadTypeMultiplierLUT: [(x: Double, y: Double)] = [
-        (0,   1.00),   // unknown — neutral, no adjustment
-        (25,  0.85),   // residential / school zone
-        (35,  0.95),   // city collector
-        (45,  1.00),   // arterial
-        (55,  1.15),   // highway
-        (65,  1.30),   // interstate
-        (80,  1.40)    // high-speed interstate
-    ]
-
-    /// Materialised at first reference; cached thereafter (Swift `static let`
-    /// semantics). Reads from `CameraTuning.json` and converts `[LUTPoint]`
-    /// into the ((x: Double, y: Double)) tuple shape that
-    /// `smoothInterpolate(x:knots:)` already accepts.
-    private static let altitudeLUT: [(x: Double, y: Double)] =
-        CameraTuning.resolveLUT(\.altitudeLUT, fallback: fallbackAltitudeLUT)
-
-    private static let pitchLUT: [(x: Double, y: Double)] =
-        CameraTuning.resolveLUT(\.pitchLUT, fallback: fallbackPitchLUT)
-
-    private static let roadTypeMultiplierLUT: [(x: Double, y: Double)] =
-        CameraTuning.resolveLUT(\.roadTypeMultiplierLUT, fallback: fallbackRoadTypeMultiplierLUT)
- 
-
-    // ── Turn proximity: altitude multiplier ────────────────────────────────
-    // Smooth decay from 1.0 at 1000 m down to ~0.28 at 0 m.
-    private static func turnProximityMultiplier(distance dist: CLLocationDistance) -> Double {
-        guard dist < 1000 else { return 1.0 }
-        let t = 1.0 - dist / 1000.0 // 0 at 1000 m, 1 at 0 m
-        return max(0.28, 1.0 - 0.72 * t)
+enum CameraMath {
+    /// Hermite smoothstep: 0 at x=0, 1 at x=1, zero slope at both ends.
+    static func smoothstep(_ x: Double) -> Double {
+        let t = min(max(x, 0), 1)
+        return t * t * (3.0 - 2.0 * t)
     }
 
-    // ── Long straight: altitude multiplier (gradual zoom out) ──────────────
-    private static func longStraightMultiplier(distanceToTurn dist: CLLocationDistance, speed: Double) -> Double {
-        guard dist > 3000, speed > 50 else { return 1.0 }
-        let excess = dist - 3000
-        let boost = min(0.45, 0.45 * (excess / 10_000))
-        return 1.0 + boost
+    /// Altitude multiplier for the upcoming-maneuver envelope.
+    /// 1.0 beyond `startDistanceM`, easing to `minMultiplier` at
+    /// `fullTightenDistanceM` and HOLDING that value underneath it (the hold is
+    /// what keeps the camera stable through the maneuver itself instead of
+    /// snapping back out the instant DTT bottoms out).
+    static func maneuverEnvelope(distance d: CLLocationDistance, _ t: ManeuverTuning) -> Double {
+        if d >= t.startDistanceM { return 1.0 }
+        if d <= t.fullTightenDistanceM { return t.minMultiplier }
+        let x = (t.startDistanceM - d) / (t.startDistanceM - t.fullTightenDistanceM)
+        return 1.0 - (1.0 - t.minMultiplier) * smoothstep(x)
     }
 
-    // ── Destination arrival: altitude & pitch modifiers ────────────────────
-    private static func destinationMultiplier(distance dist: CLLocationDistance) -> (alt: Double, pitch: Double) {
-        guard dist < 600 else { return (1.0, 0.0) }
-        let t = dist / 600.0 // 1 at 600 m, 0 at 0 m
-        let altMul = 0.35 + 0.65 * t
-        let pitchDelta = -20.0 * (1.0 - t) // subtract up to 20° at 0 m
-        return (altMul, pitchDelta)
+    /// Degrees of pitch reduction near a maneuver (Mapbox `pitchNearManeuver`).
+    static func pitchFlattenReduction(distance d: CLLocationDistance, _ t: PitchFlattenTuning) -> Double {
+        if d >= t.triggerDistanceM { return 0 }
+        if d <= t.fullFlattenDistanceM { return t.maxFlattenDeg }
+        let x = (t.triggerDistanceM - d) / (t.triggerDistanceM - t.fullFlattenDistanceM)
+        return t.maxFlattenDeg * smoothstep(x)
     }
 
-    // ── Roundabout: temporarily flatter, overhead-ish ──────────────────────
-    private static func roundaboutPitchOffset() -> Double { -28.0 }
-
-    // ── Original ramp / exit altitude multiplier ───────────────────────────
-    // `internal` (implicit) so CameraAnimator's merge-recovery logic can
-    // reference the same value if needed. Both are 1.15.
-    static let rampAltitudeMultiplier: Double = 1.15
-
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #1 — Lane-Guidance Zoom Tightening
-    //
-    // Beyond the standard turnProximityMultiplier, when the user gets very
-    // close to a turn (< 180 m), apply an ADDITIONAL tightening factor so
-    // the camera zooms in further for lane-level detail. Apple Maps does
-    // this near every turn to reveal lane guidance stripes.
-    //
-    // The factor goes from 1.0 (no change) at 180 m to 0.75 (25 % tighter)
-    // at 0 m, on top of whatever the normal turn zoom already computed.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static func laneGuidanceFactor(distance dist: CLLocationDistance) -> Double {
-        guard dist > 0, dist < 180 else { return 1.0 }
-        let t = dist / 180.0 // 1 at 180 m, 0 at 0 m
-        // Smooth quadratic ease-out: starts subtle, tightens quickly near the line
-        return 1.0 - (1.0 - t) * (1.0 - t) * 0.25
+    /// (altitude multiplier, pitch reduction) while closing on the destination.
+    static func destinationModifier(distance d: CLLocationDistance, _ t: DestinationTuning)
+        -> (multiplier: Double, pitchReduction: Double) {
+        if d >= t.startDistanceM { return (1.0, 0.0) }
+        let x = smoothstep(d / t.startDistanceM) // 1 far away, 0 at arrival
+        let multiplier = t.minMultiplier + (1.0 - t.minMultiplier) * x
+        let pitchReduction = t.maxPitchReductionDeg * (1.0 - x)
+        return (multiplier, pitchReduction)
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #2 — Overlapping Maneuver Awareness
-    //
-    // Google Maps detects when two turns are close together (< 600 m
-    // apart). Rather than zooming all the way in on the first turn and
-    // then snapping back out for the second, it maintains a moderate zoom
-    // that keeps both maneuvers visible.
-    //
-    // We infer overlapping turns from the instruction text: if the current
-    // instruction contains "then" (e.g. "Turn left, then turn right") it's
-    // almost certainly a quick sequential pair. When detected, we reduce
-    // the turn zoom by a compromise factor that prevents the camera from
-    // going too tight.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static func overlappingTurnCompromise(instruction: String,
-                                                   distanceToTurn dist: CLLocationDistance) -> Double {
-        guard dist < 600 else { return 1.0 }
-        let lower = instruction.lowercased()
-        // "then" is the clearest signal of a multi-step instruction
-        guard lower.contains("then") || lower.contains(";") || lower.contains(",") else { return 1.0 }
-        // Compromise factor: the closer we get, the more we resist zooming fully in.
-        // Clamped to never go below 0.7× of whatever the turn zoom would be.
-        let t = dist / 600.0 // 1 at 600 m, 0 at 0 m
-        return 0.7 + 0.3 * t
+    /// Discrete cruise level for a given speed (no hysteresis — pure lookup).
+    /// Used by the governor internally and by stateless callers (tests, restore).
+    static func quantizeLevel(speedMph: Double, levels: [CruiseLevelSpec]) -> Int {
+        return levels.firstIndex(where: { speedMph <= $0.maxSpeedMph }) ?? (levels.count - 1)
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #3 — Sharp Turn Severity Boost
-    //
-    // Apple Maps applies a tighter zoom for genuinely sharp turns (hairpin,
-    // sharp left/right, U-turn) to make the road geometry unmistakable.
-    // Gentle highway curves do not trigger this.
-    //
-    // We detect severity from instruction keywords and apply an extra
-    // 0.75× altitude factor on top of the standard turn zoom.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static func sharpTurnSeverityFactor(instruction: String,
-                                                distanceToTurn dist: CLLocationDistance) -> Double {
-        guard dist < 250, dist > 0 else { return 1.0 }
-        let lower = instruction.lowercased()
-        let isSharp = lower.contains("sharp") || lower.contains("hairpin")
-                    || lower.contains("u-turn") || lower.contains("uturn")
-                    || lower.contains("turn around") || lower.contains("tight")
-        guard isSharp else { return 1.0 }
-        // Tighter within 250 m, peaking at 0 m
-        let t = dist / 250.0 // 1 at 250 m, 0 at 0 m
-        return 1.0 - (1.0 - t) * 0.25 // ranges 1.0 → 0.75
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #4 — Traffic Congestion Adaptive Zoom
-    //
-    // Google Maps zooms in when traffic is heavy so the user can see the
-    // congestion details. We detect congestion by comparing speed to the
-    // speed limit: when speed < 0.4 × limit, the road is congested.
-    //
-    // Zoom in by an additional factor (0.75× altitude) proportional to
-    // severity, and smoothly return to normal as traffic clears.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static func trafficCongestionFactor(speed: Double, speedLimit: Int) -> Double {
-        guard speedLimit > 20 else { return 1.0 } // ignore on very low-limit roads
-        let ratio = speed / Double(speedLimit)
-        guard ratio < 0.4 else { return 1.0 }
-        // ratio is 0.0..0.4; map to 0.0..1.0 severity
-        let severity = (0.4 - ratio) / 0.4
-        // Altitude goes from 1.0 down to 0.75× at max congestion
-        return 1.0 - severity * 0.25
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #5 — Highway Exit Aggressive Zoom
-    //
-    // Apple Maps treats highway exits differently from standard turns.
-    // When on a highway (> 50 mph) approaching an exit (< 400 m), the
-    // camera zooms in more aggressively AND flattens pitch so lane
-    // guidance (which lane for which exit) is clearly visible.
-    //
-    // This is stronger than the standard turn zoom: 0.6× altitude
-    // multiplier and an extra −8° pitch beyond the standard turn flattening.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static func highwayExitModifier(instruction: String,
-                                             speed: Double,
-                                             distanceToTurn dist: CLLocationDistance)
-        -> (altitude: Double, pitch: Double) {
-        guard dist < 400, dist > 0, speed > 50 else { return (1.0, 0.0) }
-        let lower = instruction.lowercased()
-        guard lower.contains("exit") else { return (1.0, 0.0) }
-        let t = dist / 400.0 // 1 at 400 m, 0 at 0 m
-        let severity = 1.0 - t
-        let altMul = 1.0 - severity * 0.40 // ranges 1.0 → 0.60
-        let pitchDelta = -severity * 8.0   // ranges 0 → −8°
-        return (altMul, pitchDelta)
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #6 — Urban Canyon Altitude Ceiling
-    //
-    // In dense urban areas (speed limit ≤ 35 mph, frequent intersections =
-    // distanceToNextTurn < 600 m), Apple Maps caps the maximum altitude.
-    // Zooming out too far in a city shows only building rooftops — useless.
-    //
-    // We cap altitude at 800 m when the urban heuristic is active, but the
-    // cap is smooth: it only engages when the context matches and the
-    // computed altitude exceeds 800 m.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static func urbanCanyonAltitudeCap(altitude: Double,
-                                                speedLimit: Int,
-                                                distanceToTurn dist: CLLocationDistance) -> Double {
-        guard speedLimit <= 35, dist < 600, dist > 0 else { return altitude }
-        return min(altitude, 800.0)
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #7 — Complex Intersection Pitch Adjustment
-    //
-    // When the instruction contains multiple steps (signaled by "then", ";",
-    // or the instruction reads like a complex junction), Google Maps tilts
-    // the camera slightly more top-down (+5° pitch) so the user can see
-    // the full intersection geometry at a glance.
-    //
-    // NOTE: The scaling INCREASES (more top-down) as the vehicle gets
-    // CLOSER to the intersection, so the driver sees the full junction
-    // geometry at the moment it matters most. At 400 m the effect is
-    // subtle (barely noticeable +0.25°); by 20 m it reaches the full +5°.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static func complexIntersectionPitch(instruction: String,
-                                                  distanceToTurn dist: CLLocationDistance) -> Double {
-        guard dist < 400, dist > 0 else { return 0.0 }
-        let lower = instruction.lowercased()
-        let isComplex = lower.contains("then") || lower.contains(";")
-                     || lower.contains("to ")    // "Turn left to merge onto..."
-                     || (lower.contains("onto") && lower.contains("then"))
-        guard isComplex else { return 0.0 }
-        // Scale from 0 at 400 m to 1 at 0 m, then multiply by +5°
-        let t = min((400.0 - dist) / 380.0, 1.0) // 0 at 400 m, 1 at ≤20 m
-        return 5.0 * t
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #8 — High-Speed Straight Road Boost
-    //
-    // When cruising at highway speeds (> 55 mph) with a long gap before the
-    // next instruction (> 3000 m), Apple Maps and Google Maps both pull
-    // the camera back further to give the driver more route awareness.
-    //
-    // We add +15% more altitude beyond what the LUT + longStraightMultiplier
-    // already produce. This is separate from longStraightMultiplier because
-    // it's only about pure speed + distance, not the "zooming out over time"
-    // feel of longStraightMultiplier.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static func highSpeedStraightBoost(speed: Double,
-                                               distanceToTurn dist: CLLocationDistance) -> Double {
-        guard speed > 55, dist > 3000 else { return 1.0 }
-        let speedExcess = min((speed - 55) / 25.0, 1.0) // 0 at 55, 1 at 80+
-        let distExcess = min((dist - 3000) / 5000.0, 1.0) // 0 at 3000, 1 at 8000+
-        let blend = speedExcess * distExcess
-        return 1.0 + blend * 0.15 // up to +15%
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #9 — Turn Approach Pitch Arc
-    //
-    // Instead of a single pitch flattening near the turn, create a
-    // beautiful ARC: as the driver approaches a turn, the camera
-    // FIRST tilts slightly forward (+4°) at medium range (500–200 m) to
-    // look around the corner / scan the road ahead, THEN tilts down
-    // (−10°) when very close (< 200 m) to show the intersection geometry.
-    //
-    // This mimics the natural head movement of a driver approaching a turn.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static func turnApproachPitchArc(distanceToTurn dist: CLLocationDistance,
-                                              speed: Double) -> Double {
-        guard dist < 500, dist > 0 else { return 0.0 }
-        let speedFactor = min(speed / 40.0, 1.0) // stronger effect at higher speeds
-
-        if dist >= 200 {
-            // APPROACH PHASE: 500 m → 200 m
-            // Camera tilts forward to look around the corner
-            let t = (dist - 200.0) / 300.0 // 1 at 500 m, 0 at 200 m
-            let lookAhead = t * 4.0 // +4° at 500 m, 0° at 200 m
-            return lookAhead * speedFactor
-        } else {
-            // TIGHTEN PHASE: 200 m → 0 m
-            // Camera flattens to show the intersection
-            let t = (200.0 - dist) / 200.0 // 0 at 200 m, 1 at 0 m
-            let flatten = -t * 10.0 // 0° at 200 m, −10° at 0 m
-            return flatten * speedFactor
+    /// Representative speed that deterministically quantizes back to level i.
+    /// Feeding this into the engine makes targets EXACTLY the table values —
+    /// fully deterministic per level, immune to sub-band speed noise.
+    static func anchorSpeed(level i: Int, levels: [CruiseLevelSpec]) -> Double {
+        if i >= levels.count - 1 {
+            return levels[levels.count - 1].maxSpeedMph + 10.0
         }
+        return levels[i].maxSpeedMph * 0.98
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - CruiseGovernor
+//
+// The anti-jitter heart: converts a noisy speed stream into a STABLE level
+// index using three mechanisms:
+//
+//   HYSTERESIS — moving DOWN a level requires falling below the current
+//   level's `holdSpeedMph`, well beneath the `maxSpeedMph` entry edge. A
+//   vehicle cruising near a boundary sits deep inside one level's capture
+//   band regardless of ±3 mph GPS noise.
+//
+//   DWELL WITH DIRECTIONAL RETENTION — any candidate switch must survive
+//   for `dwellSeconds` (divided by multi-band jump size). The clock RESETS
+//   only when the candidate REVERSES direction relative to the current
+//   level; advancing further along the same direction (a continuous
+//   deceleration walking down the table) retains the running clock, so a
+//   highway exit reframes in one motion instead of paying full dwell at
+//   every band edge.
+//
+//   NAVIGATION DOWN-SHIFT LOCK — during active guidance, low speed (red
+//   lights, jams) never pulls the cruise level down: road geometry owns
+//   framing there via the maneuver envelope. Only up-shifts are allowed.
+//   Free-drive keeps the full hysteresis including relaxing to level 0.
+//
+// Fully deterministic given injected dates — unit-testable without clocks.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct CruiseGovernor {
+    private let levels: [CruiseLevelSpec]
+    private let dwellSeconds: TimeInterval
+
+    private(set) var currentIndex: Int
+    private var candidateIndex: Int?
+    private var candidateSince: Date?
+
+    init(levels: [CruiseLevelSpec] = CameraTuning.current.cruiseLevels,
+         dwellSeconds: TimeInterval = CameraTuning.current.timing.dwellSeconds,
+         initialSpeedMph: Double = 0) {
+        self.levels = levels
+        self.dwellSeconds = dwellSeconds
+        self.currentIndex = CameraMath.quantizeLevel(speedMph: initialSpeedMph, levels: levels)
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #10 — Free-Drive Exploration Horizon
-    //
-    // When NOT navigating but driving at speed (> 30 mph), gradually tilt
-    // the camera up to reveal more of the horizon. Apple Maps does this
-    // in free-drive mode: as speed builds, the camera tilts up.
-    //
-    // We add up to +5° pitch over the first 8 seconds of sustained speed.
-    // This is applied in the ANIMATOR since it has a time component.
-    // ═══════════════════════════════════════════════════════════════════════
-    // NOTE: This behavior is implemented in CameraAnimator as it is
-    // time-dependent and not a pure computation.
+    /// Feed one smoothed speed sample; returns the committed level index.
+    mutating func update(speedMph: Double, now: Date, allowPark: Bool) -> Int {
+        let current = currentIndex
 
+        var desired = CameraMath.quantizeLevel(speedMph: speedMph, levels: levels)
 
-    // ── Smooth step interpolation (Hermite) ──────────────────────────────
-    static func smoothInterpolate(x: Double, knots: [(x: Double, y: Double)]) -> Double {
-        guard !knots.isEmpty else { return 0 }
-        if x <= knots.first!.x { return knots.first!.y }
-        if x >= knots.last!.x { return knots.last!.y }
+        if !allowPark {
+            // Active guidance: speed dips (lights, traffic) must not downshift
+            // the cruise level — only up-shifts are permitted. Framing while
+            // slow is owned by the maneuver/destination envelopes.
+            desired = max(desired, max(current, 1))
+        } else if desired < current, speedMph >= levels[current].holdSpeedMph {
+            // Free-drive down-shift hysteresis: inside the current level's
+            // hold band we refuse to move down, however long we linger.
+            desired = current
+        }
 
-        for i in 0 ..< knots.count - 1 {
-            let (x0, y0) = (knots[i].x, knots[i].y)
-            let (x1, y1) = (knots[i + 1].x, knots[i + 1].y)
-            if x >= x0 && x <= x1 {
-                let t = (x - x0) / (x1 - x0)
-                let s = t * t * (3.0 - 2.0 * t)
-                return y0 + s * (y1 - y0)
+        if desired == current {
+            candidateIndex = nil
+            candidateSince = nil
+            return current
+        }
+
+        let newDirectionIsUp = desired > current
+        if candidateIndex != desired {
+            var restarting = candidateSince == nil
+            if let existing = candidateIndex {
+                let oldDirectionIsUp = existing > current
+                restarting = restarting || (oldDirectionIsUp != newDirectionIsUp)
             }
+            candidateIndex = desired
+            if restarting {
+                candidateSince = now
+            }
+            // Same-direction advancement intentionally KEEPS the running
+            // dwell clock (see type doc comment).
         }
-        return knots.last!.y
+
+        guard let committedCandidate = candidateIndex,
+              let since = candidateSince else { return current }
+        let jump = abs(committedCandidate - current)
+        let effectiveDwell = dwellSeconds / Double(min(jump, 3))
+        guard now.timeIntervalSince(since) >= effectiveDwell else {
+            return current
+        }
+
+        currentIndex = committedCandidate
+        candidateIndex = nil
+        candidateSince = nil
+        #if DEBUG
+        DebugLogger.shared.log("CAM cruise level \(current) → \(committedCandidate)")
+        #endif
+        return committedCandidate
     }
 
-    // ── Compute the ideal camera state for a given context ─────────────────
+    /// Force-commit a level (used when seeding from a known camera state).
+    mutating func force(_ index: Int) {
+        currentIndex = max(0, min(index, levels.count - 1))
+        candidateIndex = nil
+        candidateSince = nil
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - CameraDecisionEngine
+//
+// Pure computation: context in, ideal target out. No state, no clocks, no side
+// effects — identical inputs always yield identical outputs (enforced by test).
+//
+// Pipeline:
+//   1. Quantize speed → cruise level → (base altitude, base pitch).
+//   2. Multiply altitude by the single maneuver envelope (navigating only).
+//   3. Subtract the single pitch-flatten trigger near the maneuver.
+//   4. Apply the destination-arrival modifier (navigating only).
+//   5. Clamp; fade pitch to 0 while genuinely stopped; honour user overrides.
+//
+// The ANIMATOR feeds this function governed inputs (level-anchor speed +
+// released-envelope multiplier) so live targets are piecewise-constant and the
+// smoothing stage produces long, calm glides rather than constant correction.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public enum CameraDecisionEngine {
+
+    /// Compute the ideal camera state. Stable public API (v1 signature).
     public static func computeTarget(from context: CameraContext) -> TargetCameraState {
-        // ── 2D force override — instant short-circuit ────────────────
+        computeTarget(from: context, maneuverMultiplierOverride: nil)
+    }
+
+    /// Internal variant letting the stabilizer substitute its post-maneuver
+    /// released multiplier for the instantaneous envelope value.
+    static func computeTarget(from context: CameraContext,
+                              maneuverMultiplierOverride: Double?,
+                              tuning: CameraTuning = CameraTuning.current) -> TargetCameraState {
+
+        // ── User-pinned 2D: altitude logic runs, pitch hard-zero ──────────
         if context.userPitchOverride == .forced2D {
-            let alt = computeBaseAltitude(speed: context.speed, limit: context.speedLimit,
-                                          distanceToTurn: context.distanceToNextTurn,
-                                          isNavigating: context.isNavigating,
-                                          instruction: context.instruction,
-                                          destinationDistance: context.destinationDistance)
+            let alt = resolvedAltitude(for: context, tuning: tuning,
+                                       maneuverMultiplierOverride: maneuverMultiplierOverride)
             return TargetCameraState(altitude: alt, pitch: 0)
         }
 
-        var altitude: Double
-        var pitch: Double
+        let levelIdx = CameraMath.quantizeLevel(speedMph: context.speed, levels: tuning.cruiseLevels)
+        var altitude = tuning.cruiseLevels[levelIdx].altitude
+        var pitch = tuning.cruiseLevels[levelIdx].pitch
 
-        // ── 1. Classify the mode (informational / debug logging) ─────
-        let mode = classifyMode(context)
-        #if DEBUG
-        DebugLogger.shared.log("CAM mode: \(mode.rawValue) spd=\(Int(context.speed)) dtt=\(Int(context.distanceToNextTurn))")
-        #endif
+        // ── Active guidance modifiers ──────────────────────────────────────
+        if context.isNavigating && context.hasRoute {
+            let envelope = maneuverMultiplierOverride
+                ?? CameraMath.maneuverEnvelope(distance: max(context.distanceToNextTurn, 0), tuning.maneuver)
+            altitude *= envelope
 
-        // ── 2. Compute base altitude from speed ───────────────────────
-        altitude = computeBaseAltitude(speed: context.speed, limit: context.speedLimit,
-                                       distanceToTurn: context.distanceToNextTurn,
-                                       isNavigating: context.isNavigating,
-                                       instruction: context.instruction,
-                                       destinationDistance: context.destinationDistance)
+            pitch -= CameraMath.pitchFlattenReduction(distance: context.distanceToNextTurn,
+                                                      tuning.pitchFlatten)
 
-        // ── 3. Compute base pitch from speed ──────────────────────────
-        pitch = Self.smoothInterpolate(x: context.speed, knots: Self.pitchLUT)
-
-        // ── NOTE: No binary isStationary guard here! ────────────────────
-        // The altitude and pitch LUTs already handle low speeds smoothly:
-        //   - At 0 mph: altitude = 300 m, pitch = 0°
-        //   - At 3 mph: altitude ≈ 312 m, pitch ≈ 8°
-        // Letting the full computation run at all speeds eliminates the
-        // sharp discontinuity at the 3 mph boundary that was causing
-        // rapid camera oscillation when GPS noise or EMA smoothing
-        // pushed the reported speed across the threshold. The altitude
-        // deadband (25 m) in CameraAnimator filters out the tiny
-        // sub-threshold changes. Pitch for stationary contexts is
-        // gently pulled toward 0 at the end of this function.
-        // ───────────────────────────────────────────────────────────────
-
-        // ── 4. Apply context-aware modifiers ──────────────────────────
-
-        // Highway flyover: tilt up at speed with no turn for miles
-        if context.isNavigating && context.distanceToNextTurn > 4000 && context.speed > 50 {
-            let blend = min(1.0, (context.speed - 50) / 25.0)
-            pitch += blend * 8.0
+            let dest = CameraMath.destinationModifier(distance: max(context.destinationDistance, 0),
+                                                      tuning.destination)
+            altitude *= dest.multiplier
+            pitch -= dest.pitchReduction
         }
 
-        // ── Turn proximity modifier (navigating only) ─────────────────
-        if context.isNavigating && context.distanceToNextTurn < 1000 {
-            let turnMul = turnProximityMultiplier(distance: context.distanceToNextTurn)
-            altitude *= turnMul
+        // ── Clamp to sane bounds ───────────────────────────────────────────
+        altitude = min(max(altitude, 250), 4200)
+        pitch = min(max(pitch, 0), 60)
 
-            // NEW BEHAVIOR #1 — Lane-Guidance Zoom Tightening
-            let laneFactor = laneGuidanceFactor(distance: context.distanceToNextTurn)
-            altitude *= laneFactor
-
-            // NEW BEHAVIOR #2 — Overlapping Maneuver Awareness
-            if context.instruction.count > 3 {
-                let overlapFactor = overlappingTurnCompromise(
-                    instruction: context.instruction,
-                    distanceToTurn: context.distanceToNextTurn
-                )
-                // Compromise factor resists zooming all the way in: the closer
-                // we are, the more it pushes the altitude back up toward moderate.
-                // This only matters when the overlap factor is < 1.0.
-                if overlapFactor < 1.0 {
-                    // Undo some of the turn zoom: altitude stays at most as tight
-                    // as the compromise factor allows. We compute what the "no
-                    // turn zoom" altitude would be and blend toward it.
-                    let noTurnAlt = computeBaseAltitude(
-                        speed: context.speed, limit: context.speedLimit,
-                        distanceToTurn: context.distanceToNextTurn,
-                        isNavigating: context.isNavigating,
-                        instruction: context.instruction,
-                        destinationDistance: context.destinationDistance
-                    )
-                    let fullTurnAlt = altitude // current (tight) altitude
-                    let blendTowardWide = 1.0 - overlapFactor // 0..0.3
-                    altitude = fullTurnAlt * (1.0 - blendTowardWide) + noTurnAlt * blendTowardWide
-                }
-            }
-
-            // NEW BEHAVIOR #3 — Sharp Turn Severity Boost
-            let sharpFactor = sharpTurnSeverityFactor(
-                instruction: context.instruction,
-                distanceToTurn: context.distanceToNextTurn
-            )
-            altitude *= sharpFactor
-
-            // NEW BEHAVIOR #5 — Highway Exit Aggressive Zoom
-            let (exitAltMul, exitPitchDelta) = highwayExitModifier(
-                instruction: context.instruction,
-                speed: context.speed,
-                distanceToTurn: context.distanceToNextTurn
-            )
-            altitude *= exitAltMul
-            pitch += exitPitchDelta
-
-            // NEW BEHAVIOR #7 — Complex Intersection Pitch Adjustment
-            let complexPitch = complexIntersectionPitch(
-                instruction: context.instruction,
-                distanceToTurn: context.distanceToNextTurn
-            )
-            pitch += complexPitch
-
-            // NEW BEHAVIOR #9 — Turn Approach Pitch Arc
-            let approachArc = turnApproachPitchArc(
-                distanceToTurn: context.distanceToNextTurn,
-                speed: context.speed
-            )
-            pitch += approachArc
+        // ── Stationary pitch fade ──────────────────────────────────────────
+        // Smooth Hermite fade over 0–5 mph. Live ticks feed GOVERNED anchor
+        // speeds here, so this is all-or-nothing per cruise level (no flicker
+        // around the threshold); stateless callers get the gentle fade.
+        if context.userPitchOverride == .auto, context.speed < 5.0 {
+            pitch *= CameraMath.smoothstep(context.speed / 5.0)
         }
 
-        // ── Long straight: gradually zoom out ─────────────────────────
-        if context.isNavigating {
-            let straightMul = longStraightMultiplier(distanceToTurn: context.distanceToNextTurn,
-                                                     speed: context.speed)
-            altitude *= straightMul
-
-            if straightMul > 1.0 {
-                pitch += (straightMul - 1.0) * 20.0
-            }
-        }
-
-        // NEW BEHAVIOR #8 — High-Speed Straight Road Boost
-        let speedStraightBoost = highSpeedStraightBoost(
-            speed: context.speed,
-            distanceToTurn: context.distanceToNextTurn
-        )
-        altitude *= speedStraightBoost
-
-        // ── Roundabout ────────────────────────────────────────────────
-        if context.instruction.lowercased().contains("roundabout") ||
-           context.instruction.lowercased().contains("rotary") ||
-           context.instruction.lowercased().contains("circle") {
-            pitch += Self.roundaboutPitchOffset()
-        }
-
-        // ── Ramp / exit / merge ───────────────────────────────────────
-        let instructionLower = context.instruction.lowercased()
-        if instructionLower.contains("exit") || instructionLower.contains("merge") ||
-           instructionLower.contains("ramp") || instructionLower.contains("fork") {
-            altitude *= Self.rampAltitudeMultiplier
-        }
-
-        // ── Destination arrival ───────────────────────────────────────
-        if context.isNavigating && context.destinationDistance < 600 {
-            let (destAltMul, destPitchDelta) = destinationMultiplier(distance: context.destinationDistance)
-            altitude *= destAltMul
-            pitch += destPitchDelta
-        }
-
-        // NEW BEHAVIOR #4 — Traffic Congestion Adaptive Zoom
-        let congestionMul = trafficCongestionFactor(speed: context.speed,
-                                                    speedLimit: context.speedLimit)
-        altitude *= congestionMul
-
-        // NEW BEHAVIOR #6 — Urban Canyon Altitude Ceiling
-        altitude = urbanCanyonAltitudeCap(
-            altitude: altitude,
-            speedLimit: context.speedLimit,
-            distanceToTurn: context.distanceToNextTurn
-        )
-
-        // ── Free-drive (recording) — slightly lower pitch ────────────
-        if !context.isNavigating && context.isRecording {
-            pitch = min(pitch, 35.0)
-        }
-
-        // ── 5. Clamp to sane bounds ───────────────────────────────────
-        altitude = clamp(altitude, min: 200, max: 4500)
-        pitch = clamp(pitch, min: 0, max: 62)
-
-        // ── 6. Stationary pitch blend ──────────────────────────────────
-        // When parked / stopped, gently pull pitch toward 0 so the map
-        // lies flat. We use a smooth Hermite blend over the 0–5 mph range
-        // (wider than the original 3 mph binary cutoff) to eliminate the
-        // sharp discontinuity that caused camera oscillation. At 0 mph
-        // pitch goes all the way to 0; at 5+ mph it's untouched.
-        if context.userPitchOverride == .auto && context.speed < 5.0 {
-            let t = context.speed / 5.0          // 0 at 0 mph, 1 at 5 mph
-            let s = t * t * (3.0 - 2.0 * t)      // Hermite smoothstep
-            pitch *= s                           // 0° at 0 mph, full pitch at 5+ mph
-        }
-
-        // ── 7. Apply user pitch override (wins over everything) ──────
+        // ── User pitch overrides win over everything ──────────────────────
         switch context.userPitchOverride {
         case .forced2D:
             pitch = 0
@@ -748,202 +541,248 @@ public struct CameraDecisionEngine: Sendable {    // ── Key points for altit
         return TargetCameraState(altitude: altitude, pitch: pitch)
     }
 
-    // ── Classify mode (debug / logging only) ───────────────────────────
-    private static func classifyMode(_ ctx: CameraContext) -> CameraMode {
+    private static func resolvedAltitude(for context: CameraContext,
+                                         tuning: CameraTuning,
+                                         maneuverMultiplierOverride: Double?) -> Double {
+        let levelIdx = CameraMath.quantizeLevel(speedMph: context.speed, levels: tuning.cruiseLevels)
+        var altitude = tuning.cruiseLevels[levelIdx].altitude
+        if context.isNavigating && context.hasRoute {
+            let envelope = maneuverMultiplierOverride
+                ?? CameraMath.maneuverEnvelope(distance: max(context.distanceToNextTurn, 0), tuning.maneuver)
+            altitude *= envelope
+            let dest = CameraMath.destinationModifier(distance: max(context.destinationDistance, 0),
+                                                      tuning.destination)
+            altitude *= dest.multiplier
+        }
+        return min(max(altitude, 250), 4200)
+    }
+
+    /// Diagnostic classification retained for parity with v1 debug logs.
+    static func classifyMode(_ ctx: CameraContext) -> CameraMode {
         if ctx.isStationary { return .parked }
-        if ctx.userPitchOverride != .auto { return .navigating }
-        guard ctx.isNavigating else {
-            return ctx.isRecording ? .freeDrive : .parked
-        }
-
-        let instruction = ctx.instruction.lowercased()
-        if instruction.contains("roundabout") || instruction.contains("rotary") {
-            return .roundabout
-        }
-        if ctx.destinationDistance < 150 {
-            return .destinationArrival
-        }
-        if ctx.distanceToNextTurn < 125 {
-            return .sharpTurn
-        }
-        if ctx.distanceToNextTurn < 1000 {
-            return .approachingTurn
-        }
-        if ctx.distanceToNextTurn > 3000 && ctx.speed > 50 {
-            return .longStraight
-        }
+        guard ctx.isNavigating else { return .freeDrive }
+        if ctx.destinationDistance < 150 { return .destinationArrival }
+        if ctx.distanceToNextTurn < 125 { return .sharpTurn }
+        if ctx.distanceToNextTurn < 700 { return .approachingTurn }
         return .navigating
-    }
-
-    // ── Core altitude computation ──────────────────────────────────────
-    private static func computeBaseAltitude(
-        speed: Double,
-        limit: Int,
-        distanceToTurn: CLLocationDistance,
-        isNavigating: Bool,
-        instruction: String,
-        destinationDistance: CLLocationDistance
-    ) -> Double {
-        let speedAlt = Self.smoothInterpolate(x: speed, knots: Self.altitudeLUT)
-        let roadMul = Self.smoothInterpolate(x: Double(limit), knots: Self.roadTypeMultiplierLUT)
-        let adjusted = speedAlt * roadMul
-
-        if isNavigating && speed > 45 && distanceToTurn > 4000 {
-            let speedExcess = (speed - 45) / 30.0
-            let flyoverAlt = 1800 + (speed - 45) * 25
-            let blend = min(1.0, max(0.0, speedExcess))
-            return adjusted * (1.0 - blend) + flyoverAlt * blend
-        }
-
-        return adjusted
-    }
-
-    private static func clamp(_ val: Double, min minVal: Double, max maxVal: Double) -> Double {
-        return Swift.max(minVal, Swift.min(maxVal, val))
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MARK: - CameraAnimator
+// MARK: - CameraKinematics
 //
-// Smoothly moves the actual MKMapView camera toward a target state.
-//
-// Uses an exponential moving average (EMA) on the target altitude and pitch
-// so that every individual frame moves only a fraction of the distance to the
-// target. This gives a beautiful, continuous ease-out feel that never overshoots
-// and never oscillates — exactly like Apple Maps.
-//
-// Stateful behaviors:
-//   #11 — Post-Turn Bearing Stabilization — Holds turn zoom for 1.5 s after a turn
-//   #12 — Merge/Ramp Recovery Hold — Holds ramp zoom for 2 s, then 2 s ease-out
-//   #13 — Highway Deceleration Slow Camera — Slower tau when exiting highway
-//   #14 — Ambient Micro-Movement — Subtle ±1.5° pitch oscillation when stable
+// Frame-rate-independent exponential approach with:
+//   • ASYMMETRIC time constants — tightening is quick (tau 0.6 s), releasing
+//     is unhurried (tau 1.8 s). This mirrors Apple Maps' feel and removes the
+//     post-turn "whiplash" even outside hold windows.
+//   • HARD RATE CAPS — even a 2000 m target jump converges as a bounded glide,
+//     never a snap.
+//   • SNAP EPSILON — settles exactly onto the target so residual error can't
+//     accumulate.
+// Pure functions; unit-testable without MapKit.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-@MainActor
-public final class CameraAnimator {
-    // ── Smoothed state ─────────────────────────────────────────────────
-    private var displayAltitude: Double = 1000
-    private var displayPitch: Double = 0
-    private var lastUpdateTime: Date = .now
+enum CameraKinematics {
 
-    // ── Deadband ───────────────────────────────────────────────────────        // 75 m (was 50 m) wide enough to absorb per-tick altitude deltas
-        // produced by 1-3 mph GPS noise on a mid-range road — at 45-55 mph
-        // the LUT slope is ~35 m/mph, so ±2 mph noise previously punched
-        // past the 50 m deadband and produced visible zoom jitter.
-        // Real altitude transitions (entering/exiting a highway etc.) easily
-        // exceed 75 m, so responsiveness on actual speed changes is unchanged.
-    private let altitudeDeadband: Double = 75.0
-    private let pitchDeadband: Double = 7.5
+    static func approach(current: Double,
+                         target: Double,
+                         dt: TimeInterval,
+                         tightenTau: TimeInterval,
+                         releaseTau: TimeInterval,
+                         rateCapPerSecond: Double,
+                         snapEpsilon: Double) -> Double {
+        guard dt > 0 else { return current }
+        let tau = max(target < current ? tightenTau : releaseTau, 0.01)
+        let alpha = 1.0 - exp(-dt / tau)
+        var next = current + alpha * (target - current)
 
-    // ── Cooldown ───────────────────────────────────────────────────────
-    private let minInterval: TimeInterval = 0.5
-    private var lastApplyTime: Date = .distantPast
+        let maxStep = rateCapPerSecond * dt
+        let delta = next - current
+        if abs(delta) > maxStep {
+            next = current + (delta > 0 ? maxStep : -maxStep)
+        }
 
-    // ── Speed smoothing ────────────────────────────────────────────────
-    // 2.0 s (was 1.5 s). SpeedEngine already EMA-smooths with factor 0.15,
-    // but its deadband only triggers under 3 mph — above that, mid-range
-    // GPS noise (±2 mph) feeds straight into viewModel.speed. The two
-    // cascaded EMAs now drop noise amplitude by ~85 % before it reaches
-    // the LUT smoother, so altitude moves smoothly without jittering.
-    // Real speed transitions still converge inside ~4 s, well below
-    // human-perceived sluggishness.
+        if abs(target - next) < snapEpsilon {
+            next = target
+        }
+        return next
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - CameraStabilizer
+//
+// Owns every piece of decision state so the maths stays testable without
+// MKMapView or runloops:
+//
+//   • Speed EMA (τ ≈ 1.8 s) feeding the…
+//   • …CruiseGovernor (hysteresis + dwell), whose committed level yields a
+//     DETERMINISTIC anchor speed fed into the engine, plus…
+//   • …post-maneuver release tracking: when the instruction advances right
+//     after a close approach (DTT < 120 m), the tight envelope multiplier is
+//     HELD for 1.2 s, then blended toward the computed value over 2.5 s.
+//     This replaces v1 behaviors #11/#12 with one mechanism that triggers on
+//     geometry, not instruction keywords.
+//
+// `currentTarget` is refreshed on every `ingest` and consumed by the animator
+// at display-link rate.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+final class CameraStabilizer {
+    private(set) var currentTarget = TargetCameraState(altitude: 320, pitch: 0)
+    private(set) var currentLevelIndex = 0
+
+    private var governor: CruiseGovernor
     private var smoothedSpeed: Double = 0
-    private let speedTau: TimeInterval = 2.0
+    private var primed = false
+    private var lastIngestDate: Date?
 
-    // ── Debug ──────────────────────────────────────────────────────────
-    private var lastLoggedTarget: TargetCameraState?
+    // The raw distance-to-turn can move backwards by tens of metres between
+    // GPS fixes. Filter its altitude envelope asymmetrically so a noisy fix
+    // can tighten promptly but cannot immediately zoom back out.
+    private var filteredManeuverMultiplier: Double?
+    private var lastEnvelopeUpdateDate: Date?
 
-    // ═══════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #11 — Post-Turn Bearing Stabilization
-    //
-    // Tracks the last known instruction and distance. When the instruction
-    // changes AND the previous DTT was < 100 m (meaning we just passed a
-    // turn), we enter a "post-turn hold" state. For 1.5 s after the turn,
-    // the camera refuses to zoom back out, preserving the tight turn zoom
-    // until the vehicle's heading has stabilized on the new road.
-    //
-    // Apple Maps and Google Maps both do this: after a turn, the camera
-    // lingers for 1–2 seconds before zooming back out to the cruising
-    // altitude. Without this, the camera snaps back out the instant the
-    // instruction advances, creating a jarring "whiplash" effect.
-    // ═══════════════════════════════════════════════════════════════════
+    // Post-maneuver release state
     private var lastInstruction: String = ""
     private var lastDTT: CLLocationDistance = 0
-    private var postTurnHoldUntil: Date = .distantPast
-    private var isPostTurnHold: Bool = false
-    private let postTurnHoldDuration: TimeInterval = 1.5
+    private var releaseStart: Date?
+    private var heldMultiplier: Double = 1.0
 
-    // ═══════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #12 — Merge/Ramp Recovery Hold
-    //
-    // After merging onto a highway (instruction transitions from
-    // "merge/ramp" to a straight instruction), hold the exit/ramp zoom
-    // for 2 seconds, then smoothly ease back to normal over 2 more seconds.
-    //
-    // Google Maps does this to prevent the jarring "snap" when the ramp
-    // ends and the camera would otherwise zoom back out immediately.
-    // ═══════════════════════════════════════════════════════════════════
-    private var wasOnRamp: Bool = false
-    private var mergeHoldStartTime: Date?
-    private let mergeHoldDuration: TimeInterval = 2.0   // hold phase
-    private let mergeRecoveryDuration: TimeInterval = 2.0 // ease-out phase
-    // (merge recovery phase is latch-based; no stored factor needed)
+    private let tuning: CameraTuning
 
-    // ═══════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #13 — Highway Deceleration Slow Camera
-    //
-    // When the user exits the highway (speed drops from > 50 mph to
-    // < 35 mph while navigating), use a slower animation tau (0.8 s instead
-    // of the default) for 3 seconds to prevent the "falling" sensation of
-    // the camera zooming in too fast after an exit.
-    //
-    // Apple Maps does this naturally via its spring-based animation system.
-    // Our EMA needs the tau boost manually.
-    // ═══════════════════════════════════════════════════════════════════
-    private var wasHighwaySpeed: Bool = false
-    private var highwayDecelUntil: Date = .distantPast
+    init(tuning: CameraTuning = CameraTuning.current) {
+        self.tuning = tuning
+        self.governor = CruiseGovernor(levels: tuning.cruiseLevels,
+                                       dwellSeconds: tuning.timing.dwellSeconds)
+    }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // NEW BEHAVIOR #14 — Ambient Micro-Movement
-    //
-    // When the camera has been stable (no meaningful altitude/pitch change
-    // > 10 m / 2°) for 5+ seconds, apply a very subtle ±1.5° pitch
-    // oscillation over a 12-second period. This makes the camera feel
-    // alive rather than frozen — Apple Maps has micro-movements that make
-    // the camera feel organic.
-    //
-    // The effect is so subtle most users won't consciously notice it,
-    // but its absence is what makes other navigation cameras feel "dead."
-    // ═══════════════════════════════════════════════════════════════════
-    private var stableSince: Date = .now
-    private let ambientOscillationAmplitude: Double = 0.75 // ±0.75°
-    private let ambientOscillationPeriod: TimeInterval = 16.0
-    // ── Free-Drive Exploration Horizon (NEW BEHAVIOR #10 tie-in) ──────
-    // Applied here in the animator since it has a time component
-    private var freeDriveSustainedSpeedSince: Date = .distantPast
-    private var freeDriveHorizonPitch: Double = 0
+    /// Consume one application tick. `now` is injectable for tests.
+    func ingest(context: CameraContext, now: Date) {
+        // 1. Smooth raw GPS speed using the real update interval. SwiftUI and
+        // CarPlay do not publish on a guaranteed 500 ms cadence.
+        if !primed {
+            smoothedSpeed = context.speed
+            primed = true
+            let initialIndex = CameraMath.quantizeLevel(speedMph: smoothedSpeed, levels: tuning.cruiseLevels)
+            governor.force(initialIndex)
+            currentLevelIndex = initialIndex
+        } else {
+            let dt = min(max(now.timeIntervalSince(lastIngestDate ?? now), 0.05), 2.0)
+            let tau = max(tuning.timing.speedSmoothingTauSeconds, 0.01)
+            let alpha = 1.0 - exp(-dt / tau)
+            smoothedSpeed += alpha * (context.speed - smoothedSpeed)
+        }
+        lastIngestDate = now
 
-    public init() {}
+        // 2. Post-maneuver release bookkeeping (before computing the target).
+        updateReleaseState(context: context, now: now)
 
-    // ── Main entry point ───────────────────────────────────────────────
-    public func update(mapView: MKMapView, context: CameraContext) {
-        let now = Date()
+        // 3. Govern the cruise level from the smoothed speed.
+        let allowPark = !context.isNavigating
+        currentLevelIndex = governor.update(speedMph: smoothedSpeed, now: now, allowPark: allowPark)
 
-        // 1. Smooth the raw speed
-        let dt = -lastUpdateTime.timeIntervalSinceNow
-        smoothedSpeed = smoothExponential(current: smoothedSpeed,
-                                          target: context.speed,
-                                          dt: dt,
-                                          tau: speedTau)
-        lastUpdateTime = now
+        // 4. Deterministic anchor speed → engine sees a rock-steady input.
+        let anchoredContext = anchoredContext(from: context)
 
-        // 2. Detect instruction transitions for stateful behaviors
-        detectTransitions(context: context)
+        let hasActiveGuidance = context.isNavigating && context.hasRoute
+        let computedEnvelope = hasActiveGuidance
+            ? CameraMath.maneuverEnvelope(distance: max(context.distanceToNextTurn, 0), tuning.maneuver)
+            : 1.0
+        let filteredEnvelope = updateManeuverMultiplier(computed: computedEnvelope, now: now)
+        let effectiveEnvelope: Double
+        if releaseStart != nil {
+            // The explicit post-maneuver hold/release owns the first release
+            // after a turn. Do not double-slow that transition with the normal
+            // envelope filter.
+            effectiveEnvelope = effectiveManeuverMultiplier(computed: computedEnvelope, now: now)
+        } else {
+            effectiveEnvelope = filteredEnvelope
+        }
 
-        // 3. Compute target from the smoothed speed + context
-        let smoothedContext = CameraContext(
-            speed: smoothedSpeed,
+        currentTarget = CameraDecisionEngine.computeTarget(from: anchoredContext,
+                                                           maneuverMultiplierOverride: effectiveEnvelope,
+                                                           tuning: tuning)
+    }
+
+    /// Seed from a known-good context (used by `restoreCamera`) so the next
+    /// ingest continues smoothly instead of ramping from zero.
+    func prime(context: CameraContext) {
+        smoothedSpeed = context.speed
+        primed = true
+        lastIngestDate = nil
+        let idx = CameraMath.quantizeLevel(speedMph: context.speed, levels: tuning.cruiseLevels)
+        currentLevelIndex = idx
+        governor.force(idx)
+        lastInstruction = context.instruction
+        lastDTT = context.distanceToNextTurn
+
+        let hasActiveGuidance = context.isNavigating && context.hasRoute
+        filteredManeuverMultiplier = hasActiveGuidance
+            ? CameraMath.maneuverEnvelope(distance: max(context.distanceToNextTurn, 0), tuning.maneuver)
+            : nil
+        lastEnvelopeUpdateDate = nil
+        currentTarget = CameraDecisionEngine.computeTarget(
+            from: anchoredContext(from: context),
+            maneuverMultiplierOverride: filteredManeuverMultiplier,
+            tuning: tuning
+        )
+    }
+
+    /// Full reset — forget speed history and release state.
+    func reset() {
+        primed = false
+        smoothedSpeed = 0
+        lastIngestDate = nil
+        filteredManeuverMultiplier = nil
+        lastEnvelopeUpdateDate = nil
+        releaseStart = nil
+        heldMultiplier = 1.0
+        lastInstruction = ""
+        lastDTT = 0
+        governor = CruiseGovernor(levels: tuning.cruiseLevels,
+                                  dwellSeconds: tuning.timing.dwellSeconds)
+        currentLevelIndex = 0
+    }
+
+    // ── Private ────────────────────────────────────────────────────────────
+
+    private func updateReleaseState(context: CameraContext, now: Date) {
+        guard context.isNavigating else {
+            releaseStart = nil
+            lastInstruction = context.instruction
+            lastDTT = context.distanceToNextTurn
+            return
+        }
+
+        let instructionChanged = context.instruction != lastInstruction
+        let justPassedManeuver = instructionChanged
+            && !lastInstruction.isEmpty
+            && lastDTT > 0
+            && lastDTT < 120
+
+        if justPassedManeuver, releaseStart == nil {
+            heldMultiplier = CameraMath.maneuverEnvelope(distance: lastDTT, tuning.maneuver)
+            releaseStart = now
+            #if DEBUG
+            DebugLogger.shared.log("CAM maneuver passed → hold \(Int(tuning.timing.postManeuverHoldSeconds))s, release \(Int(tuning.timing.postManeuverReleaseSeconds))s")
+            #endif
+        }
+
+        // Coalescing: if we're already tightening toward the NEXT maneuver,
+        // the envelope governs — drop any pending release immediately.
+        if releaseStart != nil,
+           context.distanceToNextTurn <= tuning.maneuver.fullTightenDistanceM * 2 {
+            releaseStart = nil
+        }
+
+        lastInstruction = context.instruction
+        lastDTT = context.distanceToNextTurn
+    }
+
+    private func anchoredContext(from context: CameraContext) -> CameraContext {
+        CameraContext(
+            speed: CameraMath.anchorSpeed(level: currentLevelIndex, levels: tuning.cruiseLevels),
             speedLimit: context.speedLimit,
             isNavigating: context.isNavigating,
             isRecording: context.isRecording,
@@ -954,241 +793,126 @@ public final class CameraAnimator {
             hasRoute: context.hasRoute,
             userPitchOverride: context.userPitchOverride
         )
-
-        let rawTarget = CameraDecisionEngine.computeTarget(from: smoothedContext)
-        var target = rawTarget
-
-        // ── Apply stateful modifiers ──────────────────────────────────
-
-        // NEW BEHAVIOR #11 — Post-Turn Bearing Stabilization
-        if isPostTurnHold && now < postTurnHoldUntil {
-            // Do NOT zoom back out — keep altitude at whatever it was when the turn completed.
-            // The deadband + cooldown gate below will naturally hold position.
-            target.priority = max(target.priority, 1)
-            target.requestedAnimationTau = 1.0 // very slow, almost frozen
-            #if DEBUG
-            DebugLogger.shared.log("CAM post-turn hold \(Int(postTurnHoldUntil.timeIntervalSince(now)))s left")
-            #endif
-        }
-
-        // NEW BEHAVIOR #12 — Merge/Ramp Recovery Hold
-        // Uses a latch approach: hold the current display altitude during the hold
-        // phase, then smoothly blend toward the computed target during recovery.
-        // This avoids double-counting the ramp multiplier that might already be
-        // in the target from the decision engine.
-        if let mergeStart = mergeHoldStartTime {
-            let mergeElapsed = now.timeIntervalSince(mergeStart)
-            if mergeElapsed < mergeHoldDuration {
-                // Hold phase: prevent altitude from snapping back out.
-                // The displayAltitude at transition was already at the correct
-                // ramp-zoomed level — just keep it there.
-                target.altitude = max(target.altitude, displayAltitude * 0.98)
-                target.priority = max(target.priority, 1)
-                #if DEBUG
-                DebugLogger.shared.log("CAM merge hold (phase 1/2)")
-                #endif
-            } else if mergeElapsed < mergeHoldDuration + mergeRecoveryDuration {
-                // Recovery phase: smooth blend from held altitude toward computed target
-                let recoverElapsed = mergeElapsed - mergeHoldDuration
-                let t = recoverElapsed / mergeRecoveryDuration
-                let s = t * t * (3.0 - 2.0 * t) // smoothstep: 0→1
-                let desiredAlt = max(target.altitude, displayAltitude * 0.98)
-                target.altitude = displayAltitude + (desiredAlt - displayAltitude) * s
-                target.priority = max(target.priority, 1)
-                #if DEBUG
-                DebugLogger.shared.log("CAM merge recovery \(String(format: "%.0f", target.altitude))m")
-                #endif
-            } else {
-                // Fully recovered
-                mergeHoldStartTime = nil
-            }
-        }
-
-        // NEW BEHAVIOR #13 — Highway Deceleration Slow Camera
-        if now < highwayDecelUntil {
-            target.requestedAnimationTau = 0.8 // much slower
-            #if DEBUG
-            DebugLogger.shared.log("CAM highway decel slow (tau=0.8)")
-            #endif
-        }
-
-        // NEW BEHAVIOR #10 — Free-Drive Exploration Horizon
-        if !context.isNavigating && context.speed > 30 {
-            if freeDriveSustainedSpeedSince == .distantPast {
-                freeDriveSustainedSpeedSince = now
-            }
-            let freeElapsed = now.timeIntervalSince(freeDriveSustainedSpeedSince)
-            let horizonBlend = min(freeElapsed / 8.0, 1.0) // ramps up over 8 seconds
-            freeDriveHorizonPitch = horizonBlend * 5.0 // up to +5°
-            target.pitch += freeDriveHorizonPitch
-        } else {
-            freeDriveSustainedSpeedSince = .distantPast
-            freeDriveHorizonPitch = 0
-        }
-
-        // NEW BEHAVIOR #14 — Ambient Micro-Movement
-        let altDelta = abs(target.altitude - displayAltitude)
-        let pitchDelta = abs(target.pitch - displayPitch)
-        if altDelta < 10 && pitchDelta < 2 {
-            if stableSince == .distantPast { stableSince = now }
-            let stableElapsed = now.timeIntervalSince(stableSince)
-            if stableElapsed > 5.0 {
-                // Apply ambient oscillation
-                let phase = ((now.timeIntervalSince1970 * 2 * .pi) / ambientOscillationPeriod)
-                    .truncatingRemainder(dividingBy: 2 * .pi)
-                let oscillation = sin(phase) * ambientOscillationAmplitude
-                target.pitch += oscillation
-                if Int(phase * 10) % 30 == 0 { // log once per ~3 seconds
-                    #if DEBUG
-                    DebugLogger.shared.log("CAM ambient micro-movement")
-                    #endif
-                }
-            }
-        } else {
-            stableSince = .distantPast
-        }
-
-        // 4. Deadband + cooldown gate
-        let finalAltDelta = abs(target.altitude - displayAltitude)
-        let finalPitchDelta = abs(target.pitch - displayPitch)
-        let timeSinceApply = -lastApplyTime.timeIntervalSinceNow
-
-        let isCritical = (target.priority >= 1) || (
-            context.isNavigating &&
-            context.distanceToNextTurn < 150 &&
-            finalAltDelta > 50
-        )
-
-        let shouldSkip = !isCritical && (
-            (finalAltDelta < altitudeDeadband && finalPitchDelta < pitchDeadband) ||
-            timeSinceApply < minInterval
-        )
-
-        if shouldSkip {
-            if finalAltDelta > altitudeDeadband * 2 || finalPitchDelta > pitchDeadband * 2 {
-                let reason = timeSinceApply < minInterval ? "cooldown" : "deadband"
-                logIfChanged(target, reason: reason)
-            }
-            return
-        }
-
-        // 5. Move display state toward target (EMA smoothing)
-        //
-        // IMPORTANT: dt (computed at the top of this method) is the time
-        // since the last `update()` call — correct for the speed EMA which
-        // runs every call.  For the camera EMA we MUST use the time since
-        // the LAST APPLY (`cameraDt`), because the camera only converges
-        // when the cooldown gate opens (~every 0.4 s).  Reusing `dt` here
-        // made the camera converge 18× slower than intended during rapid
-        // SwiftUI renders (60 fps renders → dt ≈ 0.016 s → α ≈ 0.026), and
-        // then JUMP when the system finally settled and dt went to 1+ s.
-        // CameraDt is clamped at 2 s to prevent a multi-second gap from
-        // causing an absurdly large single-frame altitude jump when the
-        // app resumes from background.
-        let cameraDt = min(-lastApplyTime.timeIntervalSinceNow, 2.0)
-        let animTau: TimeInterval = target.requestedAnimationTau
-            ?? animationTimeConstant(altDelta: finalAltDelta, pitchDelta: finalPitchDelta)
-        displayAltitude = smoothExponential(current: displayAltitude,
-                                            target: target.altitude,
-                                            dt: cameraDt,
-                                            tau: animTau)
-        displayPitch = smoothExponential(current: displayPitch,
-                                         target: target.pitch,
-                                         dt: cameraDt,
-                                         tau: animTau)
-
-        // 6. Apply to MapKit
-        //
-        // CRITICAL: Use `mapView.camera = cam` (property setter) instead of
-        // `mapView.setCamera(cam, animated:)`.  Apple's MKMapView docs state:
-        //
-        //   "If the user tracking mode is MKUserTrackingModeFollow or
-        //    MKUserTrackingModeFollowWithHeading, setting a new camera
-        //    object on the map view doesn't change the center point of
-        //    the map. The map view continues to track the user's
-        //    location automatically."
-        //
-        // The older `setCamera(_:animated:)` API may disable user tracking
-        // when the camera is modified, creating a cycle that manifests as
-        // rapid zoom-in/zoom-out oscillation:
-        //   1. setCamera → MapKit disables tracking
-        //   2. Next updateUIView re-engages tracking → MapKit resets to
-        //      default altitude
-        //   3. Cooldown opens → setCamera → back to step 1
-        //
-        // The property setter (iOS 13+) does NOT have this side-effect.
-        let cam = mapView.camera.copy() as! MKMapCamera
-        cam.centerCoordinateDistance = displayAltitude
-        cam.pitch = CGFloat(displayPitch)
-        mapView.camera = cam
-
-        lastApplyTime = now
-        logIfChanged(target, reason: "applied")
     }
 
-    /// Detect state transitions for the stateful behaviors.
-    private func detectTransitions(context: CameraContext) {
-        let now = Date()
+    private func updateManeuverMultiplier(computed: Double, now: Date) -> Double {
+        guard computed.isFinite else { return filteredManeuverMultiplier ?? 1.0 }
+        guard let current = filteredManeuverMultiplier else {
+            filteredManeuverMultiplier = computed
+            lastEnvelopeUpdateDate = now
+            return computed
+        }
 
-        // ── Post-turn detection (#11) ──────────────────────────────────
-        // If instruction changed AND previous DTT was < 100 m → just passed a turn
-        if context.isNavigating
-            && context.instruction != lastInstruction
-            && lastDTT < 100
-            && lastDTT > 0 {
-            postTurnHoldUntil = now + postTurnHoldDuration
-            isPostTurnHold = true
-            #if DEBUG
-            DebugLogger.shared.log("CAM turn completed → post-turn hold 1.5s")
-            #endif
-        }
-        // Expire the hold naturally
-        if now >= postTurnHoldUntil {
-            isPostTurnHold = false
-        }
-        lastInstruction = context.instruction
-        lastDTT = context.distanceToNextTurn
+        let dt = min(max(now.timeIntervalSince(lastEnvelopeUpdateDate ?? now), 0.05), 2.0)
+        let tau = max(
+            computed < current ? tuning.timing.tightenTauSeconds : tuning.timing.releaseTauSeconds,
+            0.01
+        )
+        let alpha = 1.0 - exp(-dt / tau)
+        filteredManeuverMultiplier = current + alpha * (computed - current)
+        lastEnvelopeUpdateDate = now
+        return filteredManeuverMultiplier ?? computed
+    }
 
-        // ── Merge/ramp recovery detection (#12) ────────────────────────
-        let lower = context.instruction.lowercased()
-        let isOnRamp = lower.contains("merge") || lower.contains("ramp")
-                    || lower.contains("exit")
-        if wasOnRamp && !isOnRamp {
-            // Just left ramp/merge state
-            if mergeHoldStartTime == nil {
-                mergeHoldStartTime = now
-                #if DEBUG
-                DebugLogger.shared.log("CAM ramp complete → merge hold 2s + 2s recovery")
-                #endif
-            }
-        }
-        wasOnRamp = isOnRamp
+    private func effectiveManeuverMultiplier(computed: Double, now: Date) -> Double {
+        guard let start = releaseStart else { return computed }
+        let hold = max(tuning.timing.postManeuverHoldSeconds, 0)
+        let release = max(tuning.timing.postManeuverReleaseSeconds, 0)
+        let elapsed = now.timeIntervalSince(start)
 
-        // ── Highway deceleration detection (#13) ───────────────────────
-        if context.speed > 50 && context.isNavigating {
-            wasHighwaySpeed = true
+        if elapsed < hold {
+            return heldMultiplier
         }
-        if wasHighwaySpeed && context.speed < 35 && context.isNavigating {
-            highwayDecelUntil = now + 3.0
-            wasHighwaySpeed = false
-            #if DEBUG
-            DebugLogger.shared.log("CAM highway exit → slow camera 3s")
-            #endif
+        if release <= 0 || elapsed >= hold + release {
+            releaseStart = nil
+            filteredManeuverMultiplier = computed
+            lastEnvelopeUpdateDate = now
+            return computed
         }
+
+        let x = CameraMath.smoothstep((elapsed - hold) / release)
+        return heldMultiplier + (computed - heldMultiplier) * x
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - CameraAnimator
+//
+// Thin MainActor shell that:
+//   • accepts context updates from SwiftUI/CarPlay at THEIR cadence,
+//   • integrates the stabilizer's target on a CADisplayLink (its own clock —
+//     immune to irregular render ticks, the root cause of v1's dt bugs),
+//   • writes `mapView.camera` ONLY when the integrated value moved beyond a
+//     small epsilon, so idle frames never interrupt MapKit's own
+//     follow-with-heading animation,
+//   • auto-suspends the link after 3 s without fresh context (detached map,
+//     backgrounded app, parked) and resumes on the next update.
+//
+// CRITICAL (unchanged from v1): use the `mapView.camera` PROPERTY setter, not
+// `setCamera(_:animated:)`. With user tracking enabled the property setter
+// leaves the tracked center point alone; `setCamera(_:animated:)` can disable
+// tracking, and the ensuing tracking-re-enable/reset cycle manifested as rapid
+// zoom-in/zoom-out pulses.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+@MainActor
+final class DisplayLinkProxy: NSObject {
+    weak var animator: CameraAnimator?
+
+    @objc func frameTick(_ link: CADisplayLink) {
+        MainActor.assumeIsolated {
+            animator?.frameTick(link)
+        }
+    }
+}
+
+@MainActor
+public final class CameraAnimator {
+    private var stabilizer = CameraStabilizer()
+
+    private var displayAltitude: Double = 320
+    private var displayPitch: Double = 0
+
+    private weak var attachedMapView: MKMapView?
+    private var displayLinkProxy: DisplayLinkProxy?
+    private var displayLink: CADisplayLink?
+    private var lastFrameTimestamp: CFTimeInterval?
+    private var lastContextUpdate: Date = .distantPast
+
+    /// Epsilon-gated application: below these deltas the map camera is left
+    /// untouched so MapKit's tracking animations run undisturbed.
+    private let applyEpsilonAltitude: Double = 0.75
+    private let applyEpsilonPitch: Double = 0.08
+
+    private let tuning = CameraTuning.current
+
+    public init() {}
+
+    // ── Main entry point (v1-compatible signature) ────────────────────────
+    public func update(mapView: MKMapView, context: CameraContext) {
+        attachedMapView = mapView
+        lastContextUpdate = Date()
+
+        stabilizer.ingest(context: context, now: lastContextUpdate)
+        ensureDisplayLink()
+    }
+
+    /// Stop driving the camera (manual detach, search focus, etc.). The next
+    /// `update(mapView:context:)` call transparently resumes the loop.
+    public func suspend() {
+        invalidateDisplayLink()
+    }
+
+    /// Seed internal display state from the live map camera.
+    public func reset(to mapView: MKMapView) {
+        displayAltitude = mapView.camera.centerCoordinateDistance
+        displayPitch = Double(mapView.camera.pitch)
+        stabilizer.reset()
     }
 
     /// Restore the camera after MapKit resumes user tracking following a
-    /// manual pan or pinch. Tracking re-centers the vehicle, but it does not
-    /// restore the app's camera altitude; apply the current decision-engine
-    /// target explicitly so auto-recenter returns to the same close framing
-    /// used during navigation instead of preserving the user's overview zoom.
-    ///
-    /// MapKit can preserve the detached camera center when tracking is turned
-    /// back on, and it can also apply its default tracking altitude after the
-    /// first camera assignment. To make re-center deterministic, install the
-    /// complete camera while tracking is temporarily disabled, re-enable the
-    /// previous tracking mode, and apply the distance/pitch once more on the
-    /// next main-queue turn after MapKit has settled.
+    /// manual pan/pinch (v1-compatible signature and behaviour, now backed by
+    /// the stable engine output).
     public func restoreCamera(
         on mapView: MKMapView,
         context: CameraContext,
@@ -1202,39 +926,100 @@ public final class CameraAnimator {
             mapView.setUserTrackingMode(.none, animated: false)
         }
 
-        // The center coordinate is just as important as the zoom. Without an
-        // explicit center, re-center could leave the map over the last manual
-        // pan until Core Location delivered another fix, which is why paired
-        // screenshots taken seconds apart showed different positions.
-        applyTargetCamera(
-            on: mapView,
-            target: target,
-            centerCoordinate: centerCoordinate
-        )
+        applyTargetCamera(on: mapView, target: target, centerCoordinate: centerCoordinate)
 
         if restoreTracking {
             mapView.setUserTrackingMode(trackingMode, animated: false)
-            // Tracking mode may restore MapKit's own altitude asynchronously.
-            // Reapply only after the mode is back; this does not fight manual
-            // interaction because a user gesture changes the mode to `.none`.
             Task { @MainActor [weak self, weak mapView] in
                 guard let self, let mapView,
                       mapView.userTrackingMode == trackingMode else { return }
-                self.applyTargetCamera(
-                    on: mapView,
-                    target: target,
-                    centerCoordinate: centerCoordinate
-                )
+                self.applyTargetCamera(on: mapView, target: target, centerCoordinate: centerCoordinate)
             }
         }
 
-        // Start smoothing from the restored camera, not from the manual
-        // camera that existed while tracking was detached. Seed the speed
-        // filter with the current reading as well; restarting it at zero
-        // would briefly apply the parked-camera target while the vehicle is
-        // already moving.
+        // Continue smoothing FROM the restored camera with a primed stabilizer
+        // so the very next tick doesn't drift or ramp from stale state.
         reset(to: mapView)
-        smoothedSpeed = context.speed
+        stabilizer.prime(context: context)
+    }
+
+    // ── Display-link loop ─────────────────────────────────────────────────
+
+    private func ensureDisplayLink() {
+        guard displayLink == nil || displayLink?.isPaused == true else { return }
+        if displayLink != nil { displayLink?.invalidate(); displayLink = nil }
+
+        let proxy = DisplayLinkProxy()
+        proxy.animator = self
+        let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.frameTick(_:)))
+        // 30 fps is ample for altitude/pitch glides and halves CPU/GPU churn on
+        // ProMotion displays. MapKit's heading-follow runs at full rate independently.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 30, preferred: 30)
+        RunLoop.main.add(link, forMode: .common)
+        displayLink = link
+        displayLinkProxy = proxy
+        lastFrameTimestamp = nil
+    }
+
+    private func invalidateDisplayLink() {
+        displayLink?.invalidate()
+        displayLink = nil
+        displayLinkProxy = nil
+        lastFrameTimestamp = nil
+    }
+
+    fileprivate func frameTick(_ link: CADisplayLink) {
+        guard let mapView = attachedMapView else {
+            invalidateDisplayLink()
+            return
+        }
+
+        // Watchdog: no fresh context for 3 s (detached, searching, parked,
+        // backgrounded) — stop ticking until the next update arrives.
+        if Date().timeIntervalSince(lastContextUpdate) > 3.0 {
+            invalidateDisplayLink()
+            return
+        }
+
+        let target = stabilizer.currentTarget
+        var dt: TimeInterval = 1.0 / 30.0
+        if let last = lastFrameTimestamp {
+            dt = min(max(link.timestamp - last, 0.001), 0.1)
+        }
+        lastFrameTimestamp = link.timestamp
+
+        displayAltitude = CameraKinematics.approach(
+            current: displayAltitude,
+            target: target.altitude,
+            dt: dt,
+            tightenTau: tuning.timing.tightenTauSeconds,
+            releaseTau: tuning.timing.releaseTauSeconds,
+            rateCapPerSecond: tuning.timing.altitudeRateCapMPerS,
+            snapEpsilon: 0.25
+        )
+        displayPitch = CameraKinematics.approach(
+            current: displayPitch,
+            target: target.pitch,
+            dt: dt,
+            tightenTau: tuning.timing.tightenTauSeconds,
+            releaseTau: tuning.timing.releaseTauSeconds,
+            rateCapPerSecond: tuning.timing.pitchRateCapDegPerS,
+            snapEpsilon: 0.02
+        )
+
+        // Epsilon-gated write: only touch MapKit when there is real motion.
+        let camCurrentAlt = mapView.camera.centerCoordinateDistance
+        let camCurrentPitch = Double(mapView.camera.pitch)
+        let moved = abs(displayAltitude - camCurrentAlt) >= applyEpsilonAltitude
+            || abs(displayPitch - camCurrentPitch) >= applyEpsilonPitch
+        guard moved else { return }
+
+        let cam = mapView.camera.copy() as! MKMapCamera
+        cam.centerCoordinateDistance = displayAltitude
+        cam.pitch = CGFloat(displayPitch)
+        // Property setter (iOS 13+) — see class doc comment for why this must
+        // never become setCamera(_:animated:) while tracking is active.
+        mapView.camera = cam
     }
 
     private func applyTargetCamera(
@@ -1249,57 +1034,5 @@ public final class CameraAnimator {
         camera.centerCoordinateDistance = target.altitude
         camera.pitch = CGFloat(target.pitch)
         mapView.camera = camera
-    }
-
-    /// Reset internal state (e.g., when navigation starts fresh or style changes dramatically).
-    public func reset(to mapView: MKMapView) {
-        displayAltitude = mapView.camera.centerCoordinateDistance
-        displayPitch = Double(mapView.camera.pitch)
-        smoothedSpeed = 0
-        lastUpdateTime = .now
-        lastApplyTime = .distantPast
-        lastLoggedTarget = nil
-
-        // Reset all stateful behaviors
-        lastInstruction = ""
-        lastDTT = 0
-        postTurnHoldUntil = .distantPast
-        isPostTurnHold = false
-        wasOnRamp = false
-        mergeHoldStartTime = nil
-        wasHighwaySpeed = false
-        highwayDecelUntil = .distantPast
-        stableSince = .distantPast
-        freeDriveSustainedSpeedSince = .distantPast
-        freeDriveHorizonPitch = 0
-    }
-
-    // ── EMA smoothing ────────────────────────────────────────────
-    private func smoothExponential(current: Double, target: Double, dt: TimeInterval, tau: TimeInterval) -> Double {
-        guard dt > 0, tau > 0 else { return target }
-        let alpha = 1.0 - exp(-dt / tau)
-        return current + alpha * (target - current)
-    }
-
-    // ── Animation time constant varies by change magnitude ───────
-    private func animationTimeConstant(altDelta: Double, pitchDelta: Double) -> TimeInterval {
-        let maxDelta = max(altDelta / 2000.0, pitchDelta / 60.0)
-        // Tiny changes: slow, deliberate (tau = 0.6s)
-        // Huge changes: snappy, responsive (tau = 0.2s)
-        return 0.6 - min(maxDelta, 1.0) * 0.4
-    }
-
-    // ── Debug logging (only when the target actually changed) ────
-    private func logIfChanged(_ target: TargetCameraState, reason: String) {
-        guard let prev = lastLoggedTarget else {
-            lastLoggedTarget = target
-            return
-        }
-        if abs(target.altitude - prev.altitude) > 20 || abs(target.pitch - prev.pitch) > 3 {
-            #if DEBUG
-            DebugLogger.shared.log("CAM [\(reason)]: \(Int(target.altitude))m \(Int(target.pitch))°")
-            #endif
-            lastLoggedTarget = target
-        }
     }
 }

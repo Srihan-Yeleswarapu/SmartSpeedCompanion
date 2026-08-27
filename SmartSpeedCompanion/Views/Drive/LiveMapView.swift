@@ -6,6 +6,13 @@ public struct LiveMapView: UIViewRepresentable {
 
     public init() {}
 
+    /// Keep the map north-up during recording-only drives, but rotate it into
+    /// the vehicle's direction during turn-by-turn navigation so the road
+    /// ahead stays vertically readable.
+    internal static func trackingMode(isNavigating: Bool) -> MKUserTrackingMode {
+        isNavigating ? .followWithHeading : .follow
+    }
+
     public func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
         map.delegate = context.coordinator
@@ -59,12 +66,10 @@ public struct LiveMapView: UIViewRepresentable {
         // `map.showsUserTrackingButton = true` here, otherwise the system
         // would add a duplicate at its default location.
 
-        // Use plain follow mode while free-driving. MapKit's heading tracker
-        // continuously reacts to compass noise; the custom CameraAnimator owns
-        // pitch/altitude, so combining that tracker with camera updates makes
-        // the map appear to zoom/settle repeatedly. Navigation switches to
-        // `.followWithHeading` below when turn-by-turn guidance needs heading.
-        map.userTrackingMode = .follow
+        // Use plain follow mode while free-driving. Active navigation uses
+        // `.followWithHeading` so the route ahead stays upright on screen;
+        // CameraAnimator continues to own only pitch and altitude.
+        map.userTrackingMode = Self.trackingMode(isNavigating: viewModel.isNavigating)
 
         // Add gesture detection for manual mode.
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleManualInteraction(_:)))
@@ -240,15 +245,20 @@ public struct LiveMapView: UIViewRepresentable {
         // while the keyboard is up.
         if viewModel.isSearching || viewModel.isSearchingLocally {
             // We still want to update overlays (status line), but we skip camera changes.
+            context.coordinator.cameraAnimator.suspend()
             context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
             return
         }
 
-        // If user has manually detached, just release any zoom restriction and stop
+        // If user has manually detached, just release any zoom restriction and stop.
+        // Suspending the camera animator here (instead of letting its stale-context
+        // watchdog catch up 3 s later) guarantees zero camera writes while the
+        // user owns the viewport.
         if viewModel.isMapDetached {
             if uiView.userTrackingMode != .none {
                 uiView.userTrackingMode = .none
             }
+            context.coordinator.cameraAnimator.suspend()
             return
         }
 
@@ -259,14 +269,12 @@ public struct LiveMapView: UIViewRepresentable {
         // TestFlight after the 10-second auto-resume.
         let isReattachingFromManualDetach = context.coordinator.wasMapDetached
 
-        // Re-engage native tracking if it was released. Do not combine
-        // MapKit's `.followWithHeading` camera controller with our own
-        // altitude/pitch animator: the XR traces show both controllers
-        // repeatedly entering VectorKit camera updates during navigation,
-        // starving the UIKit run loop. `.follow` still keeps the vehicle
-        // centered; the custom camera remains the sole owner of camera
-        // movement and the navigation card supplies turn context.
-        let desiredTrackingMode: MKUserTrackingMode = .follow
+        // Re-engage native tracking if it was released. During navigation,
+        // MapKit owns heading rotation so the vehicle's road stays upright;
+        // CameraAnimator only changes altitude and pitch, preserving the
+        // heading selected by the tracking controller. Recording-only drives
+        // remain north-up to avoid compass noise rotating the map needlessly.
+        let desiredTrackingMode = Self.trackingMode(isNavigating: viewModel.isNavigating)
         if uiView.userTrackingMode != desiredTrackingMode {
             #if DEBUG || DEVELOPER_BUILD
             if !viewModel.locationManager.isMockMode {
@@ -373,6 +381,15 @@ public struct LiveMapView: UIViewRepresentable {
             }
         } else {
             context.coordinator.cameraAnimator.update(mapView: uiView, context: cameraCtx)
+            // MapKit's heading tracker can be displaced by a direct camera
+            // assignment. Reassert heading-follow after the custom altitude /
+            // pitch update, but only during navigation and only when the map
+            // is still attached. This keeps the vehicle's current course as
+            // the camera bearing instead of silently falling back to north-up.
+            if viewModel.isNavigating,
+               uiView.userTrackingMode != .followWithHeading {
+                uiView.setUserTrackingMode(.followWithHeading, animated: false)
+            }
             // Update overlays only when necessary (not every single frame)
             context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
         }
@@ -881,9 +898,16 @@ public struct LiveMapView: UIViewRepresentable {
                 }
             }
 
-            // Maneuver annotation — a large arrow dropped at the upcoming
-            // turn point so the driver sees the exact spot even with the HUD
-            // card occluded (e.g. when panning the map manually).
+            // The HUD already provides the active maneuver. Do not render a
+            // second passive "Next turn" pin on the route; it remains visible
+            // while the card changes and is easy to mistake for a pending
+            // action. Keep the annotation code disabled and remove any pin
+            // left by an older map state.
+            if let existing = maneuverAnnotation {
+                mapView.removeAnnotation(existing)
+                maneuverAnnotation = nil
+            }
+            /*
             if let coord = viewModel.nextManeuverCoordinate {
                 if let existing = maneuverAnnotation {
                     // glyph is a plain Swift var (no KVO), so MapKit doesn't
@@ -907,10 +931,9 @@ public struct LiveMapView: UIViewRepresentable {
                     mapView.addAnnotation(ann)
                     maneuverAnnotation = ann
                 }
-            } else if let existing = maneuverAnnotation {
-                mapView.removeAnnotation(existing)
-                maneuverAnnotation = nil
             }
+            }
+            */
 
             // Historical GPS trails are intentionally not rendered. The
             // active route itself provides the only path overlay: its
