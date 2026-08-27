@@ -7,6 +7,7 @@ import SwiftUI
 public struct OfflineRegionsListView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showingPicker = false
 
     public var body: some View {
         NavigationStack {
@@ -20,10 +21,20 @@ public struct OfflineRegionsListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: { showingPicker = true }) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(DesignSystem.cyan)
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
                         .foregroundColor(DesignSystem.cyan)
                 }
+            }
+            .fullScreenCover(isPresented: $showingPicker) {
+                OfflineMapRegionPickerView()
             }
             .onAppear {
                 driveViewModel.loadOfflineRegions()

@@ -21,13 +21,6 @@ extension MKCoordinateRegion: @retroactive Equatable {
 // large area.  A size estimate (in MB) is computed from the visible span
 // and shown alongside a name field + Save button.
 //
-// ─── Gating ─────────────────────────────────────────────────────────
-// This view is **not** currently wired into any navigation entry point.
-// To activate it, add a `.fullScreenCover` or `NavigationLink` in
-// OfflineRegionsListView (or elsewhere) that presents this view with the
-// driveViewModel environment object.  All code is kept on disk and ready
-// to use — no placeholder or incomplete paths exist.
-
 public struct OfflineMapRegionPickerView: View {
     @EnvironmentObject var driveViewModel: DriveViewModel
     @Environment(\.dismiss) private var dismiss
