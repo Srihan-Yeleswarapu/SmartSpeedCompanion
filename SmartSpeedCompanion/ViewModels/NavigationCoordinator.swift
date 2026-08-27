@@ -131,27 +131,43 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
         let utterance = AVSpeechUtterance(string: expandedMessage)
         utterance.preUtteranceDelay = 0.05
         utterance.postUtteranceDelay = 0.1
-        // CARPLAY-AUDIO FIX v2: v1 was BUGGED — the CarPlay branch used
+        // SIRI-VOICE MATCHING: the goal is for navigation announcements to
+        // sound like the user's Siri — including the more expressive tone
+        // Siri gets on iOS 26 with Apple Intelligence. Apple does NOT
+        // expose the Siri voice (or the Apple Intelligence voices) to
+        // third-party apps through AVSpeechSynthesizer (WWDC20 "Create a
+        // seamless speech experience"; AVSpeechSynthesisVoice docs), so we
+        // use the closest public equivalent: the highest-quality neural
+        // voice for the user's own language (`siriLikeVoice`). If Apple
+        // ever opens a Siri-voice API, prefer it inside `siriLikeVoice`.
+        //
+        // History: CARPLAY-AUDIO FIX v2 — v1 used
         // `AVSpeechSynthesisVoice(language: "en-US")`, which returns the
-        // device's DEFAULT en-US voice. On iOS 16+ that default is a
-        // premium/enhanced neural voice — a reported stutter source on some
-        // CarPlay head units (speech breaks into syllable fragments over the
-        // car speakers while the phone stays clean, and while our own
-        // AVAudioEngine beeps through the SAME session stay perfect). v2
-        // explicitly enumerates voices and selects a `.default`-quality
-        // (compact) en-US voice over CarPlay; the premium `.enhanced` voice
-        // is only used on the phone where it sounds better.
-        if !isCarPlayRouted,
-           let premiumVoice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language == "en-US" && $0.quality == .enhanced }) {
-            utterance.voice = premiumVoice
+        // device's DEFAULT en-US voice; on iOS 16+ that default is a
+        // premium/enhanced neural voice, a reported stutter source on some
+        // CarPlay head units (syllable fragments over the car speakers
+        // while the phone stays clean). v2 selected a compact voice over
+        // CarPlay instead. CarPlay navigation is now gated to iOS 26+
+        // (AppDelegate/CarPlaySceneDelegate), where the modern audio
+        // pipeline handles premium voices — so on iOS 26+ we use the
+        // Siri-like voice on BOTH the phone and the car, and the compact
+        // fallback only survives for legacy pre-iOS 26 car audio.
+        let voiceLanguage = Self.siriLanguage()
+        if #available(iOS 26.0, *) {
+            utterance.voice = Self.siriLikeVoice(for: voiceLanguage)
+        } else if !isCarPlayRouted {
+            // Pre-iOS 26 on the phone: prefer the premium neural voice.
+            utterance.voice = Self.siriLikeVoice(for: voiceLanguage)
         } else {
+            // Pre-iOS 26 over car audio: compact voice avoids the old
+            // CarPlay stutter bug.
             utterance.voice = Self.carPlayReliableVoice()
         }
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.volume = 1.0
 
         synthesizer.speak(utterance)
-        DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage) (Voice enabled: \(voiceEnabled))")
+        DebugLogger.shared.log("NAV VOICE SENT: \(expandedMessage) (Voice enabled: \(voiceEnabled), voice: \(utterance.voice?.identifier ?? "system-default"))")
     }
 
     private func drainPendingMessage() {
@@ -160,26 +176,61 @@ final class DefaultVoiceAnnouncer: NSObject, VoiceAnnouncer, AVSpeechSynthesizer
         speakNow(next)
     }
 
-    /// True when audio is routed to a CarPlay head unit. Used to select a
-    /// more reliable TTS voice over the car — enhanced-quality voices are a
-    /// known CarPlay stutter source (see `announce`).
+    /// True when audio is routed to a CarPlay head unit. Only consulted on
+    /// pre-iOS 26 devices, where the legacy CarPlay pipeline made
+    /// enhanced-quality voices stutter (see `announce`); iOS 26+ uses the
+    /// Siri-like voice on every route.
     private var isCarPlayRouted: Bool {
         AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .carAudio }
     }
 
-    /// A reliable, compact-quality en-US voice for CarPlay. Premium and
-    /// enhanced neural voices are a reported stutter source on some head
-    /// units (syllable-chopped TTS over the car speakers, clean on the
-    /// phone); compact (`.default`-quality) voices render from a smaller,
-    /// stable model that survives the CarPlay audio pipeline intact. Prefer
-    /// `.default` quality explicitly — `AVSpeechSynthesisVoice(language:)`
-    /// returns the premium system-default on iOS 16+, which is what v1 of
-    /// this fix accidentally kept using.
+    /// Legacy (< iOS 26) car-audio fallback: a compact-quality en-US voice.
+    /// Premium and enhanced neural voices were a reported stutter source on
+    /// some CarPlay head units (syllable-chopped TTS over the car speakers,
+    /// clean on the phone); compact (`.default`-quality) voices render from
+    /// a smaller, stable model that survives the legacy CarPlay audio
+    /// pipeline intact. Prefer `.default` quality explicitly —
+    /// `AVSpeechSynthesisVoice(language:)` returns the premium system-default
+    /// on iOS 16+, which is what v1 of the CarPlay fix accidentally used.
+    /// CarPlay navigation is iOS 26+ only, so this path now serves only
+    /// USB/Bluetooth car audio during phone-side navigation on older iOS.
     private static func carPlayReliableVoice() -> AVSpeechSynthesisVoice? {
         let enUS = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == "en-US" }
         return enUS.first(where: { $0.quality == .default })
             ?? enUS.first(where: { $0.identifier.contains("compact") })
             ?? AVSpeechSynthesisVoice(language: "en-US")
+    }
+
+    /// The language Siri speaks for this user — the device's preferred
+    /// language, normalized to a locale that actually has TTS voices.
+    /// Siri announces in this language, so navigation should too.
+    private static func siriLanguage() -> String {
+        guard let preferred = Locale.preferredLanguages.first else { return "en-US" }
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        if voices.contains(where: { $0.language == preferred }) { return preferred }
+        if let code = preferred.split(separator: "-").first,
+           let match = voices.first(where: { $0.language.lowercased().hasPrefix(code.lowercased() + "-") }) {
+            return match.language
+        }
+        return "en-US"
+    }
+
+    /// The closest public equivalent to the user's Siri voice.
+    ///
+    /// Apple withholds the actual Siri voice — and the new expressive
+    /// Apple Intelligence voices on iOS 26 — from third-party apps: even
+    /// when a Siri voice is selected in Spoken Content settings, speech
+    /// requested through AVSpeechSynthesizer is rendered with an
+    /// alternative voice. The `.premium`/`.enhanced` voices below are the
+    /// same neural family Siri's voice comes from, so they're the best
+    /// match apps can access. If Apple ever exposes a real Siri-voice API,
+    /// prefer it at the top of this chain.
+    private static func siriLikeVoice(for language: String) -> AVSpeechSynthesisVoice? {
+        let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == language }
+        return voices.first(where: { $0.quality == .premium })
+            ?? voices.first(where: { $0.quality == .enhanced })
+            ?? voices.first(where: { $0.quality == .default })
+            ?? AVSpeechSynthesisVoice(language: language)
     }
 
     /// Stop navigation speech and release any cue still in flight. Media is
@@ -330,6 +381,9 @@ public final class NavigationCoordinator: ObservableObject {
     /// the original DriveViewModel.layout) but currently unused — the
     /// 35 m gate in `checkOffRouteStatus` is hard-coded; left here so
     /// future refactors can swap in this constant without a second pass.
+    /// Distance from the active route that triggers an immediate reroute.
+    /// A moving vehicle can cover 20 m in roughly a second, so the detector
+    /// must not wait for the older 150 m coarse gate before recalculating.
     private let offRouteThreshold: CLLocationDistance = 20.0
 
     /// Index of the current MKRoute.Step being guided through.
@@ -1416,7 +1470,7 @@ public final class NavigationCoordinator: ObservableObject {
         let nearestPoint = findNearestPointOnPolyline(location.coordinate, polyline: route.polyline)
         let distanceToRoute = location.distance(from: CLLocation(latitude: nearestPoint.latitude, longitude: nearestPoint.longitude))
 
-        if distanceToRoute > 150 { // 150 m is the industry standard for "Off Route"
+        if distanceToRoute > offRouteThreshold { // Trigger promptly once a moving fix is clearly off the route
             // Do NOT reroute when stationary or very slow (stopped at a light,
             // parking lot, or while the user is still setting directions). This
             // prevents GPS jitter from changing the route and speaking over the
@@ -1579,9 +1633,9 @@ public final class NavigationCoordinator: ObservableObject {
     }
 
     /// Monitor off-route state at finer granularity than the in-loop
-    /// 150 m check. Called externally (DriveViewModel pumps it from the
-    /// 500 ms GPS sink). Triggers a recalc via `onRerouteRequest` if the
-    /// user drifts > 35 m AND the last reroute was more than 3 s ago.
+    /// check. Called externally from the 500 ms GPS sink. A confirmed
+    /// deviation requests rerouting immediately; the short cooldown only
+    /// prevents duplicate requests while MapKit is settling.
     public func checkOffRouteStatus(at location: CLLocation) {
         guard let route = currentRoute,
               !isCalculatingReroute,
@@ -1589,10 +1643,10 @@ public final class NavigationCoordinator: ObservableObject {
 
         let distance = distanceToPolyline(location, polyline: route.polyline)
 
-        if distance > 35.0 {
+        if distance > offRouteThreshold {
             let timeSinceLastReroute = Date().timeIntervalSince(lastRerouteTime)
 
-            if timeSinceLastReroute > 3.0 {
+            if timeSinceLastReroute > 1.0 {
                 DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting.")
                 // Haptic: warning buzz for the fine-grained off-route detector
                 HapticAlertManager.playWarningBuzz()
