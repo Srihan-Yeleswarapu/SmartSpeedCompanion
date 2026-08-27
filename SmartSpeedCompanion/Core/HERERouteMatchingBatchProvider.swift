@@ -123,9 +123,8 @@ public final class HERERouteMatchingBatchProvider: SpeedLimitProvider, @unchecke
             let mph = Int((speedKph * 0.621371).rounded())
             guard mph > 0, mph <= 90 else { return nil }
             let name = roadName(from: link) ?? "current road"
-            let midpoint = geometryCoordinates(from: link).map { coords in
-                coords[coords.count / 2]
-            }
+            let coordinates = geometryCoordinates(from: link)
+            let midpoint = coordinates.isEmpty ? nil : coordinates[coordinates.count / 2]
             let distance = midpoint.map {
                 distanceSquared($0.latitude, $0.longitude, coordinate)
             } ?? 0
