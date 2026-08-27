@@ -117,7 +117,7 @@ public final class HERERouteMatchingBatchProvider: SpeedLimitProvider, @unchecke
 
         // Do not require ROAD_NAME_FCn to be present. Speed-limit coverage is
         // still useful when HERE returns the speed layer but omits names.
-        let candidates: [(limit: Int, roadName: String, distance: Double)] = links.compactMap { link in
+        let candidates: [(limit: Int, roadName: String, distance: Double)?] = links.map { link in
             guard let speedKph = speedLimitKilometersPerHour(in: link),
                   speedKph > 0 else { return nil }
             let mph = Int((speedKph * 0.621371).rounded())
@@ -131,7 +131,7 @@ public final class HERERouteMatchingBatchProvider: SpeedLimitProvider, @unchecke
             } ?? 0
             return (mph, name, distance)
         }
-        guard let nearest = candidates.min(by: { $0.distance < $1.distance }) else {
+        guard let nearest = candidates.compactMap({ $0 }).min(by: { $0.distance < $1.distance }) else {
             DebugLogger.shared.log("HERE Route Matching: RouteLinks contained no speed-limit links")
             return nil
         }

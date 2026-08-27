@@ -955,7 +955,7 @@ public final class CameraAnimator {
         // 30 fps is ample for altitude/pitch glides and halves CPU/GPU churn on
         // ProMotion displays. MapKit's heading-follow runs at full rate independently.
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 30, preferred: 30)
-        RunLoop.main.add(link, forMode: .common)
+        link.add(to: .main, forMode: .common)
         displayLink = link
         displayLinkProxy = proxy
         lastFrameTimestamp = nil
