@@ -55,8 +55,11 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     private let hapticAlertsKey = "hapticAlertsEnabled"
     private var isHapticAlertsEnabled: Bool {
         let defaults = UserDefaults.standard
+        // Haptics are opt-in. Older builds defaulted this missing key to true,
+        // which made users who never enabled vibration receive the sustained
+        // speeding pulse unexpectedly after an update.
         if defaults.object(forKey: hapticAlertsKey) == nil {
-            defaults.set(true, forKey: hapticAlertsKey)
+            defaults.set(false, forKey: hapticAlertsKey)
         }
         return defaults.bool(forKey: hapticAlertsKey)
     }
@@ -249,14 +252,18 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         }
 
         // ── Sustained speeding vibration ──────────────────────────
-        // Start the repeating 3s-on / 0.5s-off pulse NOW (not on the
-        // 2 s beep cooldown), so the driver feels the vibration the
-        // moment they cross the limit. It keeps looping until
-        // `stopMonitoringState()` fires when they slow back down.
-        // Idempotent — safe to re-call on every monitor tick.
-        HapticAlertManager.shared.startSpeedingPulse(
-            severity: computedSeverity()
-        )
+        // Start the pulse only for a real, resolved over-limit condition.
+        // This second guard protects against a stale status transition or a
+        // future caller accidentally starting monitoring with limit == 0.
+        if isHapticAlertsEnabled,
+           let engine = speedEngine,
+           engine.isLimitResolved,
+           engine.limit > 0,
+           isActuallyOverLimit(engine) {
+            HapticAlertManager.shared.startSpeedingPulse(
+                severity: computedSeverity()
+            )
+        }
 
         // Do not make the driver wait for the first one-second timer tick.
         // A valid over-limit transition should produce an audible cue now;
@@ -309,7 +316,13 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
                 // but pause it while snoozed or when the user toggles
                 // haptics off mid-drive. The pulse resumes automatically
                 // on the next tick once snooze expires / haptics return.
-                if self.isSnoozed || !self.isHapticAlertsEnabled {
+                let hasResolvedOverLimit: Bool = {
+                    guard let engine = self.speedEngine,
+                          engine.isLimitResolved,
+                          engine.limit > 0 else { return false }
+                    return self.isActuallyOverLimit(engine)
+                }()
+                if self.isSnoozed || !self.isHapticAlertsEnabled || !hasResolvedOverLimit {
                     HapticAlertManager.shared.stopSpeedingPulse()
                 } else {
                     HapticAlertManager.shared.startSpeedingPulse(
@@ -371,6 +384,34 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// limit data). Used to modulate the sustained speeding pulse's
     /// intensity: +1 mph over ≈ 0.15, +20 mph over ≈ 1.0 (metric: +1.6 km/h
     /// ≈ 0.15, +32 km/h ≈ 1.0).
+    /// Pure policy used by both the initial pulse and its timer refreshes.
+    /// Keeping this independent of Core Haptics makes the accidental-vibration
+    /// regression testable and ensures unknown limits never become alerts.
+    internal nonisolated static func shouldStartSpeedingPulse(
+        speed: Double,
+        limit: Int,
+        buffer: Int,
+        measurementSystem: String,
+        isLimitResolved: Bool
+    ) -> Bool {
+        guard isLimitResolved, limit > 0 else { return false }
+        let thresholdMph = Double(limit + buffer)
+        let threshold = measurementSystem == "Metric"
+            ? thresholdMph * 1.60934
+            : thresholdMph
+        return speed > threshold
+    }
+
+    private func isActuallyOverLimit(_ engine: SpeedEngine) -> Bool {
+        Self.shouldStartSpeedingPulse(
+            speed: engine.speed,
+            limit: engine.limit,
+            buffer: engine.userBuffer,
+            measurementSystem: engine.measurementSystem,
+            isLimitResolved: engine.isLimitResolved
+        )
+    }
+
     private func computedSeverity() -> Double {
         guard let engine = speedEngine, engine.limit > 0 else { return 0.5 }
         // `limit` and `userBuffer` are stored in MPH while `speed` is already
