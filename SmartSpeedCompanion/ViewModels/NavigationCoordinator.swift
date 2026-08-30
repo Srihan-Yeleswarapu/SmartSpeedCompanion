@@ -1606,7 +1606,6 @@ public final class NavigationCoordinator: ObservableObject {
         // 4. ETA REFRESH: Use the latest Apple traffic-aware snapshot,
         //    scaled to the monotonically matched distance on the active
         //    route geometry. Never substitute instantaneous GPS speed.
-        let routeMatch = matchRoute(location, route: route)
         let measuredRemainingDistance = max(0, route.distance - routeMatch.distanceAlongRoute)
         let activeRemainingDist: CLLocationDistance
         if lastMatchedRemainingDistance > 0 {
