@@ -314,9 +314,13 @@ public struct SettingsView: View {
                 }
                 .listRowBackground(DesignSystem.bgPanel)
 
-                // MARK: - OFFLINE section
+                // MARK: - OFFLINE section (hidden)
                 // Bulk offline downloads are retained as a legacy surface, but
                 // active driving limits remain HERE-only.
+                // Hidden from users per request: the offline map region download
+                // feature is not shown. The UI below is kept in code (commented
+                // out) but not rendered.
+#if false
                 Section(header: Text("OFFLINE").font(DesignSystem.labelFont).foregroundColor(DesignSystem.cyan)) {
                     // The previous bulk downloader queried OSM and wrote rows
                     // into the HERE cache. It is intentionally hidden until an
@@ -343,6 +347,7 @@ public struct SettingsView: View {
                     }
                 }
                 .listRowBackground(DesignSystem.bgPanel)
+#endif
 
                 // MARK: - SUPPORT section (always visible)
                 // Report Issue and Replay Tutorial are useful regardless of auth
