@@ -878,6 +878,10 @@ public final class CameraAnimator {
     private var displayLink: CADisplayLink?
     private var lastFrameTimestamp: CFTimeInterval?
     private var lastContextUpdate: Date = .distantPast
+    /// Ignore stale display-link frames after a new target arrives. MapKit may
+    /// still be settling a previous camera write; issuing another write during
+    /// that settling window is what produces the visible zoom-in strobe.
+    private var cameraWriteSuppressedUntil: CFTimeInterval = 0
 
     /// Epsilon-gated application: below these deltas the map camera is left
     /// untouched so MapKit's tracking animations run undisturbed.
@@ -892,6 +896,9 @@ public final class CameraAnimator {
     public func update(mapView: MKMapView, context: CameraContext) {
         attachedMapView = mapView
         lastContextUpdate = Date()
+        // Give MapKit one display interval to finish its own tracking/camera
+        // transaction before our next custom write.
+        cameraWriteSuppressedUntil = CACurrentMediaTime() + (1.0 / 30.0)
 
         stabilizer.ingest(context: context, now: lastContextUpdate)
         ensureDisplayLink()
@@ -907,6 +914,7 @@ public final class CameraAnimator {
     public func reset(to mapView: MKMapView) {
         displayAltitude = mapView.camera.centerCoordinateDistance
         displayPitch = Double(mapView.camera.pitch)
+        cameraWriteSuppressedUntil = CACurrentMediaTime() + (1.0 / 30.0)
         stabilizer.reset()
     }
 
@@ -959,6 +967,7 @@ public final class CameraAnimator {
         displayLink = link
         displayLinkProxy = proxy
         lastFrameTimestamp = nil
+        cameraWriteSuppressedUntil = CACurrentMediaTime() + (1.0 / 30.0)
     }
 
     private func invalidateDisplayLink() {
@@ -980,6 +989,8 @@ public final class CameraAnimator {
             invalidateDisplayLink()
             return
         }
+
+        guard link.timestamp >= cameraWriteSuppressedUntil else { return }
 
         let target = stabilizer.currentTarget
         var dt: TimeInterval = 1.0 / 30.0
