@@ -388,6 +388,15 @@ public final class NavigationCoordinator: ObservableObject {
 
     /// Index of the current MKRoute.Step being guided through.
     private var currentStepIndex: Int = 0
+    /// Distance along the route at the last accepted GPS match. Restricting
+    /// matches to this forward corridor prevents a parallel frontage road or
+    /// a loop/intersection from snapping the driver backward to a later route
+    /// segment and showing a future turn too early.
+    private var lastMatchedDistanceAlongRoute: CLLocationDistance = 0
+    /// Require two consecutive moving fixes before advancing a maneuver. This
+    /// filters noisy fixes near intersections without making reroutes wait.
+    private var pendingStepAdvanceIndex: Int?
+    private var pendingStepAdvanceCount: Int = 0
     /// Most recent navigation fix used to refresh Apple's traffic-aware ETA
     /// and distinguish real vehicle movement from stationary GPS jitter.
     private var lastNavigationLocation: CLLocation?
@@ -849,6 +858,9 @@ public final class NavigationCoordinator: ObservableObject {
         lastMatchedRemainingDistance = nextRoute.distance
         lastTrafficRefreshDistance = nextRoute.distance
         currentStepIndex = 0
+        lastMatchedDistanceAlongRoute = 0
+        pendingStepAdvanceIndex = nil
+        pendingStepAdvanceCount = 0
         // The published route snapshot remains valid while moving between its
         // legs. Do not advance the edit/calculation generation here: doing so
         // would make the next leg look stale even though no stop changed.
@@ -1209,6 +1221,9 @@ public final class NavigationCoordinator: ObservableObject {
         self.currentRoute = route
         self.trafficRefreshGeneration &+= 1
         self.lastMatchedRemainingDistance = route.distance
+        self.lastMatchedDistanceAlongRoute = 0
+        self.pendingStepAdvanceIndex = nil
+        self.pendingStepAdvanceCount = 0
         self.lastTrafficRefreshDistance = route.distance
         self.currentStepIndex = 0
         self.isCompletingNavigation = false
@@ -1372,6 +1387,9 @@ public final class NavigationCoordinator: ObservableObject {
         self.lastNavigationIsMoving = false
         self.lastGuidanceAnnouncementAt = .distantPast
         self.lastMatchedRemainingDistance = 0
+        self.lastMatchedDistanceAlongRoute = 0
+        self.pendingStepAdvanceIndex = nil
+        self.pendingStepAdvanceCount = 0
         self.lastTrafficRefreshDistance = 0
         self.trafficRefreshGeneration &+= 1
         self.trafficReferenceDistance = 0
@@ -1467,8 +1485,9 @@ public final class NavigationCoordinator: ObservableObject {
         }
 
         // 1. OFF-ROUTE DETECTION: Check if we are too far from the polyline
-        let nearestPoint = findNearestPointOnPolyline(location.coordinate, polyline: route.polyline)
-        let distanceToRoute = location.distance(from: CLLocation(latitude: nearestPoint.latitude, longitude: nearestPoint.longitude))
+        let routeMatch = matchRoute(location, route: route)
+        let nearestPoint = routeMatch.coordinate
+        let distanceToRoute = routeMatch.distanceFromRoute
 
         if distanceToRoute > offRouteThreshold { // Trigger promptly once a moving fix is clearly off the route
             // Do NOT reroute when stationary or very slow (stopped at a light,
@@ -1558,11 +1577,23 @@ public final class NavigationCoordinator: ObservableObject {
             let advanceThreshold = location.speed > 20 ? 40.0 : 25.0
 
             var advancedToNextLeg = false
-            if distanceToTurn < advanceThreshold && isMoving {
-                advancedToNextLeg = advanceToNextStep(steps, at: location)
-            } else if let prevDist = lastDistanceToTurn, distanceToTurn > prevDist + 20 && distanceToTurn < 80 && isMoving {
-                // Distance increasing significantly after being very close: we passed the turn
-                advancedToNextLeg = advanceToNextStep(steps, at: location)
+            let shouldAdvance = distanceToTurn < advanceThreshold ||
+                (lastDistanceToTurn.map { distanceToTurn > $0 + 20 && distanceToTurn < 80 } ?? false)
+            if shouldAdvance && isMoving {
+                if pendingStepAdvanceIndex == currentStepIndex {
+                    pendingStepAdvanceCount += 1
+                } else {
+                    pendingStepAdvanceIndex = currentStepIndex
+                    pendingStepAdvanceCount = 1
+                }
+                if pendingStepAdvanceCount >= 2 {
+                    advancedToNextLeg = advanceToNextStep(steps, at: location)
+                    pendingStepAdvanceIndex = nil
+                    pendingStepAdvanceCount = 0
+                }
+            } else {
+                pendingStepAdvanceIndex = nil
+                pendingStepAdvanceCount = 0
             }
 
             // The transition publishes a new route and total remaining ETA.
@@ -1575,7 +1606,8 @@ public final class NavigationCoordinator: ObservableObject {
         // 4. ETA REFRESH: Use the latest Apple traffic-aware snapshot,
         //    scaled to the monotonically matched distance on the active
         //    route geometry. Never substitute instantaneous GPS speed.
-        let measuredRemainingDistance = actualRemainingDistance(route: route, location: location)
+        let routeMatch = matchRoute(location, route: route)
+        let measuredRemainingDistance = max(0, route.distance - routeMatch.distanceAlongRoute)
         let activeRemainingDist: CLLocationDistance
         if lastMatchedRemainingDistance > 0 {
             activeRemainingDist = min(measuredRemainingDistance, lastMatchedRemainingDistance)
@@ -2002,6 +2034,48 @@ public final class NavigationCoordinator: ObservableObject {
         return sqrt(ex * ex + ey * ey)
     }
 
+    private struct RouteMatch {
+        let coordinate: CLLocationCoordinate2D
+        let distanceFromRoute: CLLocationDistance
+        let distanceAlongRoute: CLLocationDistance
+    }
+
+    /// Matches a fix to the route using a forward-only corridor. A global
+    /// nearest-segment search is incorrect at parallel roads and crossings:
+    /// it can jump to a future segment and announce the turn after it. The
+    /// corridor starts slightly behind the last match for GPS noise, but never
+    /// rewinds the accepted route position.
+    private func matchRoute(_ location: CLLocation, route: MKRoute) -> RouteMatch {
+        let points = route.polyline.points()
+        let count = route.polyline.pointCount
+        guard count > 0 else {
+            return RouteMatch(coordinate: location.coordinate, distanceFromRoute: .greatestFiniteMagnitude, distanceAlongRoute: 0)
+        }
+        if count == 1 {
+            let point = points[0].coordinate
+            return RouteMatch(coordinate: point, distanceFromRoute: location.distance(from: CLLocation(latitude: point.latitude, longitude: point.longitude)), distanceAlongRoute: 0)
+        }
+
+        let minimumAlong = max(0, lastMatchedDistanceAlongRoute - 35)
+        var cumulative: CLLocationDistance = 0
+        var best = RouteMatch(coordinate: points[0].coordinate, distanceFromRoute: .greatestFiniteMagnitude, distanceAlongRoute: lastMatchedDistanceAlongRoute)
+        for index in 0..<(count - 1) {
+            let a = points[index].coordinate
+            let b = points[index + 1].coordinate
+            let length = CLLocation(latitude: a.latitude, longitude: a.longitude).distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+            let candidate = nearestPointOnSegment(p: location.coordinate, v: a, w: b)
+            let candidateLocation = CLLocation(latitude: candidate.latitude, longitude: candidate.longitude)
+            let distance = location.distance(from: candidateLocation)
+            let along = cumulative + CLLocation(latitude: a.latitude, longitude: a.longitude).distance(from: candidateLocation)
+            if along + 1 >= minimumAlong, distance < best.distanceFromRoute {
+                best = RouteMatch(coordinate: candidate, distanceFromRoute: distance, distanceAlongRoute: along)
+            }
+            cumulative += length
+        }
+        lastMatchedDistanceAlongRoute = max(lastMatchedDistanceAlongRoute, best.distanceAlongRoute)
+        return best
+    }
+
     /// Walks the route polyline to find exactly where `location` sits on
     /// the path (nearest-segment matching, not step-index-based) and
     /// returns the remaining distance in meters from that point to the
@@ -2264,7 +2338,8 @@ public final class NavigationCoordinator: ObservableObject {
     /// must not replace the active geometry.
     private func liveRemainingDistance(at location: CLLocation) -> CLLocationDistance {
         guard let route = currentRoute else { return 0 }
-        let measured = actualRemainingDistance(route: route, location: location)
+        let routeMatch = matchRoute(location, route: route)
+        let measured = max(0, route.distance - routeMatch.distanceAlongRoute)
         let remainingOnActiveLeg = lastMatchedRemainingDistance > 0
             ? min(measured, lastMatchedRemainingDistance)
             : measured
