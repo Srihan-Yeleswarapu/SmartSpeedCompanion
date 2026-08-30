@@ -885,8 +885,8 @@ public final class CameraAnimator {
 
     /// Epsilon-gated application: below these deltas the map camera is left
     /// untouched so MapKit's tracking animations run undisturbed.
-    private let applyEpsilonAltitude: Double = 0.75
-    private let applyEpsilonPitch: Double = 0.08
+    private let applyEpsilonAltitude: Double = 2.5
+    private let applyEpsilonPitch: Double = 0.20
 
     private let tuning = CameraTuning.current
 
@@ -1003,10 +1003,13 @@ public final class CameraAnimator {
             current: displayAltitude,
             target: target.altitude,
             dt: dt,
-            tightenTau: tuning.timing.tightenTauSeconds,
+            // Zoom-in is intentionally slower than zoom-out. This avoids
+            // rapid repeated altitude changes when GPS/map gestures update
+            // the target in quick succession.
+            tightenTau: max(tuning.timing.tightenTauSeconds, 1.2),
             releaseTau: tuning.timing.releaseTauSeconds,
-            rateCapPerSecond: tuning.timing.altitudeRateCapMPerS,
-            snapEpsilon: 0.25
+            rateCapPerSecond: min(tuning.timing.altitudeRateCapMPerS, 85),
+            snapEpsilon: 0.75
         )
         displayPitch = CameraKinematics.approach(
             current: displayPitch,

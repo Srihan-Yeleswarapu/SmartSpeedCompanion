@@ -562,6 +562,13 @@ public struct LiveMapView: UIViewRepresentable {
         }
 
         @objc func handleManualInteraction(_ gesture: UIGestureRecognizer) {
+            // Stop the custom display-link before MapKit processes the user's
+            // pan/pinch/rotation. A camera write in the same run-loop turn as
+            // a gesture update causes the fast zoom-in strobe reported by
+            // TestFlight.
+            if gesture.state == .began {
+                cameraAnimator.suspend()
+            }
             if gesture.state == .began || gesture.state == .changed {
                 startManualMode(gesture.view as? MKMapView)
             }
@@ -589,6 +596,7 @@ public struct LiveMapView: UIViewRepresentable {
 
             if !parent.viewModel.isMapDetached {
                 parent.viewModel.isMapDetached = true
+                cameraAnimator.suspend()
                 wasMapDetached = true
                 mapView?.userTrackingMode = .none
                 DebugLogger.shared.log("MAP DETACHED: Manual Control")
