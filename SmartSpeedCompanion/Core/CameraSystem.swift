@@ -842,9 +842,12 @@ final class CameraStabilizer {
 //   • accepts context updates from SwiftUI/CarPlay at THEIR cadence,
 //   • integrates the stabilizer's target on a CADisplayLink (its own clock —
 //     immune to irregular render ticks, the root cause of v1's dt bugs),
-//   • writes `mapView.camera` ONLY when the integrated value moved beyond a
-//     small epsilon, so idle frames never interrupt MapKit's own
-//     follow-with-heading animation,
+//   • writes `mapView.camera` ONLY when the write governor approves — the
+//     integrated value must have moved beyond a small epsilon AND the
+//     minimum write interval must have elapsed. Every camera assignment
+//     re-arms MapKit's tracking controller and re-renders tiles, so a
+//     30 fps write stream (the display-link rate) reads as strobing;
+//     capping writes to ~5/sec leaves MapKit undisturbed between writes.
 //   • auto-suspends the link after 3 s without fresh context (detached map,
 //     backgrounded app, parked) and resumes on the next update.
 //
@@ -866,6 +869,45 @@ final class DisplayLinkProxy: NSObject {
     }
 }
 
+/// Pure, testable write policy for `CameraAnimator`.
+///
+/// The animator integrates altitude/pitch on its own 30 fps clock, but
+/// MapKit must not receive a camera write at that rate: every camera
+/// assignment re-arms the tracking controller and re-renders tiles, which
+/// reads as visible strobing/stuttering on the map. The governor allows at
+/// most one write per `minimumWriteInterval`, and only when the integrated
+/// state has actually moved beyond the epsilon thresholds.
+struct CameraWriteGovernor {
+    let minimumWriteInterval: TimeInterval
+    let epsilonAltitude: Double
+    let epsilonPitch: Double
+
+    init(minimumWriteInterval: TimeInterval = 0.2,
+         epsilonAltitude: Double = 2.5,
+         epsilonPitch: Double = 0.20) {
+        self.minimumWriteInterval = minimumWriteInterval
+        self.epsilonAltitude = epsilonAltitude
+        self.epsilonPitch = epsilonPitch
+    }
+
+    /// True when a camera write is warranted.
+    ///
+    /// - Parameters:
+    ///   - timeSinceLastWrite: seconds since the previous write, or `nil`
+    ///     on the first write of a session (always allowed when moved).
+    ///   - altitudeDelta: integrated minus currently-applied altitude.
+    ///   - pitchDelta: integrated minus currently-applied pitch.
+    func shouldWrite(timeSinceLastWrite: TimeInterval?,
+                     altitudeDelta: Double,
+                     pitchDelta: Double) -> Bool {
+        let moved = abs(altitudeDelta) >= epsilonAltitude
+            || abs(pitchDelta) >= epsilonPitch
+        guard moved else { return false }
+        guard let since = timeSinceLastWrite else { return true }
+        return since >= minimumWriteInterval
+    }
+}
+
 @MainActor
 public final class CameraAnimator {
     private var stabilizer = CameraStabilizer()
@@ -882,11 +924,12 @@ public final class CameraAnimator {
     /// still be settling a previous camera write; issuing another write during
     /// that settling window is what produces the visible zoom-in strobe.
     private var cameraWriteSuppressedUntil: CFTimeInterval = 0
-
-    /// Epsilon-gated application: below these deltas the map camera is left
-    /// untouched so MapKit's tracking animations run undisturbed.
-    private let applyEpsilonAltitude: Double = 2.5
-    private let applyEpsilonPitch: Double = 0.20
+    /// Timestamp of the most recent camera write (0 = none yet). The write
+    /// governor rate-limits MapKit assignments so the display link's 30 fps
+    /// integration never turns into a 30 fps camera-write stream — the
+    /// visible map strobe/stutter reported in TestFlight.
+    private var lastCameraWriteTimestamp: CFTimeInterval = 0
+    private let writeGovernor = CameraWriteGovernor()
 
     private let tuning = CameraTuning.current
 
@@ -915,6 +958,7 @@ public final class CameraAnimator {
         displayAltitude = mapView.camera.centerCoordinateDistance
         displayPitch = Double(mapView.camera.pitch)
         cameraWriteSuppressedUntil = CACurrentMediaTime() + (1.0 / 30.0)
+        lastCameraWriteTimestamp = 0
         stabilizer.reset()
     }
 
@@ -1021,19 +1065,42 @@ public final class CameraAnimator {
             snapEpsilon: 0.02
         )
 
-        // Epsilon-gated write: only touch MapKit when there is real motion.
+        // Governor-gated write: only touch MapKit when the integrated state
+        // moved beyond epsilon AND the minimum write interval has elapsed.
+        // The display link integrates at 30 fps, but writing the map camera
+        // at that rate re-arms MapKit's tracking controller and re-renders
+        // tiles on every frame — the classic nav-map strobe. A bounded write
+        // cadence keeps the glide smooth while leaving MapKit completely
+        // undisturbed between writes.
         let camCurrentAlt = mapView.camera.centerCoordinateDistance
         let camCurrentPitch = Double(mapView.camera.pitch)
-        let moved = abs(displayAltitude - camCurrentAlt) >= applyEpsilonAltitude
-            || abs(displayPitch - camCurrentPitch) >= applyEpsilonPitch
-        guard moved else { return }
+        let timeSinceLastWrite: TimeInterval? = lastCameraWriteTimestamp == 0
+            ? nil
+            : link.timestamp - lastCameraWriteTimestamp
+        guard writeGovernor.shouldWrite(
+            timeSinceLastWrite: timeSinceLastWrite,
+            altitudeDelta: displayAltitude - camCurrentAlt,
+            pitchDelta: displayPitch - camCurrentPitch
+        ) else { return }
+        lastCameraWriteTimestamp = link.timestamp
 
         let cam = mapView.camera.copy() as! MKMapCamera
         cam.centerCoordinateDistance = displayAltitude
         cam.pitch = CGFloat(displayPitch)
+        let trackingMode = mapView.userTrackingMode
         // Property setter (iOS 13+) — see class doc comment for why this must
         // never become setCamera(_:animated:) while tracking is active.
         mapView.camera = cam
+        // A direct camera assignment can displace MapKit's tracking
+        // controller (follow-with-heading drops back to .none). Re-assert
+        // the mode in the SAME turn so the map is never left untracked
+        // between writes; the recenter is a no-op because the write
+        // preserved the tracked center coordinate. Without this, the map
+        // sits untracked until the next SwiftUI pass re-engages it — the
+        // 2 Hz recenter snap that reads as convulsing/spasming.
+        if trackingMode != .none, mapView.userTrackingMode != trackingMode {
+            mapView.setUserTrackingMode(trackingMode, animated: false)
+        }
     }
 
     private func applyTargetCamera(

@@ -292,6 +292,17 @@ public struct LiveMapView: UIViewRepresentable {
         }
         #endif
 
+        // In the simulator the mock-location path owns the viewport
+        // (`updateSimulatedCar` re-centers the map itself). Running the
+        // camera system on top creates two competing writers that strobe the
+        // map, so mock mode disables it and `setCenter` stays the only
+        // camera authority.
+        #if DEBUG || DEVELOPER_BUILD
+        let cameraEnabled = !viewModel.locationManager.isMockMode
+        #else
+        let cameraEnabled = true
+        #endif
+
         // PITCH OVERRIDE — instant short-circuit for user-pinned 2D/3D.
         //
         // Runs BEFORE the camera system so a freshly-tapped `.forced3D`
@@ -376,11 +387,13 @@ public struct LiveMapView: UIViewRepresentable {
             // change. Apply the same speed/turn-aware target used during
             // normal guidance so a map that was manually zoomed out returns
             // to the close navigation framing immediately.
-            context.coordinator.cameraAnimator.restoreCamera(
-                on: uiView,
-                context: cameraCtx,
-                centerCoordinate: viewModel.locationManager.latestLocation?.coordinate
-            )
+            if cameraEnabled {
+                context.coordinator.cameraAnimator.restoreCamera(
+                    on: uiView,
+                    context: cameraCtx,
+                    centerCoordinate: viewModel.locationManager.latestLocation?.coordinate
+                )
+            }
             context.coordinator.wasMapDetached = false
 
             // Preserve route-preview framing when the user re-centers before
@@ -389,15 +402,20 @@ public struct LiveMapView: UIViewRepresentable {
                 context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
             }
         } else {
-            context.coordinator.cameraAnimator.update(mapView: uiView, context: cameraCtx)
-            // MapKit's heading tracker can be displaced by a direct camera
-            // assignment. Reassert heading-follow after the custom altitude /
-            // pitch update, but only during navigation and only when the map
-            // is still attached. This keeps the vehicle's current course as
-            // the camera bearing instead of silently falling back to north-up.
-            if viewModel.isNavigating,
-               uiView.userTrackingMode != .followWithHeading {
-                uiView.setUserTrackingMode(.followWithHeading, animated: false)
+            if cameraEnabled {
+                context.coordinator.cameraAnimator.update(mapView: uiView, context: cameraCtx)
+                // MapKit's heading tracker can be displaced by a direct
+                // camera assignment. Reassert heading-follow after the custom
+                // altitude / pitch update, but only during navigation and
+                // only when the map is still attached. This keeps the
+                // vehicle's current course as the camera bearing instead of
+                // silently falling back to north-up. (The animator itself
+                // re-asserts tracking right after each of its writes; this
+                // backstop covers the very first pass and tracking transitions.)
+                if viewModel.isNavigating,
+                   uiView.userTrackingMode != .followWithHeading {
+                    uiView.setUserTrackingMode(.followWithHeading, animated: false)
+                }
             }
             // Update overlays only when necessary (not every single frame)
             context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)

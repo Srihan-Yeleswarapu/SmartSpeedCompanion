@@ -34,3 +34,50 @@ final class CameraTrackingTests: XCTestCase {
         XCTAssertLessThan(nearTarget.altitude, farTarget.altitude)
     }
 }
+
+/// Regression coverage for the map strobe fix: the camera animator must not
+/// write `mapView.camera` on every display-link frame. The write governor
+/// caps MapKit assignments to ~5/sec and only when the integrated state
+/// actually moved, so MapKit's own tracking/heading animation runs
+/// undisturbed between writes.
+final class CameraWriteGovernorTests: XCTestCase {
+    func testAllowsFirstWriteImmediatelyWhenMoved() {
+        let governor = CameraWriteGovernor()
+        XCTAssertTrue(governor.shouldWrite(timeSinceLastWrite: nil, altitudeDelta: 10, pitchDelta: 0))
+    }
+
+    func testDeniesWriteWithinMinimumInterval() {
+        let governor = CameraWriteGovernor(minimumWriteInterval: 0.2)
+        XCTAssertFalse(governor.shouldWrite(timeSinceLastWrite: 0.1, altitudeDelta: 10, pitchDelta: 0))
+    }
+
+    func testAllowsWriteAfterMinimumInterval() {
+        let governor = CameraWriteGovernor(minimumWriteInterval: 0.2)
+        XCTAssertTrue(governor.shouldWrite(timeSinceLastWrite: 0.21, altitudeDelta: 10, pitchDelta: 0))
+    }
+
+    func testDeniesWriteWhenSettled() {
+        let governor = CameraWriteGovernor()
+        // Below the epsilon gates — no write even after the interval elapsed.
+        XCTAssertFalse(governor.shouldWrite(timeSinceLastWrite: 1.0, altitudeDelta: 1.0, pitchDelta: 0))
+        XCTAssertFalse(governor.shouldWrite(timeSinceLastWrite: 1.0, altitudeDelta: 0, pitchDelta: 0.1))
+    }
+
+    func testPitchMotionGatesWrite() {
+        let governor = CameraWriteGovernor()
+        XCTAssertTrue(governor.shouldWrite(timeSinceLastWrite: nil, altitudeDelta: 0, pitchDelta: 0.5))
+        XCTAssertFalse(governor.shouldWrite(timeSinceLastWrite: nil, altitudeDelta: 0, pitchDelta: 0.1))
+    }
+
+    func testPerWriteZoomStepIsRateBounded() {
+        // With the 200 ms write interval, a single write must never move the
+        // camera by more than rateCap * interval, so the 5 writes/sec read as
+        // a smooth glide instead of discrete zoom jumps.
+        let next = CameraKinematics.approach(
+            current: 320, target: 2800, dt: 0.2,
+            tightenTau: 1.2, releaseTau: 1.8,
+            rateCapPerSecond: 85, snapEpsilon: 0.75
+        )
+        XCTAssertLessThanOrEqual(abs(next - 320), 85 * 0.2 + 0.01)
+    }
+}
