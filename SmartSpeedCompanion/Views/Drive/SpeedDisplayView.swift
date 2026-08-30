@@ -5,6 +5,7 @@ public struct SpeedDisplayView: View {
     @EnvironmentObject var viewModel: DriveViewModel
     @State private var flashOpacity: Double = 1.0
     @State private var countdownSeconds: Int = 0
+    @State private var overspeedFlashTask: Task<Void, Never>?
     
     public var body: some View {
         VStack(spacing: 12) {
@@ -123,13 +124,30 @@ public struct SpeedDisplayView: View {
         .animation(.easeInOut(duration: 0.4), value: viewModel.status)
         .animation(.easeInOut(duration: 0.3), value: viewModel.alertEngine.isSnoozed)
         .onChange(of: viewModel.status) { _, newStatus in
+            overspeedFlashTask?.cancel()
             if newStatus == .over {
-                withAnimation(.easeInOut(duration: 0.75).repeatForever()) {
-                    flashOpacity = 0.25
+                overspeedFlashTask = Task { @MainActor in
+                    // Keep the alert noticeable without a repeat-forever
+                    // animation continuously invalidating the HUD hierarchy.
+                    while !Task.isCancelled {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            flashOpacity = 0.35
+                        }
+                        try? await Task.sleep(for: .milliseconds(700))
+                        guard !Task.isCancelled else { return }
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            flashOpacity = 1.0
+                        }
+                        try? await Task.sleep(for: .milliseconds(700))
+                    }
                 }
             } else {
-                withAnimation { flashOpacity = 1.0 }
+                flashOpacity = 1.0
             }
+        }
+        .onDisappear {
+            overspeedFlashTask?.cancel()
+            overspeedFlashTask = nil
         }
         .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
             countdownSeconds = viewModel.alertEngine.snoozeRemainingSeconds

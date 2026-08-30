@@ -4,6 +4,7 @@ import SwiftUI
 public struct SpeedGaugeView: View {
     @EnvironmentObject var viewModel: DriveViewModel
     @State private var pulseScale: CGFloat = 1.0
+    @State private var pulseTask: Task<Void, Never>?
     
     public var body: some View {
         ZStack {
@@ -84,7 +85,7 @@ public struct SpeedGaugeView: View {
                     .stroke(DesignSystem.alertRed, lineWidth: 4)
                     .frame(width: 208, height: 208)
                     .scaleEffect(pulseScale)
-                    .opacity(2.0 - pulseScale) // Fades out as it expands
+                    .opacity(max(0, 2.0 - pulseScale)) // Fades out as it expands
                     .offset(y: 30) // Match the gauge center offset (130-100)
             }
             
@@ -103,14 +104,32 @@ public struct SpeedGaugeView: View {
             }
             .offset(y: 30)
         }
-        .onChange(of: viewModel.status) { ov, nv in
-            if nv == .over {
-                withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) {
-                    pulseScale = 1.3
+        .onChange(of: viewModel.status) { _, newStatus in
+            pulseTask?.cancel()
+            if newStatus == .over {
+                pulseTask = Task { @MainActor in
+                    // Animate a bounded pulse so the gauge does not create an
+                    // unbounded repeat-forever transaction stream while the
+                    // map/HUD is also updating.
+                    while !Task.isCancelled {
+                        withAnimation(.easeOut(duration: 0.55)) {
+                            pulseScale = 1.3
+                        }
+                        try? await Task.sleep(for: .milliseconds(550))
+                        guard !Task.isCancelled else { return }
+                        withAnimation(.easeIn(duration: 0.55)) {
+                            pulseScale = 1.0
+                        }
+                        try? await Task.sleep(for: .milliseconds(550))
+                    }
                 }
             } else {
-                withAnimation { pulseScale = 1.0 }
+                pulseScale = 1.0
             }
+        }
+        .onDisappear {
+            pulseTask?.cancel()
+            pulseTask = nil
         }
     }
 }

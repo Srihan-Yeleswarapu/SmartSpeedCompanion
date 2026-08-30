@@ -335,6 +335,15 @@ public struct LiveMapView: UIViewRepresentable {
             context.coordinator.lastAppliedPitchMode = .auto
         }
 
+        // Route preview owns the viewport until navigation begins. The
+        // overview fit in rebuildOverlays must not be overwritten by the
+        // speed-based driving camera while the route picker is open.
+        if viewModel.isSelectingRoute {
+            context.coordinator.cameraAnimator.suspend()
+            context.coordinator.updateOverlaysIfNeeded(uiView, viewModel: viewModel)
+            return
+        }
+
         // Camera system: build context and let the decision engine + animator
         // smoothly update altitude and pitch without breaking tracking mode.
         // Camera tuning tables are expressed in MPH, while the published HUD
@@ -836,16 +845,23 @@ public struct LiveMapView: UIViewRepresentable {
                     // animated camera transition here; the camera animator
                     // owns subsequent changes and an animated fit creates the
                     // zoom-in/zoom-out jitter reported in TestFlight.
+                    // Keep the preview as an overview. Do not let the normal
+                    // camera animator run against this fit until navigation
+                    // actually starts; otherwise its speed-based close target
+                    // immediately zooms the map back into a small route slice.
+                    let paddedRect = rect.insetBy(dx: -rect.size.width * 0.08, dy: -rect.size.height * 0.08)
                     mapView.setVisibleMapRect(
-                        rect,
+                        paddedRect,
                         edgePadding: UIEdgeInsets(top: 200, left: 60, bottom: 60, right: 60),
                         animated: false
                     )
+                    cameraAnimator.reset(to: mapView)
                     hasAutoFramedRoute = true
                 }
             } else {
-                // Drop the auto-fit latch when navigation ends so the next
-                // navigation re-frames the polyline.
+                // Drop both fit latches when the route picker closes so the
+                // next destination gets a fresh overview and navigation gets
+                // its own driving framing.
                 hasAutoFramedRoute = false
                 lastRouteFingerprint = nil
                 lastRenderedRouteProgress = -1
