@@ -658,6 +658,9 @@ public struct LiveMapView: UIViewRepresentable {
             let stopsChanged = currentStopFP != lastStopFingerprint
             let routePickerDismissed = lastIsSelectingRoute && !vm.isSelectingRoute
             let routePickerOpened = !lastIsSelectingRoute && vm.isSelectingRoute
+            let previewRouteCleared = !vm.isSelectingRoute
+                && !vm.isNavigating
+                && (!vm.availableRoutes.isEmpty || currentRouteDistance > 0)
             let alternativeFingerprint = vm.isSelectingRoute
                 ? Self.altRouteFingerprint(for: vm.availableRoutes)
                 : nil
@@ -669,6 +672,7 @@ public struct LiveMapView: UIViewRepresentable {
                 || routePickerDismissed
                 || routePickerOpened
                 || alternativesChanged
+                || previewRouteCleared
                 || !hasClearedDisabledHistoryOverlays
 
             if needsFullRebuild {
@@ -695,6 +699,11 @@ public struct LiveMapView: UIViewRepresentable {
             }
 
             lastIsSelectingRoute = vm.isSelectingRoute
+            if previewRouteCleared {
+                lastRouteDistance = 0
+                lastRouteFingerprint = nil
+                lastAltRouteFingerprint = nil
+            }
         }
 
         private func removeRenderedRouteOverlays(_ mapView: MKMapView) {
@@ -862,6 +871,7 @@ public struct LiveMapView: UIViewRepresentable {
                 // Drop both fit latches when the route picker closes so the
                 // next destination gets a fresh overview and navigation gets
                 // its own driving framing.
+                removeRenderedRouteOverlays(mapView)
                 hasAutoFramedRoute = false
                 lastRouteFingerprint = nil
                 lastRenderedRouteProgress = -1
