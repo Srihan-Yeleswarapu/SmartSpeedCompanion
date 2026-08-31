@@ -218,13 +218,19 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
             guard hasReceivedLocationFix,
                   viewModel.locationManager.latestLocation != nil else { return }
 
-            mapView.userTrackingMode = .followWithHeading
+            // CarPlay orientates the map to the vehicle's GPS course so the
+            // road ahead points up. We use `.follow` (MapKit centers on the
+            // vehicle) and drive `camera.heading` ourselves — head units do not
+            // provide a reliable compass heading, and `.followWithHeading` can
+            // pin the map at a sideways heading in the car.
+            mapView.userTrackingMode = .follow
 
             let target = CameraDecisionEngine.computeTarget(from: context)
             let camera = mapView.camera.copy() as! MKMapCamera
             if let location = viewModel.locationManager.latestLocation {
                 camera.centerCoordinate = location.coordinate
             }
+            camera.heading = currentCourseDegrees
             camera.centerCoordinateDistance = target.altitude
             camera.pitch = CGFloat(target.pitch)
             mapView.camera = camera
@@ -235,7 +241,17 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
             hasInitializedNavigationCamera = true
         }
 
-        cameraAnimator.update(mapView: mapView, context: context)
+        cameraAnimator.update(mapView: mapView, context: context, course: currentCourseDegrees)
+    }
+
+    /// Vehicle direction of travel (degrees, 0 = north). CarPlay head units do
+    /// not expose a trustworthy compass heading, so orientation comes from the
+    /// GPS course of travel. Falls back to the published heading, then to north.
+    private var currentCourseDegrees: Double {
+        if let location = viewModel.locationManager.latestLocation, location.course >= 0 {
+            return location.course
+        }
+        return viewModel.currentHeading ?? 0
     }
 
     private func navigationCameraContext() -> CameraContext {

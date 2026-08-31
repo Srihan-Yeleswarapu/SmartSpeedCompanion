@@ -80,4 +80,47 @@ final class CameraWriteGovernorTests: XCTestCase {
         )
         XCTAssertLessThanOrEqual(abs(next - 320), 85 * 0.2 + 0.01)
     }
+
+    // ── Heading (CarPlay course orientation) gating ─────────────────────────
+    func testHeadingMotionGatesWrite() {
+        let governor = CameraWriteGovernor()
+        XCTAssertTrue(governor.shouldWrite(timeSinceLastWrite: nil, altitudeDelta: 0, pitchDelta: 0, headingDelta: 2))
+        XCTAssertFalse(governor.shouldWrite(timeSinceLastWrite: nil, altitudeDelta: 0, pitchDelta: 0, headingDelta: 0.5))
+    }
+
+    func testHeadingWriteIsRateLimited() {
+        let governor = CameraWriteGovernor()
+        XCTAssertFalse(governor.shouldWrite(timeSinceLastWrite: 0.1, altitudeDelta: 0, pitchDelta: 0, headingDelta: 5))
+        XCTAssertTrue(governor.shouldWrite(timeSinceLastWrite: 0.21, altitudeDelta: 0, pitchDelta: 0, headingDelta: 5))
+    }
+}
+
+/// Covers the CarPlay heading fix: the map must rotate toward the vehicle's
+/// GPS course (so travel points up) along the shortest way around the compass,
+/// without ever turning the wrong way at the 0/360 boundary.
+final class CameraHeadingTests: XCTestCase {
+    func testAngularDistanceTakesShortestPathAcrossWrap() {
+        XCTAssertEqual(CameraMath.angularDistance(350 - 10), -20, accuracy: 0.0001)
+        XCTAssertEqual(CameraMath.angularDistance(10 - 350), 20, accuracy: 0.0001)
+        XCTAssertEqual(CameraMath.angularDistance(10 - 0), 10, accuracy: 0.0001)
+    }
+
+    func testNormalizedHeadingWrapsInto0To360() {
+        XCTAssertEqual(CameraMath.normalizedHeading(370), 10, accuracy: 0.0001)
+        XCTAssertEqual(CameraMath.normalizedHeading(-10), 350, accuracy: 0.0001)
+        XCTAssertEqual(CameraMath.normalizedHeading(0), 0, accuracy: 0.0001)
+    }
+
+    func testRotatingApproachRespectsRateCap() {
+        XCTAssertEqual(CameraMath.rotatingApproach(current: 0, target: 90, maxDelta: 30), 30, accuracy: 0.0001)
+        XCTAssertEqual(CameraMath.rotatingApproach(current: 0, target: 90, maxDelta: 60), 60, accuracy: 0.0001)
+    }
+
+    func testRotatingApproachTakesShortestWayAcrossWrap() {
+        // 0 → 350 is only -10 degrees the short way; must rotate clockwise
+        // (down to 350), not spool all the way around to +350 the long way.
+        XCTAssertEqual(CameraMath.rotatingApproach(current: 0, target: 350, maxDelta: 30), 350, accuracy: 0.0001)
+        // 350 → 10 is +20 the short way (past 0), not +360.
+        XCTAssertEqual(CameraMath.rotatingApproach(current: 350, target: 10, maxDelta: 30), 10, accuracy: 0.0001)
+    }
 }

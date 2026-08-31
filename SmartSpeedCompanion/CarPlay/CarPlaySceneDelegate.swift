@@ -101,7 +101,12 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         mapView.overrideUserInterfaceStyle = .dark
         mapView.showsUserLocation = true
-        mapView.userTrackingMode = .followWithHeading
+        // `.follow` so MapKit centers on the vehicle while CarPlayMapController
+        // owns the camera heading (oriented to the GPS course of travel so the
+        // road ahead points up). `.followWithHeading` relies on a compass
+        // heading that CarPlay head units do not provide reliably and can pin
+        // the map with travel pointing sideways.
+        mapView.userTrackingMode = .follow
         mapView.showsCompass = true
 
         // Use modern MapKit configuration with realistic 3D buildings

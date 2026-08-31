@@ -351,6 +351,27 @@ enum CameraMath {
         }
         return levels[i].maxSpeedMph * 0.98
     }
+
+    /// Shortest angular wrap of a signed delta (degrees) into -180...180.
+    static func angularDistance(_ degrees: Double) -> Double {
+        var d = degrees.truncatingRemainder(dividingBy: 360)
+        if d > 180 { d -= 360 } else if d < -180 { d += 360 }
+        return d
+    }
+
+    /// Normalize a heading into 0...360.
+    static func normalizedHeading(_ degrees: Double) -> Double {
+        let wrapped = degrees.truncatingRemainder(dividingBy: 360)
+        return wrapped < 0 ? wrapped + 360 : wrapped
+    }
+
+    /// Rotate `current` toward `target` (degrees) by at most `maxDelta`,
+    /// taking the shortest way around the compass (handles the 0/360 wrap).
+    static func rotatingApproach(current: Double, target: Double, maxDelta: Double) -> Double {
+        let delta = angularDistance(target - current)
+        let step = min(max(delta, -maxDelta), maxDelta)
+        return normalizedHeading(current + step)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -881,13 +902,16 @@ struct CameraWriteGovernor {
     let minimumWriteInterval: TimeInterval
     let epsilonAltitude: Double
     let epsilonPitch: Double
+    let epsilonHeading: Double
 
     init(minimumWriteInterval: TimeInterval = 0.2,
          epsilonAltitude: Double = 2.5,
-         epsilonPitch: Double = 0.20) {
+         epsilonPitch: Double = 0.20,
+         epsilonHeading: Double = 1.0) {
         self.minimumWriteInterval = minimumWriteInterval
         self.epsilonAltitude = epsilonAltitude
         self.epsilonPitch = epsilonPitch
+        self.epsilonHeading = epsilonHeading
     }
 
     /// True when a camera write is warranted.
@@ -897,11 +921,15 @@ struct CameraWriteGovernor {
     ///     on the first write of a session (always allowed when moved).
     ///   - altitudeDelta: integrated minus currently-applied altitude.
     ///   - pitchDelta: integrated minus currently-applied pitch.
+    ///   - headingDelta: shortest angular distance (degrees) between the
+    ///     desired and currently-applied map heading.
     func shouldWrite(timeSinceLastWrite: TimeInterval?,
                      altitudeDelta: Double,
-                     pitchDelta: Double) -> Bool {
+                     pitchDelta: Double,
+                     headingDelta: Double = 0) -> Bool {
         let moved = abs(altitudeDelta) >= epsilonAltitude
             || abs(pitchDelta) >= epsilonPitch
+            || abs(headingDelta) >= epsilonHeading
         guard moved else { return false }
         guard let since = timeSinceLastWrite else { return true }
         return since >= minimumWriteInterval
@@ -914,6 +942,14 @@ public final class CameraAnimator {
 
     private var displayAltitude: Double = 320
     private var displayPitch: Double = 0
+    /// Integrated map heading (degrees, 0-360) applied when a course is being
+    /// driven (CarPlay). nil = MapKit's own tracking owns heading (iPhone).
+    private var displayHeading: Double?
+    /// Desired "up" direction (vehicle course, 0-360). nil = leave heading to
+    /// MapKit's followWithHeading. Only CarPlay supplies this.
+    private var desiredCourse: Double?
+    /// Cap on how fast the map may rotate to follow the course (deg/s).
+    private let headingRotationRateCapDegPerS: Double = 60
 
     private weak var attachedMapView: MKMapView?
     private var displayLinkProxy: DisplayLinkProxy?
@@ -937,6 +973,21 @@ public final class CameraAnimator {
 
     // ── Main entry point (v1-compatible signature) ────────────────────────
     public func update(mapView: MKMapView, context: CameraContext) {
+        // Generic / iPhone path: MapKit's followWithHeading owns heading.
+        desiredCourse = nil
+        internalUpdate(mapView: mapView, context: context)
+    }
+
+    /// CarPlay path: orient the map so the vehicle's direction of travel
+    /// points UP, using the GPS course rather than the car's (unreliable)
+    /// compass heading. The heading is rotated toward the course inside the
+    /// same rate-limited camera write, so it never re-introduces the strobe.
+    public func update(mapView: MKMapView, context: CameraContext, course: Double) {
+        desiredCourse = CameraMath.normalizedHeading(course)
+        internalUpdate(mapView: mapView, context: context)
+    }
+
+    private func internalUpdate(mapView: MKMapView, context: CameraContext) {
         attachedMapView = mapView
         lastContextUpdate = Date()
         // Give MapKit one display interval to finish its own tracking/camera
@@ -957,6 +1008,7 @@ public final class CameraAnimator {
     public func reset(to mapView: MKMapView) {
         displayAltitude = mapView.camera.centerCoordinateDistance
         displayPitch = Double(mapView.camera.pitch)
+        displayHeading = nil
         cameraWriteSuppressedUntil = CACurrentMediaTime() + (1.0 / 30.0)
         lastCameraWriteTimestamp = 0
         stabilizer.reset()
@@ -1065,6 +1117,21 @@ public final class CameraAnimator {
             snapEpsilon: 0.02
         )
 
+        // CarPlay course heading: rotate the map so the vehicle's direction of
+        // travel points up. GPS course is already smooth, so this is a light,
+        // rate-capped step (handles the 0/360 wrap) rather than a discrete jump.
+        if let desiredCourse {
+            if displayHeading == nil {
+                displayHeading = desiredCourse
+            } else {
+                displayHeading = CameraMath.rotatingApproach(
+                    current: displayHeading!,
+                    target: desiredCourse,
+                    maxDelta: headingRotationRateCapDegPerS * dt
+                )
+            }
+        }
+
         // Governor-gated write: only touch MapKit when the integrated state
         // moved beyond epsilon AND the minimum write interval has elapsed.
         // The display link integrates at 30 fps, but writing the map camera
@@ -1074,19 +1141,25 @@ public final class CameraAnimator {
         // undisturbed between writes.
         let camCurrentAlt = mapView.camera.centerCoordinateDistance
         let camCurrentPitch = Double(mapView.camera.pitch)
+        let camCurrentHeading = Double(mapView.camera.heading)
+        let headingDelta = displayHeading.map { abs(CameraMath.angularDistance($0 - camCurrentHeading)) } ?? 0
         let timeSinceLastWrite: TimeInterval? = lastCameraWriteTimestamp == 0
             ? nil
             : link.timestamp - lastCameraWriteTimestamp
         guard writeGovernor.shouldWrite(
             timeSinceLastWrite: timeSinceLastWrite,
             altitudeDelta: displayAltitude - camCurrentAlt,
-            pitchDelta: displayPitch - camCurrentPitch
+            pitchDelta: displayPitch - camCurrentPitch,
+            headingDelta: headingDelta
         ) else { return }
         lastCameraWriteTimestamp = link.timestamp
 
         let cam = mapView.camera.copy() as! MKMapCamera
         cam.centerCoordinateDistance = displayAltitude
         cam.pitch = CGFloat(displayPitch)
+        if let displayHeading {
+            cam.heading = displayHeading
+        }
         let trackingMode = mapView.userTrackingMode
         // Property setter (iOS 13+) — see class doc comment for why this must
         // never become setCamera(_:animated:) while tracking is active.
