@@ -297,7 +297,6 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         Task { @MainActor in
             let context = AppDelegate.sharedModelContainer.mainContext
             viewModel.loadVehicleProfiles(context: context)
-            viewModel.loadAlertProfiles(context: context)
         }
     }
 
@@ -517,15 +516,13 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
         let unitShort = SpeedFormatting.unitLabelShort(measurementSystem: system)
         let unitLong = SpeedFormatting.unitLabelLong(measurementSystem: system)
         let displayLimit = SpeedFormatting.displayLimit(forMph: viewModel.limit, measurementSystem: system)
-        let displayBuffer = Int(SpeedFormatting.displayBuffer(forMph: Double(viewModel.speedEngine.effectiveBuffer), measurementSystem: system))
-        let activeProfile = viewModel.alertProfiles.first(where: { $0.isActive })?.name ?? "Default"
+        let displayBuffer = Int(SpeedFormatting.displayBuffer(forMph: Double(viewModel.speedEngine.userBuffer), measurementSystem: system))
         let activeVehicle = viewModel.vehicleProfiles.first(where: { $0.isActive })?.name ?? "Primary"
 
         var items: [CPInformationItem] = [
             CPInformationItem(title: "Speed", detail: "\(Int(viewModel.speed)) \(unitShort)"),
             CPInformationItem(title: "Speed Limit", detail: "\(displayLimit) \(unitShort)"),
             CPInformationItem(title: "Buffer", detail: "+\(displayBuffer) \(unitLong)"),
-            CPInformationItem(title: "Alert Profile", detail: activeProfile),
         ]
         if let road = viewModel.currentRoadName, !road.isEmpty {
             items.append(CPInformationItem(title: "Road", detail: road))

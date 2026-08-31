@@ -200,14 +200,6 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// True if the user has manually panned the map away from current tracking.
     @Published public var isMapDetached: Bool = false
     
-    // MARK: - Speed Buffer Profiles
-    /// All saved speed buffer profiles. Loaded from SwiftData on init.
-    @Published public var alertProfiles: [SpeedAlertProfile] = []
-    /// True when the buffer profiles list sheet should be presented.
-    @Published public var showAlertProfilesSheet: Bool = false
-    /// The profile currently being edited (nil = creating new).
-    public var editingProfile: SpeedAlertProfile? = nil
-    
     // MARK: - Named Locations
     /// All saved named locations. Loaded from SwiftData on init.
     @Published public var namedLocations: [NamedLocation] = []
@@ -222,120 +214,11 @@ public final class DriveViewModel: NSObject, ObservableObject {
 
     // MARK: - Deferred SwiftData Loading
 
-    private var alertProfilesLoadTask: Task<Void, Never>?
     private var vehicleProfilesLoadTask: Task<Void, Never>?
     private var namedLocationsLoadTask: Task<Void, Never>?
-    private var alertProfilesLoaded = false
     private var vehicleProfilesLoaded = false
     private var namedLocationsLoaded = false
 
-    /// Fetches model IDs and ordering off the main actor, then resolves those
-    /// IDs in the UI context. SwiftData's ordered SQL fetch is synchronous; the
-    /// old implementation ran it directly from `.onAppear` while SwiftUI was
-    /// laying out the root view, which is the `NSManagedObjectContext.fetch`
-    /// hang signature in the XR reports.
-    public func loadAlertProfiles(context: ModelContext) {
-        guard !alertProfilesLoaded, alertProfilesLoadTask == nil else { return }
-        let container = context.container
-        alertProfilesLoadTask = Task { @MainActor [weak self] in
-            defer { self?.alertProfilesLoadTask = nil }
-            let result = await Task.detached(priority: .utility) { () -> DriveModelIDLoadResult in
-                let backgroundContext = ModelContext(container)
-                let descriptor = FetchDescriptor<SpeedAlertProfile>(
-                    sortBy: [SortDescriptor(\.createdAt, order: .forward)]
-                )
-                let profiles = (try? backgroundContext.fetch(descriptor)) ?? []
-                if !profiles.contains(where: { $0.isActive }), let first = profiles.first {
-                    first.isActive = true
-                    try? backgroundContext.save()
-                }
-                return DriveModelIDLoadResult(ids: profiles.map(\.id))
-            }.value
-
-            // Let the initial SwiftUI appearance/layout transaction finish
-            // before hydrating the main-context model objects. The ordered
-            // fetch is already off-main; this small hand-off avoids starting
-            // even the bounded UI-context fetch in the same frame as the
-            // iPhone XR's cold MapKit initialization.
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            guard !Task.isCancelled else { return }
-
-            guard let self else { return }
-            let ids = result.ids
-            let descriptor = FetchDescriptor<SpeedAlertProfile>(
-                predicate: #Predicate { ids.contains($0.id) }
-            )
-            let profiles = (try? context.fetch(descriptor)) ?? []
-            let byID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
-            self.alertProfiles = ids.compactMap { byID[$0] }
-            // The active profile's buffer is read live through
-            // `speedEngine.profileBufferProvider`, so the universal
-            // `userBuffer` (the plain slider) is never clobbered by a profile.
-            self.alertProfilesLoaded = true
-        }
-    }
-    
-    /// Creates a new speed buffer profile with default buffer values, inserts into SwiftData, and activates it.
-    @discardableResult
-    public func createNewProfile(name: String, context: ModelContext) -> SpeedAlertProfile {
-        let profile = SpeedAlertProfile(name: name, isActive: true)
-        context.insert(profile)
-        try? context.save()
-        
-        // Deactivate other profiles
-        for p in alertProfiles { p.isActive = false }
-        alertProfiles.append(profile)
-        return profile
-    }
-    
-    /// Activates a profile by ID, deactivating all others.
-    public func activateProfile(_ id: UUID, context: ModelContext) {
-        for p in alertProfiles {
-            p.isActive = (p.id == id)
-        }
-        try? context.save()
-        objectWillChange.send()
-    }
-    
-    /// Deletes a profile from SwiftData.
-    ///
-    /// TestFlight 29-tester feedback: "I can't delete a speed profile".
-    /// The previous implementation guarded on `alertProfiles.count > 1`
-    /// which silently refused to delete the user's only — and therefore
-    /// most-common — profile. New users ship with exactly ONE profile
-    /// (`loadAlertProfiles(...)` only seeds one when the store is empty),
-    /// so the swipe-to-delete they could discover was disabled for the
-    /// exact case they tried it on.
-    ///
-    /// New behavior: always delete the requested row, then if the store
-    /// would be left empty, seed a fresh "Default" profile so the speed
-    /// alert system never has zero profiles (every code site assumes at
-    /// least one is `.isActive`). If the deleted profile was active,
-    /// promote either the newly seeded Default or the next remaining
-    /// profile to active.
-    public func deleteProfile(_ id: UUID, context: ModelContext) {
-        guard let toDelete = alertProfiles.first(where: { $0.id == id }) else { return }
-        let wasActive = toDelete.isActive
-        context.delete(toDelete)
-        try? context.save()
-        alertProfiles.removeAll { $0.id == id }
-
-        if alertProfiles.isEmpty {
-            // Auto-seed a fresh Default. Treated identical to a fresh
-            // install so the user keeps a working buffer profile even
-            // after deleting their last one. Same defaults as the
-            // model initializer so thresholds match the rest of the app.
-            // (The buffer itself flows through `profileBufferProvider`, so
-            // no direct `speedEngine.userBuffer` mirror is needed here.)
-            _ = createNewProfile(name: "Default", context: context)
-        } else if wasActive, let first = alertProfiles.first {
-            // Active profile was deleted but others remain — promote
-            // the first remaining to active so the alert engine keeps
-            // using a non-zero buffer.
-            activateProfile(first.id, context: context)
-        }
-    }
-    
     // MARK: - Vehicle Profiles
     /// All saved vehicle profiles. Loaded from SwiftData on init.
     @Published public var vehicleProfiles: [VehicleProfile] = []
@@ -913,29 +796,6 @@ public final class DriveViewModel: NSObject, ObservableObject {
         alrtEngine.$audioAlertActive.assign(to: &$alertActive)
         rec.$isRecording.assign(to: &$isRecording)
 
-        // Speed-buffer profiles: DriveViewModel owns the alert profiles, so it
-        // installs the provider that maps the current road type to the active
-        // profile's buffer, and keeps `SpeedEngine.currentRoadType` in sync
-        // with the posted limit + road name. `SpeedEngine.effectiveBuffer`
-        // then chooses between the universal slider (profiles off) and the
-        // profile's per-road value (profiles on).
-        speedEngine.profileBufferProvider = { [weak self] roadType in
-            guard let self else { return 5 }
-            let active = self.alertProfiles.first(where: { $0.isActive })
-                ?? self.alertProfiles.first
-            return active?.buffer(for: roadType ?? "") ?? 5
-        }
-        spdEngine.$limit
-            .combineLatest($currentRoadName)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] limit, roadName in
-                self?.speedEngine.currentRoadType = RoadTypeClassifier.roadType(
-                    speedLimitMph: limit > 0 ? limit : nil,
-                    roadName: roadName
-                )
-            }
-            .store(in: &cancellables)
-        
         // Keep the source label coupled to the same published limit that is
         // shown by the HUD. During a refresh SpeedEngine clears its limit to 0
         // before the HERE request completes; without this guard, the old source

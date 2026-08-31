@@ -32,7 +32,7 @@ public struct SpeedDisplayView: View {
                 let limitUnitShort = SpeedFormatting.unitLabelShort(measurementSystem: measurementSystem)
                 let limitUnitLong = SpeedFormatting.unitLabelLong(measurementSystem: measurementSystem)
                 let displayLimitValue = SpeedFormatting.displayLimit(forMph: viewModel.limit, measurementSystem: measurementSystem)
-                let displayBufferValue = Int(SpeedFormatting.displayBuffer(forMph: Double(viewModel.speedEngine.effectiveBuffer), measurementSystem: measurementSystem))
+                let displayBufferValue = Int(SpeedFormatting.displayBuffer(forMph: Double(viewModel.speedEngine.userBuffer), measurementSystem: measurementSystem))
                 HStack(spacing: 4) {
                     Text("LIMIT")
                         .font(DesignSystem.labelFont)

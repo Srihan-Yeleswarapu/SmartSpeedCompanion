@@ -55,7 +55,6 @@ public struct DriveRootView: View {
         .toolbarColorScheme(.dark, for: .tabBar)
         .accentColor(Color(hex: "#00D4FF"))
         .onAppear {
-            driveViewModel.loadAlertProfiles(context: modelContext)
             driveViewModel.loadVehicleProfiles(context: modelContext)
             driveViewModel.loadOfflineRegions()
             driveViewModel.loadNamedLocations(context: modelContext)
