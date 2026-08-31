@@ -3,6 +3,11 @@ import MapKit
 @testable import SmartSpeedCompanion
 
 final class CameraTrackingTests: XCTestCase {
+    func testCameraSettlingWindowIsLongerThanWriteGovernorCadence() {
+        let governor = CameraWriteGovernor(minimumWriteInterval: 0.2)
+        XCTAssertTrue(governor.shouldWrite(timeSinceLastWrite: 0.35, altitudeDelta: 10, pitchDelta: 0))
+        XCTAssertFalse(governor.shouldWrite(timeSinceLastWrite: 0.2, altitudeDelta: 10, pitchDelta: 0))
+    }
     func testRecordingOnlyDriveUsesNorthUpFollowMode() {
         XCTAssertEqual(LiveMapView.trackingMode(isNavigating: false), .follow)
     }

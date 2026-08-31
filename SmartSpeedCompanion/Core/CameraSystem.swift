@@ -965,6 +965,10 @@ public final class CameraAnimator {
     /// integration never turns into a 30 fps camera-write stream — the
     /// visible map strobe/stutter reported in TestFlight.
     private var lastCameraWriteTimestamp: CFTimeInterval = 0
+    // A camera assignment can trigger MapKit's own tracking transaction. Keep
+    // a quiet settling window after each assignment instead of immediately
+    // issuing another assignment on the next governor slot.
+    private let cameraSettlingInterval: CFTimeInterval = 0.35
     private let writeGovernor = CameraWriteGovernor()
 
     private let tuning = CameraTuning.current
@@ -1146,6 +1150,8 @@ public final class CameraAnimator {
         let timeSinceLastWrite: TimeInterval? = lastCameraWriteTimestamp == 0
             ? nil
             : link.timestamp - lastCameraWriteTimestamp
+        guard lastCameraWriteTimestamp == 0
+                || link.timestamp - lastCameraWriteTimestamp >= cameraSettlingInterval else { return }
         guard writeGovernor.shouldWrite(
             timeSinceLastWrite: timeSinceLastWrite,
             altitudeDelta: displayAltitude - camCurrentAlt,

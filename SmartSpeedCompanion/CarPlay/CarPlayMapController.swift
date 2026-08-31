@@ -19,6 +19,8 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
     private var hasReceivedLocationFix = false
     private var scheduledRender = false
     private var lastRenderFingerprint: Int?
+    private var lastRenderedProgress: CLLocationDistance = -1
+    private let progressRenderStep: CLLocationDistance = 500
     private var lastNavigationCameraFingerprint: Int?
     private var hasInitializedNavigationCamera = false
 
@@ -87,6 +89,7 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
 
         if fingerprint != lastRenderFingerprint {
             lastRenderFingerprint = fingerprint
+            lastRenderedProgress = -1
             mapView.removeOverlays(mapView.overlays)
             mapView.removeAnnotations(mapView.annotations.filter { !($0 is MKUserLocation) })
 
@@ -109,8 +112,10 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
 
         if viewModel.isNavigating, viewModel.navigationCoordinator.currentRoute != nil {
             updateNavigationCamera()
+            updateActiveProgressIfNeeded()
         } else {
             hasInitializedNavigationCamera = false
+            lastRenderedProgress = -1
         }
     }
 
@@ -198,6 +203,19 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
         hasher.combine(Self.routeFingerprint(for: route))
         hasher.combine(Self.destinationFingerprint(for: viewModel.destination))
         return hasher.finalize()
+    }
+
+    private func updateActiveProgressIfNeeded() {
+        guard let route = viewModel.navigationCoordinator.currentRoute else { return }
+        let progress = max(0, route.distance - viewModel.distanceToDestination)
+        guard lastRenderedProgress < 0 || abs(progress - lastRenderedProgress) >= progressRenderStep else { return }
+        lastRenderedProgress = progress
+
+        let owned = mapView.overlays.filter {
+            $0 is CarPlayRoutePolyline || $0 is CarPlayRouteGlowPolyline || $0 is CarPlayDimmedRoutePolyline
+        }
+        mapView.removeOverlays(owned)
+        addRouteOverlay(for: route, style: .active)
     }
 
     /// Maintains the same turn-aware camera policy used by the iPhone map,

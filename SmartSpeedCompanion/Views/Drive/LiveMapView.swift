@@ -555,7 +555,7 @@ public struct LiveMapView: UIViewRepresentable {
         // every second on an iPhone XR and starve the UIKit run loop.
         private var lastIsNavigating: Bool = false
         private var lastRenderedRouteProgress: CLLocationDistance = -1
-        private let routeProgressRenderStep: CLLocationDistance = 250
+        private let routeProgressRenderStep: CLLocationDistance = 500
         private var lastRouteDistance: Double = 0
         /// Geometry fingerprint catches a reroute that has the same distance
         /// as the previous route. Distance-only invalidation left old route
@@ -650,9 +650,16 @@ public struct LiveMapView: UIViewRepresentable {
                 mapView.showsUserLocation = false
             }
 
-            // If following, re-center map manually
+            // Keep the simulated vehicle centered without enqueueing a UIKit
+            // animation for every SwiftUI update. Repeated animated center
+            // changes were a direct source of visible map pulsing.
             if !viewModel.isMapDetached {
-                mapView.setCenter(mockLocation.coordinate, animated: true)
+                let current = mapView.centerCoordinate
+                let moved = CLLocation(latitude: current.latitude, longitude: current.longitude)
+                    .distance(from: mockLocation)
+                if moved >= 8 {
+                    mapView.setCenter(mockLocation.coordinate, animated: false)
+                }
             }
         }
         #endif
@@ -720,6 +727,9 @@ public struct LiveMapView: UIViewRepresentable {
             // movement. That is the `MKMapView.addOverlay` run-loop hang seen
             // repeatedly in the XR reports.
             if progressChanged, isNavigating, vm.currentRoute != nil {
+                // Progress overlays are deliberately throttled and coalesced;
+                // removing and re-adding long polylines while MapKit is also
+                // tracking the vehicle makes the entire map flash.
                 updateActiveRouteProgressOverlay(mapView, viewModel: vm)
                 lastRenderedRouteProgress = currentRouteProgress ?? -1
             }
