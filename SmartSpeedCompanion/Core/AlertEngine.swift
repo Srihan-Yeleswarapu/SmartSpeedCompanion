@@ -126,6 +126,13 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
     /// Silences alerts for the given duration. Only one snooze at a time;
     /// calling while already snoozed extends the snooze from the current time.
     public func snoozeFor(_ seconds: TimeInterval) {
+        // Acknowledgement is an active silence command, not merely a UI
+        // countdown. Stop the currently playing tone/pulse immediately before
+        // starting the temporary suppression window.
+        audioAlertActive = false
+        stopCurrentToneImmediately()
+        HapticAlertManager.shared.stopSpeedingPulse()
+        BackgroundHapticBridge.shared.reset()
         snoozedUntil = Date().addingTimeInterval(seconds)
         DebugLogger.shared.log("AlertEngine: snoozed for \(Int(seconds))s")
         
@@ -425,6 +432,14 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         return min(1.0, max(0.1, overspeedAmount / 20.0))
     }
     
+    private func stopCurrentToneImmediately() {
+        guard toneEngineReady else { return }
+        playerNode.stop()
+        if audioEngine.isRunning {
+            audioEngine.pause()
+        }
+    }
+
     private func triggerAlert() {
         // Audio half: only fires when the audio toggle is on. Independent
         // of the haptic toggle so users can silence the audio while keeping

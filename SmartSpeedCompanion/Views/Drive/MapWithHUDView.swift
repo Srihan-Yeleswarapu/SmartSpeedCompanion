@@ -100,7 +100,14 @@ public struct MapWithHUDView: View {
                         .padding(.horizontal, 12)
                     }
 
-                    // NOTE: SpeedCameraAlertBanner removed — camera API is disabled.
+                    // Overspeed acknowledgement card is available on mobile
+                    // as well as CarPlay. It calls the same AlertEngine silence
+                    // path, so tapping I Know stops the active tone immediately.
+                    if driveViewModel.status == .over {
+                        MobileSpeedAlertBanner()
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                    }
 
                     // Nearby amenities sheet: results of an MKLocalSearch
                     // category query (gas/food/coffee/parking). Empty by default.
@@ -1064,6 +1071,53 @@ fileprivate struct LimitSignView: View {
             return ("Local DB", Color(hex: "#A0A0B8"))
         default:                return ("--", Color(hex: "#8888AA"))         // No Data / unknown
         }
+    }
+}
+
+fileprivate struct MobileSpeedAlertBanner: View {
+    @EnvironmentObject var viewModel: DriveViewModel
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.white)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("SLOW DOWN")
+                        .font(.system(size: 14, weight: .black))
+                        .foregroundColor(DesignSystem.alertRed)
+                    Text("You are above the speed limit")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                Spacer()
+            }
+
+            if viewModel.alertEngine.isSnoozed {
+                Text("Alert silenced temporarily")
+                    .font(.caption.bold())
+                    .foregroundColor(DesignSystem.cyan)
+            } else {
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    viewModel.alertEngine.snoozeFor(15)
+                } label: {
+                    Label("I Know", systemImage: "hand.raised.slash")
+                        .font(.system(size: 14, weight: .black))
+                        .foregroundColor(DesignSystem.cyan)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(DesignSystem.cyan.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DesignSystem.cyan.opacity(0.5), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .background(DesignSystem.alertRed.opacity(0.14))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(DesignSystem.alertRed.opacity(0.8), lineWidth: 1.5))
     }
 }
 
