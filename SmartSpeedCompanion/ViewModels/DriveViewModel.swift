@@ -744,6 +744,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
             onRerouteRequest: { [weak self] dest in
                 guard let self else { return }
                 await self.selectDestinationAndCalculateRoutes(to: dest, isRerouting: true)
+                guard self.navigationCoordinator.isRerouting else { return }
                 if let first = self.availableRoutes.first {
                     await self.startNavigation(with: first, isReroute: true)
                 } else {

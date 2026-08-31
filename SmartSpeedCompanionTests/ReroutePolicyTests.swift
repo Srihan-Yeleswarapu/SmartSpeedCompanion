@@ -15,8 +15,14 @@ final class ReroutePolicyTests: XCTestCase {
 
     func testRerouteUsesFastSingleRouteAndTrafficDepartureTime() throws {
         let source = try String(contentsOfFile: sourcePath(), encoding: .utf8)
-        XCTAssertTrue(source.contains("request.requestsAlternateRoutes = !isRerouting"))
+        XCTAssertTrue(source.contains("request.requestsAlternateRoutes = false"))
         XCTAssertTrue(source.contains("request.departureDate = .now"))
+    }
+
+    func testRerouteUsesTheLatestVehicleFixAsOrigin() throws {
+        let source = try String(contentsOfFile: sourcePath(), encoding: .utf8)
+        XCTAssertTrue(source.contains("latestRerouteLocation?.coordinate"))
+        XCTAssertTrue(source.contains("timeSinceLastReroute >= 0.75"))
     }
 
     private func sourcePath() -> String {

@@ -375,6 +375,13 @@ public final class NavigationCoordinator: ObservableObject {
     /// Wall-clock timestamp of the most recent reroute request, used by the
     /// 35 m off-route detector in `checkOffRouteStatus(_:)` to throttle.
     private var lastRerouteTime: Date = .distantPast
+    /// Latest location that proved the vehicle is off the active route. It is
+    /// used as the reroute origin; MKMapItem.forCurrentLocation() can lag the
+    /// GPS callback by several seconds on CarPlay.
+    private var latestRerouteLocation: CLLocation?
+    /// Monotonically invalidates an older route calculation as soon as a newer
+    /// off-route fix arrives.
+    private var rerouteRequestGeneration: UInt64 = 0
     /// Latched while a reroute is in flight — prevents re-entrant reroutes.
     private var isCalculatingReroute: Bool = false
     /// Declared as a public-state-like threshold (kept private to mirror
@@ -1115,10 +1122,12 @@ public final class NavigationCoordinator: ObservableObject {
         multiStopStateGeneration &+= 1
 
         let request = MKDirections.Request()
-        request.source = MKMapItem.forCurrentLocation()
+        request.source = isRerouting
+            ? MKMapItem(placemark: MKPlacemark(coordinate: latestRerouteLocation?.coordinate ?? CLLocationCoordinate2D()))
+            : MKMapItem.forCurrentLocation()
         request.destination = destination
         request.transportType = .automobile
-        request.requestsAlternateRoutes = !isRerouting // Fast 1-route calculation if rerouting
+        request.requestsAlternateRoutes = false // Always use the fastest single response path
         request.departureDate = .now
 
         if UserDefaults.standard.bool(forKey: "avoidHighways") {
@@ -1677,17 +1686,21 @@ public final class NavigationCoordinator: ObservableObject {
         if distance > offRouteThreshold {
             let timeSinceLastReroute = Date().timeIntervalSince(lastRerouteTime)
 
-            if timeSinceLastReroute > 1.0 {
+            if timeSinceLastReroute >= 0.75 {
                 DebugLogger.shared.log("OFF ROUTE: \(Int(distance))m away. Rerouting.")
                 // Haptic: warning buzz for the fine-grained off-route detector
                 HapticAlertManager.playWarningBuzz()
                 lastRerouteTime = Date()
+                latestRerouteLocation = location
+                rerouteRequestGeneration &+= 1
+                let generation = rerouteRequestGeneration
                 isCalculatingReroute = true
 
                 Task { @MainActor in
                     if let dest = self.destinationItem {
                         await self.onRerouteRequest(dest)
                     }
+                    guard generation == self.rerouteRequestGeneration else { return }
                     self.isCalculatingReroute = false
                 }
             }
