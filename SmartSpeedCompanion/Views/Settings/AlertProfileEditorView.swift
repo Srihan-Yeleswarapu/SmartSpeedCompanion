@@ -135,15 +135,12 @@ public struct AlertProfileEditorView: View {
             driveViewModel.alertProfiles[idx] = p
         }
 
-        // If this is the active profile, immediately re-apply its buffer
-        // to the SpeedEngine so changes take effect without requiring
-        // the user to deactivate/reactivate. TestFlight feedback:
-        // "Profile. Not active" — user edited the active profile but
-        // the engine still used the old buffer value.
-        if p.isActive {
-            driveViewModel.speedEngine.userBuffer = p.defaultBuffer
-        }
-
+        // The engine reads the active profile live through
+        // `speedEngine.profileBufferProvider` (and the updated `alertProfiles`
+        // array just above), so the just-saved buffers take effect for the
+        // current road without deactivating/re-activating — and without
+        // clobbering the universal `userBuffer` slider used when profiles
+        // are turned off.
         dismiss()
     }
 }

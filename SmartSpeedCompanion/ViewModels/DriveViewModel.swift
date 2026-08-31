@@ -268,10 +268,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
             let profiles = (try? context.fetch(descriptor)) ?? []
             let byID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
             self.alertProfiles = ids.compactMap { byID[$0] }
-            if let activeProfile = self.alertProfiles.first(where: { $0.isActive }) {
-                // Re-apply the active profile's buffer to the SpeedEngine.
-                speedEngine.userBuffer = activeProfile.defaultBuffer
-            }
+            // The active profile's buffer is read live through
+            // `speedEngine.profileBufferProvider`, so the universal
+            // `userBuffer` (the plain slider) is never clobbered by a profile.
             self.alertProfilesLoaded = true
         }
     }
@@ -292,12 +291,7 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// Activates a profile by ID, deactivating all others.
     public func activateProfile(_ id: UUID, context: ModelContext) {
         for p in alertProfiles {
-            let wasActive = p.isActive
             p.isActive = (p.id == id)
-            if p.id == id && !wasActive {
-                // Apply the profile's default buffer to the speed engine
-                speedEngine.userBuffer = p.defaultBuffer
-            }
         }
         try? context.save()
         objectWillChange.send()
@@ -331,16 +325,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
             // install so the user keeps a working buffer profile even
             // after deleting their last one. Same defaults as the
             // model initializer so thresholds match the rest of the app.
-            //
-            // NOTE: `createNewProfile(...)` flips `isActive: true` on
-            // insert but does NOT mirror that into `speedEngine.userBuffer`
-            // — only `activateProfile(_:context:)` does, and we don't
-            // take that branch when we just wiped the last row. Apply
-            // the new profile's default buffer directly so the alert
-            // engine doesn't keep using the buffer from the now-deleted
-            // profile (code review flagged this as a real, subtle bug).
-            let seeded = createNewProfile(name: "Default", context: context)
-            speedEngine.userBuffer = seeded.defaultBuffer
+            // (The buffer itself flows through `profileBufferProvider`, so
+            // no direct `speedEngine.userBuffer` mirror is needed here.)
+            _ = createNewProfile(name: "Default", context: context)
         } else if wasActive, let first = alertProfiles.first {
             // Active profile was deleted but others remain — promote
             // the first remaining to active so the alert engine keeps
@@ -925,6 +912,29 @@ public final class DriveViewModel: NSObject, ObservableObject {
         spdEngine.$status.assign(to: &$status)
         alrtEngine.$audioAlertActive.assign(to: &$alertActive)
         rec.$isRecording.assign(to: &$isRecording)
+
+        // Speed-buffer profiles: DriveViewModel owns the alert profiles, so it
+        // installs the provider that maps the current road type to the active
+        // profile's buffer, and keeps `SpeedEngine.currentRoadType` in sync
+        // with the posted limit + road name. `SpeedEngine.effectiveBuffer`
+        // then chooses between the universal slider (profiles off) and the
+        // profile's per-road value (profiles on).
+        speedEngine.profileBufferProvider = { [weak self] roadType in
+            guard let self else { return 5 }
+            let active = self.alertProfiles.first(where: { $0.isActive })
+                ?? self.alertProfiles.first
+            return active?.buffer(for: roadType ?? "") ?? 5
+        }
+        spdEngine.$limit
+            .combineLatest($currentRoadName)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] limit, roadName in
+                self?.speedEngine.currentRoadType = RoadTypeClassifier.roadType(
+                    speedLimitMph: limit > 0 ? limit : nil,
+                    roadName: roadName
+                )
+            }
+            .store(in: &cancellables)
         
         // Keep the source label coupled to the same published limit that is
         // shown by the HUD. During a refresh SpeedEngine clears its limit to 0

@@ -406,7 +406,7 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
         Self.shouldStartSpeedingPulse(
             speed: engine.speed,
             limit: engine.limit,
-            buffer: engine.userBuffer,
+            buffer: engine.effectiveBuffer,
             measurementSystem: engine.measurementSystem,
             isLimitResolved: engine.isLimitResolved
         )
@@ -414,12 +414,12 @@ public final class AlertEngine: ObservableObject, AlertEngineProtocol {
 
     private func computedSeverity() -> Double {
         guard let engine = speedEngine, engine.limit > 0 else { return 0.5 }
-        // `limit` and `userBuffer` are stored in MPH while `speed` is already
-        // in the active display unit. Convert the threshold before measuring
-        // severity so metric users get the same alert intensity as imperial
-        // users.
+        // `limit` and `effectiveBuffer` are stored in MPH while `speed` is
+        // already in the active display unit. Convert the threshold before
+        // measuring severity so metric users get the same alert intensity as
+        // imperial users.
         let isMetric = engine.measurementSystem == "Metric"
-        let thresholdMph = Double(engine.limit + engine.userBuffer)
+        let thresholdMph = Double(engine.limit + engine.effectiveBuffer)
         let threshold = isMetric ? thresholdMph * 1.60934 : thresholdMph
         let overspeedAmount = max(0, engine.speed - threshold)
         return min(1.0, max(0.1, overspeedAmount / 20.0))

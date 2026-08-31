@@ -13,10 +13,33 @@ public final class SpeedEngine: ObservableObject {
     /// cannot keep beeping while a new lookup is in flight.
     @Published public private(set) var isLimitResolved: Bool = false
     @Published public var status: SpeedStatus = .safe
-    
+
     @AppStorage("userBuffer") public var userBuffer: Int = 5 // -5 to 15 mph
+    /// When true, the alert buffer is resolved per road type from the active
+    /// SpeedAlertProfile instead of the single universal `userBuffer`.
+    @AppStorage("useSpeedBufferProfiles") public var useSpeedBufferProfiles: Bool = false
     @AppStorage("measurementSystem") public var measurementSystem: String = "Imperial"
-    
+
+    /// The current road-type key ("highway", "arterial", …). Kept in sync by
+    /// DriveViewModel as the posted limit and road name update. Used to pick
+    /// the active profile's per-road buffer when speed-buffer profiles are on.
+    @Published public var currentRoadType: String? = nil
+    /// Resolves the active profile's buffer for a road type. DriveViewModel
+    /// installs this; nil = profiles are off and the universal `userBuffer`
+    /// applies to every road.
+    public var profileBufferProvider: ((String?) -> Int)? = nil
+
+    /// The buffer value that drives alerts and HUD gauges for the current road.
+    /// With speed-buffer profiles enabled, this reads the active profile's
+    /// per-road-type value. Otherwise it returns the single universal
+    /// `userBuffer` (the plain slider), applied to all road types.
+    public var effectiveBuffer: Int {
+        guard useSpeedBufferProfiles, let provider = profileBufferProvider else {
+            return userBuffer
+        }
+        return provider(currentRoadType)
+    }
+
     private let locationManager: LocationManager
     private let speedLimitService = SmartSpeedLimitService.shared
     private let roadGeocoder = RoadGeocoder.shared
@@ -360,7 +383,7 @@ public final class SpeedEngine: ObservableObject {
         
         let isMetric = measurementSystem == "Metric"
         let displayLimit = isMetric ? limit * 1.60934 : limit
-        let displayBuffer = isMetric ? Double(userBuffer) * 1.60934 : Double(userBuffer)
+        let displayBuffer = isMetric ? Double(effectiveBuffer) * 1.60934 : Double(effectiveBuffer)
         
         let threshold = displayLimit + displayBuffer
         

@@ -2,6 +2,10 @@ import SwiftUI
 
 public struct SettingsView: View {
     @AppStorage("userBuffer") var buffer: Double = 5
+    // Master on/off for per-road-type speed buffer profiles. OFF = the plain
+    // `buffer` slider below applies one value to every road; ON = the active
+    // profile's separate per-road-type buffers are used.
+    @AppStorage("useSpeedBufferProfiles") var useSpeedBufferProfiles: Bool = false
     @AppStorage("audioAlertsEnabled") var audioEnabled: Bool = true
     // Haptic alert preferences live alongside audio so the two toggles stay
     // visually coupled when the user opens Settings → ALERTS. The style is
@@ -95,27 +99,55 @@ public struct SettingsView: View {
                         footer: Text("Vibrate in Background buzzes via a silent notification — no sound plays — when you're over the limit while Speedio is in the background (using another app, or the phone locked in a holder). You'll be asked for notification permission the first time you switch it on.")
                             .font(.caption2)
                             .foregroundColor(.gray)) {
-                    // Speed Buffer Profiles row — first item in ALERTS
-                    Button(action: { showingAlertProfiles = true }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: "slider.horizontal.3")
-                                .foregroundColor(DesignSystem.cyan)
-                                .frame(width: 20)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Speed Buffer Profiles")
-                                    .foregroundColor(.white)
-                                let activeName = driveViewModel.alertProfiles.first(where: { $0.isActive })?.name ?? "Default"
-                                Text("Active: \(activeName)")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.white.opacity(0.4))
-                                .font(.caption.weight(.semibold))
+                    // Speed Buffer Profiles — master on/off. OFF = one
+                    // universal slider that applies to every road type. ON =
+                    // the active profile's separate per-road-type buffers.
+                    Toggle(isOn: $useSpeedBufferProfiles) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Speed Buffer Profiles")
+                                .foregroundColor(.white)
+                            Text(useSpeedBufferProfiles
+                                 ? "Separate buffer for each road type."
+                                 : "One buffer applied to all roads.")
+                                .font(.caption)
+                                .foregroundColor(.gray)
                         }
+                    }
+                    .tint(DesignSystem.neonGreen)
+
+                    if useSpeedBufferProfiles {
+                        // When profiles are on, surface the manage/activate
+                        // list instead of the universal slider.
+                        Button(action: { showingAlertProfiles = true }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "slider.horizontal.3")
+                                    .foregroundColor(DesignSystem.cyan)
+                                    .frame(width: 20)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Manage Profiles")
+                                        .foregroundColor(.white)
+                                    let activeName = driveViewModel.alertProfiles.first(where: { $0.isActive })?.name ?? "Default"
+                                    Text("Active: \(activeName)")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.white.opacity(0.4))
+                                    .font(.caption.weight(.semibold))
+                            }
+                        }
+                        Text("Each profile sets its own buffer for highways, arterials, residential roads, school zones, and work zones. Speedio uses the active profile for the road you're on; roads it can't classify use that profile's default buffer.")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                    } else {
+                        // Universal buffer slider — one value for all roads.
+                        BufferSliderView(buffer: $buffer)
+                        Text("This one buffer is added to every speed limit on all road types. Turn on Speed Buffer Profiles to use separate buffers per road instead.")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
                     }
 
                     Toggle("Audio Alerts", isOn: $audioEnabled)
