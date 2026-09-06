@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 import CoreLocation
-import SwiftUI // For @AppStorage
 
 /// Engine responsible for observing location, determining speed, buffer, and calculating status.
 @MainActor
@@ -14,8 +13,38 @@ public final class SpeedEngine: ObservableObject {
     @Published public private(set) var isLimitResolved: Bool = false
     @Published public var status: SpeedStatus = .safe
 
-    @AppStorage("userBuffer") public var userBuffer: Int = 5 // -5 to 15 mph
-    @AppStorage("measurementSystem") public var measurementSystem: String = "Imperial"
+    /// Live read of the user's alert buffer (mph, -5...10) from UserDefaults.
+    ///
+    /// Deliberately NOT `@AppStorage`: that property wrapper only auto-
+    /// refreshes inside SwiftUI Views (DynamicProperty). SpeedEngine is a
+    /// plain class, so `@AppStorage` snapshotted the value at init and never
+    /// observed later Settings changes — a buffer adjusted mid-drive kept the
+    /// stale launch-time threshold in `updateStatus`, AlertEngine, the gauge
+    /// arc, and the CarPlay buffer chip (TestFlight 2.3.0 b640: "I moved the
+    /// buffer from +3 to +5 in the middle of the drive and it didn't update
+    /// during the drive"). A direct read per evaluation costs nanoseconds at
+    /// our ~1 Hz tick and is the same pattern HapticAlertManager uses.
+    ///
+    /// The getter accepts Int- or Double-backed stored values (SettingsView's
+    /// slider writes a Double; VehicleProfile apply writes an Int), rounds to
+    /// the nearest mph, and falls back to 5 when the key is unset — matching
+    /// the previous `@AppStorage` default.
+    public var userBuffer: Int {
+        get {
+            if let stored = UserDefaults.standard.object(forKey: "userBuffer") as? Double {
+                return Int(stored.rounded())
+            }
+            return 5
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "userBuffer") }
+    }
+
+    /// Live read of the measurement system ("Imperial" / "Metric"). Same
+    /// rationale as `userBuffer` — see its doc comment.
+    public var measurementSystem: String {
+        get { UserDefaults.standard.string(forKey: "measurementSystem") ?? "Imperial" }
+        set { UserDefaults.standard.set(newValue, forKey: "measurementSystem") }
+    }
 
     private let locationManager: LocationManager
     private let speedLimitService = SmartSpeedLimitService.shared
