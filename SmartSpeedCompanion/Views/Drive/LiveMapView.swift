@@ -378,7 +378,7 @@ public struct LiveMapView: UIViewRepresentable {
         // CLLocationDirection invalid sentinel (-1). Free driving passes
         // nil — the map stays north-up there.
         let navigationCourse: Double? = viewModel.isNavigating
-            ? viewModel.currentHeading.filter { $0 >= 0 }
+            ? viewModel.currentHeading.flatMap { $0 >= 0 ? $0 : nil }
             : nil
         let cameraCtx = CameraContext(
             speed: cameraSpeedMph,
