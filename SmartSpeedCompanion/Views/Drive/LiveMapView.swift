@@ -6,11 +6,17 @@ public struct LiveMapView: UIViewRepresentable {
 
     public init() {}
 
-    /// Keep the map north-up during recording-only drives, but rotate it into
-    /// the vehicle's direction during turn-by-turn navigation so the road
-    /// ahead stays vertically readable.
+    /// Plain follow (center on the vehicle) in BOTH drive states. During
+    /// turn-by-turn navigation the CameraAnimator owns map rotation itself —
+    /// it rotates the map toward the vehicle's GPS course through
+    /// `CameraContext.vehicleCourse`, exactly like the CarPlay map — so
+    /// MapKit's `.followWithHeading` must NOT be engaged: every camera write
+    /// for the altitude/pitch glide dislodges MapKit's compass tracker, and
+    /// the map then silently falls back to north-up while the user-location
+    /// heading beam keeps pointing up (TestFlight 2.3.0 b640:
+    /// "Heading is pointing up but the map isn't").
     internal static func trackingMode(isNavigating: Bool) -> MKUserTrackingMode {
-        isNavigating ? .followWithHeading : .follow
+        return .follow
     }
 
     public func makeUIView(context: Context) -> MKMapView {
@@ -66,9 +72,9 @@ public struct LiveMapView: UIViewRepresentable {
         // `map.showsUserTrackingButton = true` here, otherwise the system
         // would add a duplicate at its default location.
 
-        // Use plain follow mode while free-driving. Active navigation uses
-        // `.followWithHeading` so the route ahead stays upright on screen;
-        // CameraAnimator continues to own only pitch and altitude.
+        // Plain follow mode in both drive states. Rotation during navigation
+        // is owned by the CameraAnimator (course-driven), not by MapKit's
+        // compass tracker — see `trackingMode(isNavigating:)`.
         map.userTrackingMode = Self.trackingMode(isNavigating: viewModel.isNavigating)
 
         // Add gesture detection for manual mode.
@@ -269,11 +275,12 @@ public struct LiveMapView: UIViewRepresentable {
         // TestFlight after the 10-second auto-resume.
         let isReattachingFromManualDetach = context.coordinator.wasMapDetached
 
-        // Re-engage native tracking if it was released. During navigation,
-        // MapKit owns heading rotation so the vehicle's road stays upright;
-        // CameraAnimator only changes altitude and pitch, preserving the
-        // heading selected by the tracking controller. Recording-only drives
-        // remain north-up to avoid compass noise rotating the map needlessly.
+        // Re-engage native tracking if it was released. Both drive states use
+        // plain `.follow`: MapKit centers the vehicle while the CameraAnimator
+        // owns altitude, pitch AND rotation (course-driven) during navigation.
+        // Recording-only drives stay north-up — the animator receives no
+        // course, so it never writes heading and compass noise cannot rotate
+        // the map needlessly.
         let desiredTrackingMode = Self.trackingMode(isNavigating: viewModel.isNavigating)
         if uiView.userTrackingMode != desiredTrackingMode {
             #if DEBUG || DEVELOPER_BUILD
@@ -356,12 +363,23 @@ public struct LiveMapView: UIViewRepresentable {
         }
 
         // Camera system: build context and let the decision engine + animator
-        // smoothly update altitude and pitch without breaking tracking mode.
+        // smoothly update altitude, pitch and (during navigation) rotation
+        // without breaking tracking mode.
         // Camera tuning tables are expressed in MPH, while the published HUD
         // speed is KM/H when the user selects Metric.
         let cameraSpeedMph = SpeedFormatting.isMetric(SpeedFormatting.measurementSystem())
             ? viewModel.speed * 0.621371
             : viewModel.speed
+        // During active guidance the animator owns rotation and orients the
+        // vehicle's direction of travel UP. `currentHeading` already
+        // implements the app's Course-over-Compass policy (GPS course while
+        // moving, compass true heading below ~4.5 mph) and is the same source
+        // CarPlay's map uses for orientation. The `>= 0` filter drops the
+        // CLLocationDirection invalid sentinel (-1). Free driving passes
+        // nil — the map stays north-up there.
+        let navigationCourse: Double? = viewModel.isNavigating
+            ? viewModel.currentHeading.filter { $0 >= 0 }
+            : nil
         let cameraCtx = CameraContext(
             speed: cameraSpeedMph,
             speedLimit: viewModel.limit,
@@ -372,7 +390,8 @@ public struct LiveMapView: UIViewRepresentable {
             maneuverImageName: viewModel.nextManeuverImageName,
             destinationDistance: viewModel.distanceToDestination,
             hasRoute: viewModel.currentRoute != nil,
-            userPitchOverride: viewModel.mapPitchMode
+            userPitchOverride: viewModel.mapPitchMode,
+            vehicleCourse: navigationCourse
         )
         if isReattachingFromManualDetach {
             // An active route may still need its first overlay rebuild while
@@ -404,17 +423,15 @@ public struct LiveMapView: UIViewRepresentable {
         } else {
             if cameraEnabled {
                 context.coordinator.cameraAnimator.update(mapView: uiView, context: cameraCtx)
-                // MapKit's heading tracker can be displaced by a direct
-                // camera assignment. Reassert heading-follow after the custom
-                // altitude / pitch update, but only during navigation and
-                // only when the map is still attached. This keeps the
-                // vehicle's current course as the camera bearing instead of
-                // silently falling back to north-up. (The animator itself
-                // re-asserts tracking right after each of its writes; this
-                // backstop covers the very first pass and tracking transitions.)
+                // A direct camera assignment can displace MapKit's tracking
+                // controller. Reassert plain follow after the custom camera
+                // write, but only during navigation and only when the map is
+                // still attached. Heading rotation is owned by the animator
+                // (course-driven) — see `trackingMode(isNavigating:)` for why
+                // `.followWithHeading` must never be re-engaged here.
                 if viewModel.isNavigating,
-                   uiView.userTrackingMode != .followWithHeading {
-                    uiView.setUserTrackingMode(.followWithHeading, animated: false)
+                   uiView.userTrackingMode != .follow {
+                    uiView.setUserTrackingMode(.follow, animated: false)
                 }
             }
             // Update overlays only when necessary (not every single frame)

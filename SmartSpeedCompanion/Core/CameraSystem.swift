@@ -222,6 +222,12 @@ public struct CameraContext: Sendable {
     public let destinationDistance: CLLocationDistance  // meters to destination
     public let hasRoute: Bool
     public let userPitchOverride: DriveViewModel.MapPitchMode
+    /// Vehicle direction of travel (degrees, 0 = north) the map should orient
+    /// UP during turn-by-turn navigation. Supplied by the iPhone map during
+    /// active guidance; `nil` leaves heading ownership with MapKit (free
+    /// driving, route preview). CarPlay does not read this field — it passes
+    /// the course directly via `update(mapView:context:course:)`.
+    public let vehicleCourse: Double?
 
     public var isStationary: Bool { speed < 3.0 }
 
@@ -235,7 +241,8 @@ public struct CameraContext: Sendable {
         maneuverImageName: String,
         destinationDistance: CLLocationDistance,
         hasRoute: Bool,
-        userPitchOverride: DriveViewModel.MapPitchMode
+        userPitchOverride: DriveViewModel.MapPitchMode,
+        vehicleCourse: Double? = nil
     ) {
         self.speed = speed
         self.speedLimit = speedLimit
@@ -247,6 +254,7 @@ public struct CameraContext: Sendable {
         self.destinationDistance = destinationDistance
         self.hasRoute = hasRoute
         self.userPitchOverride = userPitchOverride
+        self.vehicleCourse = vehicleCourse
     }
 }
 
@@ -942,12 +950,21 @@ public final class CameraAnimator {
 
     private var displayAltitude: Double = 320
     private var displayPitch: Double = 0
-    /// Integrated map heading (degrees, 0-360) applied when a course is being
-    /// driven (CarPlay). nil = MapKit's own tracking owns heading (iPhone).
+    /// Integrated map heading (degrees, 0-360) applied while the animator
+    /// owns rotation (active navigation on iPhone, or CarPlay course mode).
+    /// nil = MapKit's own tracking owns heading (free driving, route preview).
     private var displayHeading: Double?
     /// Desired "up" direction (vehicle course, 0-360). nil = leave heading to
-    /// MapKit's followWithHeading. Only CarPlay supplies this.
+    /// MapKit's followWithHeading. Supplied by CarPlay via the `course:`
+    /// entry point, or by any caller through `CameraContext.vehicleCourse`.
     private var desiredCourse: Double?
+    /// True while the animator is walking the camera bearing back to north-up
+    /// after course ownership ended (navigation stopped). Keeps ownership of
+    /// `camera.heading` during the unwind so the map rotates smoothly back to
+    /// north instead of snapping or freezing mid-rotation.
+    private var isUnwindingToNorth: Bool = false
+    /// Degrees per tick for the post-navigation north-up unwind.
+    private let northUnwindStepDeg: Double = 4
     /// Cap on how fast the map may rotate to follow the course (deg/s).
     private let headingRotationRateCapDegPerS: Double = 60
 
@@ -976,9 +993,22 @@ public final class CameraAnimator {
     public init() {}
 
     // ── Main entry point (v1-compatible signature) ────────────────────────
+    /// Generic / iPhone path. When `context.vehicleCourse` is supplied
+    /// (active turn-by-turn navigation) the animator OWNS map rotation and
+    /// orients the vehicle's direction of travel UP — the same model the
+    /// CarPlay path uses. This is deliberate: writing the camera for the
+    /// altitude/pitch glide dislodges MapKit's `.followWithHeading` compass
+    /// tracker, which left the heading beam pointing up while the map stayed
+    /// north-up (TestFlight 2.3.0 b640). When `vehicleCourse` is nil (free
+    /// driving, route preview) heading stays with MapKit's tracking.
     public func update(mapView: MKMapView, context: CameraContext) {
-        // Generic / iPhone path: MapKit's followWithHeading owns heading.
-        desiredCourse = nil
+        desiredCourse = context.vehicleCourse.map { CameraMath.normalizedHeading($0) }
+        // When course ownership ends (navigation stopped) unwind the camera
+        // bearing back to north-up over the following ticks instead of
+        // freezing the map at the last course rotation.
+        if desiredCourse == nil, displayHeading != nil {
+            isUnwindingToNorth = true
+        }
         internalUpdate(mapView: mapView, context: context)
     }
 
@@ -1013,6 +1043,7 @@ public final class CameraAnimator {
         displayAltitude = mapView.camera.centerCoordinateDistance
         displayPitch = Double(mapView.camera.pitch)
         displayHeading = nil
+        isUnwindingToNorth = false
         cameraWriteSuppressedUntil = CACurrentMediaTime() + (1.0 / 30.0)
         lastCameraWriteTimestamp = 0
         stabilizer.reset()
@@ -1121,10 +1152,13 @@ public final class CameraAnimator {
             snapEpsilon: 0.02
         )
 
-        // CarPlay course heading: rotate the map so the vehicle's direction of
-        // travel points up. GPS course is already smooth, so this is a light,
-        // rate-capped step (handles the 0/360 wrap) rather than a discrete jump.
+        // Course heading (CarPlay `course:` entry point, or the iPhone
+        // navigation path through `CameraContext.vehicleCourse`): rotate the
+        // map so the vehicle's direction of travel points up. GPS course is
+        // already smooth, so this is a light, rate-capped step (handles the
+        // 0/360 wrap) rather than a discrete jump.
         if let desiredCourse {
+            isUnwindingToNorth = false
             if displayHeading == nil {
                 displayHeading = desiredCourse
             } else {
@@ -1132,6 +1166,25 @@ public final class CameraAnimator {
                     current: displayHeading!,
                     target: desiredCourse,
                     maxDelta: headingRotationRateCapDegPerS * dt
+                )
+            }
+        } else if isUnwindingToNorth, let currentHeading = displayHeading {
+            // Post-navigation unwind: walk the bearing back to north-up at a
+            // fixed gentle pace. Delta-based termination covers any starting
+            // bearing (up to a full 180° swing). On convergence, release
+            // heading ownership entirely: the last written bearing rests
+            // within one step of north (imperceptible), and a nil
+            // `displayHeading` guarantees the governor can never fight a
+            // later user rotation during free driving.
+            let delta = CameraMath.angularDistance(0 - currentHeading)
+            if abs(delta) <= northUnwindStepDeg {
+                displayHeading = nil
+                isUnwindingToNorth = false
+            } else {
+                displayHeading = CameraMath.rotatingApproach(
+                    current: currentHeading,
+                    target: 0,
+                    maxDelta: northUnwindStepDeg
                 )
             }
         }

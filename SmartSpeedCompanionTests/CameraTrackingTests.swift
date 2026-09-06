@@ -12,8 +12,16 @@ final class CameraTrackingTests: XCTestCase {
         XCTAssertEqual(LiveMapView.trackingMode(isNavigating: false), .follow)
     }
 
-    func testNavigationUsesHeadingFollowMode() {
-        XCTAssertEqual(LiveMapView.trackingMode(isNavigating: true), .followWithHeading)
+    func testNavigationDoesNotUseCompassHeadingFollow() {
+        // Regression coverage for TestFlight 2.3.0 b640 ("Heading is pointing
+        // up but the map isn't"): every camera write for the altitude/pitch
+        // glide dislodges MapKit's `.followWithHeading` compass tracker, so
+        // the map fell back to north-up while the heading beam kept pointing
+        // up. Navigation must use plain `.follow`; the CameraAnimator owns
+        // rotation via `CameraContext.vehicleCourse` instead.
+        XCTAssertNotEqual(LiveMapView.trackingMode(isNavigating: true), .followWithHeading)
+        XCTAssertEqual(LiveMapView.trackingMode(isNavigating: true), .follow)
+        XCTAssertEqual(LiveMapView.trackingMode(isNavigating: false), .follow)
     }
 
     func testRecordingModeDoesNotUseHeadingFollowMode() {
@@ -127,5 +135,37 @@ final class CameraHeadingTests: XCTestCase {
         XCTAssertEqual(CameraMath.rotatingApproach(current: 0, target: 350, maxDelta: 30), 350, accuracy: 0.0001)
         // 350 → 10 is +20 the short way (past 0), not +360.
         XCTAssertEqual(CameraMath.rotatingApproach(current: 350, target: 10, maxDelta: 30), 10, accuracy: 0.0001)
+    }
+}
+
+/// Covers the iPhone navigation rotation fix (TestFlight 2.3.0 b640): the
+/// camera context carries the vehicle course during guidance and omits it
+/// everywhere else, so the animator rotates the map only when it genuinely
+/// owns heading.
+final class CameraContextCourseTests: XCTestCase {
+    private func makeContext(vehicleCourse: Double?) -> CameraContext {
+        CameraContext(
+            speed: 27, speedLimit: 35, isNavigating: true, isRecording: true,
+            distanceToNextTurn: 900, instruction: "Merge onto SR-101 Loop N",
+            maneuverImageName: "arrow.merge", destinationDistance: 3400,
+            hasRoute: true, userPitchOverride: .auto, vehicleCourse: vehicleCourse
+        )
+    }
+
+    func testVehicleCourseDefaultsToNilOutsideNavigation() {
+        let context = CameraContext(
+            speed: 27, speedLimit: 35, isNavigating: false, isRecording: true,
+            distanceToNextTurn: 0, instruction: "", maneuverImageName: "",
+            destinationDistance: 0, hasRoute: false, userPitchOverride: .auto
+        )
+        XCTAssertNil(context.vehicleCourse)
+    }
+
+    func testNavigationContextPreservesVehicleCourse() {
+        XCTAssertEqual(makeContext(vehicleCourse: 271).vehicleCourse, 271)
+    }
+
+    func testNilVehicleCourseLeavesHeadingToMapKit() {
+        XCTAssertNil(makeContext(vehicleCourse: nil).vehicleCourse)
     }
 }
