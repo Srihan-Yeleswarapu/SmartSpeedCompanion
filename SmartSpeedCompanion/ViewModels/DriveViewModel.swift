@@ -283,10 +283,24 @@ public final class DriveViewModel: NSObject, ObservableObject {
         }
     }
     
-    /// Creates a new vehicle profile with default settings.
+    /// Creates a new vehicle profile, inheriting the user's current settings
+    /// rather than the model's hard-coded defaults — TestFlight 2.3.0 b640:
+    /// creating a profile silently reset the alert buffer to the model
+    /// default, discarding whatever the user had configured in Settings.
     @discardableResult
     public func createVehicleProfile(name: String, context: ModelContext) -> VehicleProfile {
-        let profile = VehicleProfile(name: name, isActive: true)
+        let ud = UserDefaults.standard
+        let profile = VehicleProfile(
+            name: name,
+            isActive: true,
+            userBuffer: speedEngine.userBuffer,
+            audioAlertsEnabled: ud.object(forKey: "audioAlertsEnabled") as? Bool ?? true,
+            hapticAlertsEnabled: ud.object(forKey: "hapticAlertsEnabled") as? Bool ?? true,
+            hapticAlertStyle: ud.string(forKey: "hapticAlertStyle") ?? "strong",
+            avoidHighways: ud.bool(forKey: "avoidHighways"),
+            vehicleIconId: ud.string(forKey: "selectedVehicleIconId") ?? "default_blue",
+            measurementSystem: ud.string(forKey: "measurementSystem") ?? "Imperial"
+        )
         context.insert(profile)
         try? context.save()
         for p in vehicleProfiles { p.isActive = false }
@@ -322,8 +336,27 @@ public final class DriveViewModel: NSObject, ObservableObject {
     }
     
     /// Applies a vehicle profile's settings to the relevant UserDefaults and engines.
+    ///
+    /// The profile *mirrors* the app-wide alert settings rather than owning
+    /// them — no UI edits these per-profile (VehicleProfileEditorView only
+    /// edits name + icon), so before applying, the profile's snapshot is
+    /// refreshed from the live UserDefaults. TestFlight 2.3.0 b640: the
+    /// profile held a frozen buffer snapshot and this call ran on every
+    /// launch *and* CarPlay connect, silently reverting a buffer the user
+    /// had changed in Settings (slider showed +3 again after they set +5).
     private func applyVehicleProfileSettings(_ profile: VehicleProfile) {
         let ud = UserDefaults.standard
+        // ── Sync the profile snapshot FROM the live settings ──────────
+        profile.userBuffer = speedEngine.userBuffer
+        profile.audioAlertsEnabled = ud.object(forKey: "audioAlertsEnabled") as? Bool ?? true
+        profile.hapticAlertsEnabled = ud.object(forKey: "hapticAlertsEnabled") as? Bool ?? true
+        profile.hapticAlertStyle = ud.string(forKey: "hapticAlertStyle") ?? "strong"
+        profile.avoidHighways = ud.bool(forKey: "avoidHighways")
+        profile.measurementSystem = ud.string(forKey: "measurementSystem") ?? "Imperial"
+        // NOTE: vehicleIconId is intentionally NOT mirrored — the icon IS
+        // per-profile (profile switching swaps icons), so applying must
+        // push the profile's icon out, not absorb the live one.
+        // ── Apply (push to UserDefaults + engines) ────────────────────
         ud.set(profile.userBuffer, forKey: "userBuffer")
         ud.set(profile.audioAlertsEnabled, forKey: "audioAlertsEnabled")
         ud.set(profile.hapticAlertsEnabled, forKey: "hapticAlertsEnabled")
