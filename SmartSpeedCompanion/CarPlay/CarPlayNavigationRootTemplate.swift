@@ -329,13 +329,19 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
             }
             .store(in: &cancellables)
 
-        // 1-second timer re-evaluates the snooze button visibility so the
-        // snooze button correctly reappears when the 15-second snooze window
-        // expires (the @Published `$snoozedUntil` only fires on explicit .set,
-        // not when time passes and the Date becomes stale).
+        // 1-second timer re-evaluates alert presentation (which also refreshes
+        // snooze-button visibility) so both correctly reappear when the
+        // 15-second snooze window expires (the @Published `$snoozedUntil`
+        // only fires on explicit .set, not when time passes and the Date
+        // becomes stale).
         Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in self?.updateMapButtons() }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.handleAlerts(speed: self.viewModel.speed,
+                                  limit: self.viewModel.limit,
+                                  status: self.viewModel.status)
+            }
             .store(in: &cancellables)
 
         // The add-stop button is always enabled — category search (gas/coffee/food)
@@ -473,8 +479,22 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
 
     @MainActor
     private func handleAlerts(speed: Double, limit: Int, status: SpeedStatus) {
-        if status == .over && !isAlertPresented { presentNavigationAlert(speed: speed, limit: limit) }
-        else if status != .over && isAlertPresented { isAlertPresented = false }
+        // Honor the "I Know (15s)" snooze for its full window: this runs on
+        // every ~1 Hz speed tick, and without the isSnoozed check the alert
+        // was re-presented 1–3 s after the user dismissed it (FB: "It's
+        // hiding the prompt but shows it back within 3 seconds").
+        let snoozed = viewModel.alertEngine.isSnoozed
+        if status == .over && !snoozed && !isAlertPresented {
+            presentNavigationAlert(speed: speed, limit: limit)
+        } else if snoozed && isAlertPresented {
+            // Snooze started from the map button while the banner was up.
+            isAlertPresented = false
+            mapTemplate.dismissNavigationAlert(animated: true, completion: { _ in })
+        } else if status != .over && isAlertPresented {
+            // Dropped back under the limit: clear the flag and let the
+            // banner finish its natural duration.
+            isAlertPresented = false
+        }
         updateMapButtons()
     }
 
