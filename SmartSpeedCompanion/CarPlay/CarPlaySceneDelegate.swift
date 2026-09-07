@@ -14,6 +14,9 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     private var dashboardManager: CarPlayDashboardController?
     private var carPlayMapView: MKMapView?
     private var carPlayMapController: CarPlayMapController?
+    /// Always-on compass rendered above the CarPlay map (TestFlight 2.3.0
+    /// b640: the adaptive built-in compass faded after a few seconds).
+    private var carPlayCompassButton: MKCompassButton?
     private var cancellables = Set<AnyCancellable>()
     
     // ── IMPORTANT — why the MKMapView is NOT removed ─────────────────
@@ -107,7 +110,15 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         // heading that CarPlay head units do not provide reliably and can pin
         // the map with travel pointing sideways.
         mapView.userTrackingMode = .follow
-        mapView.showsCompass = true
+        // TestFlight 2.3.0 b640: "On Apple CarPlay there is a compass that
+        // shows for a few seconds that disappears. I need that to show all
+        // the time." The built-in compass (`showsCompass = true`) is
+        // *adaptive*: it appears during map movement/rotation and fades
+        // away after a few seconds. Hide it and pin a dedicated
+        // MKCompassButton with `.visible` instead — the same treatment the
+        // iPhone map uses (LiveMapView's MKCompassButton), rendered
+        // permanently at the top-right where the adaptive one appeared.
+        mapView.showsCompass = false
 
         // Use modern MapKit configuration with realistic 3D buildings
         if #available(iOS 16.0, *) {
@@ -127,6 +138,26 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
         self.carPlayMapView = mapView
         window.rootViewController = UIViewController()
         window.rootViewController?.view.addSubview(mapView)
+
+        // Persistent compass button, added above the map so it renders on
+        // top. `.visible` keeps it on screen at all times — MapKit only
+        // hides it when the compass is not applicable (north-up locked
+        // map), which never happens here since CarPlayMapController owns
+        // camera rotation during navigation.
+        let compass = MKCompassButton(mapView: mapView)
+        compass.compassVisibility = .visible
+        compass.translatesAutoresizingMaskIntoConstraints = false
+        self.carPlayCompassButton = compass
+        if let rootView = window.rootViewController?.view {
+            rootView.addSubview(compass)
+            NSLayoutConstraint.activate([
+                compass.topAnchor.constraint(
+                    equalTo: rootView.safeAreaLayoutGuide.topAnchor, constant: 12),
+                compass.trailingAnchor.constraint(
+                    equalTo: rootView.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            ])
+        }
+
         self.carPlayMapController = CarPlayMapController(
             mapView: mapView,
             viewModel: AppDelegate.sharedDriveViewModel
@@ -219,6 +250,8 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPT
     private func tearDownMapView() {
         carPlayMapController?.stop()
         carPlayMapController = nil
+        carPlayCompassButton?.removeFromSuperview()
+        carPlayCompassButton = nil
         carPlayMapView?.removeFromSuperview()
         carPlayMapView = nil
     }
