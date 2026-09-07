@@ -24,6 +24,19 @@ enum CarPlayUI {
     static let indigo    = UIColor(red: 0.369, green: 0.361, blue: 0.902, alpha: 1.0) // #5E5CE6
     static let gray      = UIColor(red: 0.557, green: 0.557, blue: 0.576, alpha: 1.0) // #8E8E93
 
+    /// Liquid-glass guidance panel tone for the map template's
+    /// `guidanceBackgroundColor`. CarPlay's default is a solid red banner
+    /// above the map; this replaces it with the same dark translucent glass
+    /// material the system uses for the trip-estimates panel (bottom-left
+    /// distance / time / ETA), so all guidance chrome reads as one material.
+    /// The alpha is intentional — CarPlay composites the guidance background
+    /// over the live map for a glass-like translucency; head units that
+    /// flatten it still render the same charcoal glass tone. The tone is
+    /// dark, so white instruction text clears the system's contrast check
+    /// (the documented fallback would otherwise restore the default red).
+
+    static let guidanceGlass = UIColor(white: 0.10, alpha: 0.80)
+
     /// Canonical status color used across the HUD and alerts.
     static func statusColor(_ status: SpeedStatus) -> UIColor {
         switch status {

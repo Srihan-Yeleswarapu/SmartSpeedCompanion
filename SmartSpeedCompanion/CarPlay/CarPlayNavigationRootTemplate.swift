@@ -214,6 +214,13 @@ class CarPlayNavigationRootTemplate: NSObject, CPSearchTemplateDelegate, CPMapTe
     private func setupTemplate() {
         mapTemplate.automaticallyHidesNavigationBar = false
         mapTemplate.mapDelegate = self
+        // Guidance chrome in the app's glass material instead of CarPlay's
+        // default red maneuver banner — the same dark translucent glass the
+        // system renders for the bottom-left trip-estimates panel, so the
+        // top directions banner and the bottom info panel read as one
+        // material (user request: "instead of Red, keep it to the liquid
+        // glass color").
+        mapTemplate.guidanceBackgroundColor = CarPlayUI.guidanceGlass
 
         let system = SpeedFormatting.measurementSystem()
         let unitShort = SpeedFormatting.unitLabelShort(measurementSystem: system)
