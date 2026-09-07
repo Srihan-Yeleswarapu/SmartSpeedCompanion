@@ -30,8 +30,72 @@ public final class DriveViewModel: NSObject, ObservableObject {
     // MARK: - Core Driving State
     /// User's current speed in MPH (always converted to MPH for the logic layer).
     @Published public var speed: Double = 0.0
-    /// True heading when available; otherwise falls back to course (direction of travel).
+    /// Direction of travel in degrees (0 = north), used for map rotation
+    /// and speed-limit side-of-road selection.
+    ///
+    /// Course-over-compass with **hold-last-course** semantics (TestFlight
+    /// 2.3.0 b640: "ALWAYS ALWAYS ALWAYS, the direction in which your moving
+    /// should be facing up… It's showing like 30 degrees above the right
+    /// horizontal"). While the vehicle moves, this is the GPS course.
+    /// When course becomes invalid (stopped at a light, tunnel) the last
+    /// valid course is **held** rather than falling back to the device
+    /// compass: a phone compass inside a car deviates 10–30° from the road
+    /// the vehicle is on, so a compass revert would visibly rotate the
+    /// heading-up map away from the direction of travel. The compass only
+    /// ever *seeds* the value before the first course arrives (stationary
+    /// app open), and `resetHeldCourse()` clears it when a drive ends.
+    /// Sole writer: the Combine pipeline below (the old second GPS-sink
+    /// write raced it and could clobber held state with `nil`).
     @Published public var currentHeading: Double? = nil
+
+    /// Applies the app's course-over-compass policy with hold-last-course.
+    /// Pure and `nonisolated` (no instance state) so the Combine pipeline
+    /// and unit tests can call it from any context.
+    /// - Parameters:
+    ///   - previous: last published heading (may be nil before first seed).
+    ///   - course: GPS course from the newest location (`CLLocationDirection`
+    ///     invalid sentinel is −1); nil when no location yet.
+    ///   - speed: GPS speed in m/s from the newest location; nil when none.
+    ///   - compassTrueHeading: device compass true heading, if available.
+    ///   - isNavigating: lowers the adoption threshold so the map re-locks
+    ///     to the fresh course the moment the vehicle rolls from a stop.
+    /// - Returns: the heading to publish (nil only before any seed exists).
+    nonisolated static func nextHeading(previous: Double?,
+                            course: Double?,
+                            speed: Double?,
+                            compassTrueHeading: Double?,
+                            isNavigating: Bool) -> Double? {
+        let hasCourse = course != nil && course! >= 0
+        // Course is physically meaningless below ~0.5 m/s (GPS Doppler
+        // jitter flips ±180° at a standstill), so ADOPTION is gated on
+        // movement. While navigating we re-lock at a creep (0.5 m/s) so a
+        // turn from a red light rotates the map immediately; in free
+        // driving the app's established ~4.5 mph (2 m/s) threshold keeps
+        // the value stable. Below the threshold we HOLD the last course.
+        let adoptThreshold: Double = isNavigating ? 0.5 : 2.0
+        if hasCourse && (speed ?? 0) > adoptThreshold {
+            return course
+        }
+        if let prev = previous, prev >= 0 {
+            return prev
+        }
+        // Nothing held yet (app just opened): keep the long-standing
+        // stationary behavior — seed from the compass until the vehicle
+        // moves fast enough for course to be physically meaningful.
+        if let compass = compassTrueHeading, compass >= 0 {
+            return compass
+        }
+        if hasCourse {
+            return course
+        }
+        return nil
+    }
+
+    /// Drops the held course so the next drive seeds fresh (called from
+    /// `endNavigation`).
+    private func resetHeldCourse() {
+        currentHeading = nil
+    }
     /// Reverse-geocoded current road name from `RoadGeocoder` (e.g. "W Frye Rd").
     /// Populated by a ~10 sec throttled background geocode kicked off from the
     /// 500 ms GPS sink; the underlying `RoadGeocoder` already carries a 50 m
@@ -809,15 +873,28 @@ public final class DriveViewModel: NSObject, ObservableObject {
         completer.delegate = self
         completer.resultTypes = [.pointOfInterest, .address]
         
-        // 1. COMPUTE HEADING: Use course for heading when moving > 4.5mph for stability, fall back to compass
+        // 1. COMPUTE HEADING: Course-over-compass with hold-last-course.
+        // This pipeline is the SOLE writer of `currentHeading` — see the
+        // policy docs on the property. While moving (> ~4.5 mph) the GPS
+        // course is the direction of travel; when course goes invalid the
+        // last course is HELD instead of reverting to the device compass,
+        // whose in-car deviation (10–30°) rotated the heading-up map off
+        // the road (TestFlight 2.3.0 b640). While navigating, a fresh
+        // course is always adopted so the map re-locks the instant the
+        // vehicle starts rolling from a stop.
         Publishers.CombineLatest(locManager.$latestLocation, locManager.$latestHeading)
-            .map { location, heading -> Double? in
-                if let loc = location, loc.speed > 2.0 {
-                    return loc.course >= 0 ? loc.course : heading?.trueHeading
-                }
-                return heading?.trueHeading
-            }
+            // Receive BEFORE the map: the map reads/writes `currentHeading`
+            // (a @MainActor-isolated property), so the whole computation
+            // must run on the main thread.
             .receive(on: RunLoop.main)
+            .map { [weak self] location, heading -> Double? in
+                Self.nextHeading(
+                    previous: self?.currentHeading,
+                    course: location?.course,
+                    speed: location?.speed,
+                    compassTrueHeading: heading?.trueHeading,
+                    isNavigating: self?.isNavigating ?? false)
+            }
             .assign(to: &$currentHeading)
 
         // 2. STATE BINDING: Connect logic-layer publishers to UI-layer @Published properties
@@ -891,7 +968,10 @@ public final class DriveViewModel: NSObject, ObservableObject {
                 // mph). SpeedEngine is now the SOLE source of truth — it publishes
                 // the active display unit (km/h when metric, mph when imperial) so
                 // any view reading `viewModel.speed` always gets the right value.
-                self.currentHeading = location.course >= 0 ? location.course : nil
+                // NOTE: `currentHeading` is likewise NOT written here — the
+                // heading pipeline above is its sole writer (two writers raced:
+                // this sink wrote `nil` on an invalid course, clobbering the
+                // held course and making the CarPlay map fall back to north).
                 // 10-sec-throttled reverse-geocode to refresh
                 // `currentRoadName`. RoadGeocoder.shared already carries a
                 // 50 m grid-cell cache so when this gate fires the actual
@@ -1490,6 +1570,9 @@ public final class DriveViewModel: NSObject, ObservableObject {
     /// in `init()`.
     public func endNavigation() async {
         self.isNavigating = false
+        // Drop the held course so the next drive seeds fresh (a stale held
+        // bearing from a previous route must not orient the next one).
+        resetHeldCourse()
         await navigationCoordinator.endNavigation()
         clearMultiStopState()
         if isRecording {

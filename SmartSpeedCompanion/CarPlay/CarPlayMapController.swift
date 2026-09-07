@@ -264,12 +264,18 @@ final class CarPlayMapController: NSObject, MKMapViewDelegate {
 
     /// Vehicle direction of travel (degrees, 0 = north). CarPlay head units do
     /// not expose a trustworthy compass heading, so orientation comes from the
-    /// GPS course of travel. Falls back to the published heading, then to north.
+    /// GPS course of travel. Prefers the ViewModel's policy-applied heading
+    /// (course-over-compass with hold-last-course) so a standstill's raw GPS
+    /// course — physically meaningless Doppler jitter that flips ±180° —
+    /// cannot spin the heading-up map at a red light (TestFlight 2.3.0 b640).
     private var currentCourseDegrees: Double {
+        if let held = viewModel.currentHeading, held >= 0 {
+            return held
+        }
         if let location = viewModel.locationManager.latestLocation, location.course >= 0 {
             return location.course
         }
-        return viewModel.currentHeading ?? 0
+        return 0
     }
 
     private func navigationCameraContext() -> CameraContext {
