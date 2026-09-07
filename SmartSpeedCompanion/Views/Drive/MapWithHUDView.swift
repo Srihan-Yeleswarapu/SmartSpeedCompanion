@@ -205,17 +205,17 @@ fileprivate struct NavigationInstructionCard: View {
             HStack(spacing: 14) {
                 // Maneuver Icon — fixed size, never overlaps text
                 Image(systemName: driveViewModel.nextManeuverImageName)
-                    .font(.system(size: 28, weight: .bold))
+                    .font(.system(size: 22, weight: .bold))
                     .foregroundColor(DesignSystem.cyan)
-                    .frame(width: 54, height: 54)
+                    .frame(width: 44, height: 44)
                     .background(DesignSystem.cyan.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .frame(width: 54, height: 54) // fixed size — never shrinks into text
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .frame(width: 44, height: 44) // fixed size — never shrinks into text
 
                 // Instruction text — gets all remaining space
                 VStack(alignment: .leading, spacing: 3) {
                     Text(driveViewModel.nextManeuverInstruction.isEmpty ? "Follow the route" : driveViewModel.nextManeuverInstruction)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundColor(.white)
                         .lineLimit(2)
                         .minimumScaleFactor(0.75)
@@ -262,8 +262,8 @@ fileprivate struct NavigationInstructionCard: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, driveViewModel.routeStops.count >= 2 ? 4 : 12)
+            .padding(.top, 10)
+            .padding(.bottom, driveViewModel.routeStops.count >= 2 ? 4 : 10)
 
             // The in-card "+ Add Stop" / "Edit Stops" button was removed per
             // TestFlight feedback 72. Stop management remains available in the

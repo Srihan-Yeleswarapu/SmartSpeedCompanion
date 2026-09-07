@@ -3,6 +3,10 @@ import MapKit
 
 public struct LiveMapView: UIViewRepresentable {
     @EnvironmentObject var viewModel: DriveViewModel
+    /// Observed so `updateUIView` re-runs when connectivity flips: the
+    /// offline banner pushes the navigation card stack down, and the
+    /// compass-drop offset below must grow with it.
+    @ObservedObject private var network = NetworkReachability.shared
 
     public init() {}
 
@@ -202,20 +206,26 @@ public struct LiveMapView: UIViewRepresentable {
             scale.leadingAnchor.constraint(equalTo: map.leadingAnchor, constant: 16),
 
             // Compass + tracking button repositioned to top-right, below
-            // the SwiftUI search bar / 3D toggle row.
+            // the SwiftUI search bar / 3D toggle row. The +72 constant is
+            // mutated at runtime (see `compassTopConstraint`) when the
+            // navigation card takes over the top chrome.
             compass.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
-            compass.topAnchor.constraint(equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 72),
 
             trackingButton.trailingAnchor.constraint(equalTo: map.trailingAnchor, constant: -16),
             trackingButton.topAnchor.constraint(equalTo: compass.bottomAnchor, constant: 8)
         ])
+        let compassTop = compass.topAnchor.constraint(
+            equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 72)
+        compassTop.isActive = true
 
         // Stash the buttons on the coordinator so `updateUIView` can
         // toggle their visibility against `isSearchingLocally` without
-        // walking the subview tree each render.
+        // walking the subview tree each render, and so it can drop the
+        // pair below the navigation card stack while guidance is active.
         if let coordinator = map.delegate as? Coordinator {
             coordinator.compassButton = compass
             coordinator.trackingButton = trackingButton
+            coordinator.compassTopConstraint = compassTop
         }
     }
 
@@ -241,10 +251,38 @@ public struct LiveMapView: UIViewRepresentable {
         // subview tree on every updateUIView pass. The SwiftUI 3D pill
         // is hidden in MapWithHUDView against the same flag so the
         // search row visually reads as a single expanded bar.
+        // TestFlight 2.3.0 b640 extends the same collapse to route
+        // selection: the route picker's height varies with the number of
+        // alternatives, and neither button serves a purpose while the
+        // user is choosing a route.
         let isSearching = viewModel.isSearching || viewModel.isSearchingLocally
+        let chromeCollapsed = isSearching || viewModel.isSelectingRoute
         if #available(iOS 17.0, *) {
-            context.coordinator.compassButton?.compassVisibility = isSearching ? .hidden : .adaptive
-            context.coordinator.trackingButton?.isHidden = isSearching
+            context.coordinator.compassButton?.compassVisibility = chromeCollapsed ? .hidden : .adaptive
+            context.coordinator.trackingButton?.isHidden = chromeCollapsed
+        }
+
+        // TestFlight 2.3.0 b640: "See the directions panel in the top, it is
+        // too big now, it's covering a button." While navigating, the
+        // instruction-card stack occupies the same top-trailing area where
+        // the compass + tracking buttons were pinned at their search-row
+        // offset (+72) — the tracking button ended up half-buried under the
+        // card's bottom-right glass corner. Drop the pair below the card
+        // stack for the duration of guidance and restore the search-row
+        // offset when navigation ends. The tracking button follows
+        // automatically via its `compass.bottom + 8` constraint.
+        if let compassTop = context.coordinator.compassTopConstraint {
+            // 2+ stops render the extra in-card Optimize row (~35 pt), and
+            // the offline banner (+~40 pt) pushes the whole card stack down
+            // — the drop distance grows with both so the pair always lands
+            // below the stack. Values are conservative by design.
+            let guidanceOffset: CGFloat = 155
+                + (viewModel.routeStops.count >= 2 ? 35 : 0)
+                + (network.isConnected ? 0 : 40)
+            let target: CGFloat = viewModel.isNavigating ? guidanceOffset : 72
+            if abs(compassTop.constant - target) > 0.5 {
+                compassTop.constant = target
+            }
         }
 
         // Limit camera updates during search to prevent unwanted "jumping"
@@ -463,6 +501,14 @@ public struct LiveMapView: UIViewRepresentable {
         // every render.
         weak var compassButton: MKCompassButton? = nil
         weak var trackingButton: MKUserTrackingButton? = nil
+        /// Vertical-offset constraint of the compass from the map's safe-area
+        /// top. Mutated in `updateUIView` so the compass+tracking pair drops
+        /// below the navigation instruction card while guidance is active
+        /// (TestFlight 2.3.0 b640: the card stack covered the tracking
+        /// button, which sat at the search-row offset under the card's
+        /// corner). The tracking button follows automatically — its top
+        /// constraint is `compass.bottom + 8`.
+        var compassTopConstraint: NSLayoutConstraint? = nil
 
         // FB25 — last-applied vehicle icon id so `updateUIView` knows
         // when the user picked a new icon and needs the user-location
