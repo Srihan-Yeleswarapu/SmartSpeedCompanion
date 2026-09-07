@@ -982,6 +982,25 @@ public final class CameraAnimator {
     /// integration never turns into a 30 fps camera-write stream — the
     /// visible map strobe/stutter reported in TestFlight.
     private var lastCameraWriteTimestamp: CFTimeInterval = 0
+    /// The altitude/pitch/heading values WE last wrote to the map. Write
+    /// decisions compare the integrated display state against these — never
+    /// against `mapView.camera`'s live-reported values. Chasing the reported
+    /// camera is a self-sustaining limit cycle: every assignment perturbs
+    /// MapKit's tracking-controller re-derivation, which moves the reported
+    /// camera away from what we wrote, which re-arms the epsilon and forces
+    /// another write at the next settling slot — a ~3 Hz write/bounce loop
+    /// that reads as zoom breathing, even with the vehicle parked (video
+    /// analysis of TestFlight 2.3.0 b640: ~8-11 zoom-direction reversals/s
+    /// at 0 mph). A steady target now writes exactly once and goes silent.
+    private var lastWrittenAltitude: Double?
+    private var lastWrittenPitch: Double?
+    private var lastWrittenHeading: Double?
+    /// If the map's reported altitude drifts this far from what we last
+    /// wrote, something external moved the camera (route-overview fit,
+    /// restore-after-detach) and we re-assert our target once the settling
+    /// window allows. Small tracking-controller bounce stays far below this
+    /// and is deliberately ignored.
+    private let externalCameraShiftThreshold: Double = 150
     // A camera assignment can trigger MapKit's own tracking transaction. Keep
     // a quiet settling window after each assignment instead of immediately
     // issuing another assignment on the next governor slot.
@@ -1028,6 +1047,24 @@ public final class CameraAnimator {
         // transaction before our next custom write.
         cameraWriteSuppressedUntil = CACurrentMediaTime() + (1.0 / 30.0)
 
+        // Re-owning the viewport after a suspension (route preview, manual
+        // detach, search focus, watchdog stop): the map's CURRENT camera is
+        // the truth. Seed both the integrated display state and the write
+        // baseline from it, so the first post-resume glide starts from where
+        // the map actually is (a smooth zoom from the overview fit back to
+        // drive framing) and the epsilon decisions measure against reality
+        // from the very first tick. While the display link is RUNNING this
+        // must not fire — the last-written baseline is the whole anti-jitter
+        // mechanism.
+        if displayLink == nil || displayLink?.isPaused == true {
+            displayAltitude = mapView.camera.centerCoordinateDistance
+            displayPitch = Double(mapView.camera.pitch)
+            lastWrittenAltitude = displayAltitude
+            lastWrittenPitch = displayPitch
+            lastWrittenHeading = nil
+            isUnwindingToNorth = false
+        }
+
         stabilizer.ingest(context: context, now: lastContextUpdate)
         ensureDisplayLink()
     }
@@ -1044,6 +1081,12 @@ public final class CameraAnimator {
         displayPitch = Double(mapView.camera.pitch)
         displayHeading = nil
         isUnwindingToNorth = false
+        // The map's current camera becomes the reference baseline: the next
+        // write decision measures against these values, not against a moving
+        // target.
+        lastWrittenAltitude = displayAltitude
+        lastWrittenPitch = displayPitch
+        lastWrittenHeading = nil
         cameraWriteSuppressedUntil = CACurrentMediaTime() + (1.0 / 30.0)
         lastCameraWriteTimestamp = 0
         stabilizer.reset()
@@ -1189,27 +1232,66 @@ public final class CameraAnimator {
             }
         }
 
-        // Governor-gated write: only touch MapKit when the integrated state
-        // moved beyond epsilon AND the minimum write interval has elapsed.
-        // The display link integrates at 30 fps, but writing the map camera
-        // at that rate re-arms MapKit's tracking controller and re-renders
-        // tiles on every frame — the classic nav-map strobe. A bounded write
-        // cadence keeps the glide smooth while leaving MapKit completely
-        // undisturbed between writes.
+        // Governor-gated write: only touch MapKit when OUR integrated state
+        // has moved beyond epsilon relative to the values WE last wrote —
+        // never relative to `mapView.camera`'s live-reported values.
+        //
+        // Why not the reported camera: every direct camera assignment
+        // perturbs MapKit's tracking controller, which re-derives its
+        // tracking camera and reports a slightly different altitude/pitch
+        // than what we wrote. Chasing that reported value re-arms the
+        // epsilon every cycle, forcing another write every settling slot —
+        // a self-sustaining ~3 Hz write/bounce loop (zoom breathing, video-
+        // measured at 8–11 zoom-direction reversals/s at 0 mph). Comparing
+        // against our own last-written values breaks the loop: when the
+        // target is steady, the integrated state converges onto it, the
+        // deltas fall below epsilon, and the animator goes permanently
+        // quiet — regardless of what MapKit reports back.
+        //
+        // External-shift safety valve: if the map's reported altitude is
+        // very far from what we last wrote (route-overview fit, manual
+        // zoom, restore-after-detach), the user/tooling owns the viewport —
+        // skip our writes instead of fighting it.
         let camCurrentAlt = mapView.camera.centerCoordinateDistance
         let camCurrentPitch = Double(mapView.camera.pitch)
         let camCurrentHeading = Double(mapView.camera.heading)
-        let headingDelta = displayHeading.map { abs(CameraMath.angularDistance($0 - camCurrentHeading)) } ?? 0
         let timeSinceLastWrite: TimeInterval? = lastCameraWriteTimestamp == 0
             ? nil
             : link.timestamp - lastCameraWriteTimestamp
         guard lastCameraWriteTimestamp == 0
                 || link.timestamp - lastCameraWriteTimestamp >= cameraSettlingInterval else { return }
+
+        let baselineAlt: Double
+        let baselinePitch: Double
+        let baselineHeading: Double
+        if let writtenAlt = lastWrittenAltitude, let writtenPitch = lastWrittenPitch {
+            baselineAlt = writtenAlt
+            baselinePitch = writtenPitch
+            baselineHeading = lastWrittenHeading ?? camCurrentHeading
+        } else {
+            // Never wrote yet this session: the map's current camera is the
+            // truth. Seed both the baseline AND the integrated display state
+            // from it so the first glide starts from reality instead of the
+            // 320 m default (a later write would otherwise snap the map).
+            baselineAlt = camCurrentAlt
+            baselinePitch = camCurrentPitch
+            baselineHeading = camCurrentHeading
+            displayAltitude = camCurrentAlt
+            displayPitch = camCurrentPitch
+            lastWrittenAltitude = camCurrentAlt
+            lastWrittenPitch = camCurrentPitch
+        }
+        if lastWrittenAltitude != nil,
+           abs(camCurrentAlt - baselineAlt) > externalCameraShiftThreshold {
+            // The camera moved externally beyond our write trail — do not
+            // fight it (mirrors the manual-detach ownership model).
+            return
+        }
         guard writeGovernor.shouldWrite(
             timeSinceLastWrite: timeSinceLastWrite,
-            altitudeDelta: displayAltitude - camCurrentAlt,
-            pitchDelta: displayPitch - camCurrentPitch,
-            headingDelta: headingDelta
+            altitudeDelta: displayAltitude - baselineAlt,
+            pitchDelta: displayPitch - baselinePitch,
+            headingDelta: displayHeading.map { abs(CameraMath.angularDistance($0 - baselineHeading)) } ?? 0
         ) else { return }
         lastCameraWriteTimestamp = link.timestamp
 
@@ -1220,16 +1302,15 @@ public final class CameraAnimator {
             cam.heading = displayHeading
         }
         let trackingMode = mapView.userTrackingMode
-        // Property setter (iOS 13+) — see class doc comment for why this must
-        // never become setCamera(_:animated:) while tracking is active.
         mapView.camera = cam
-        // A direct camera assignment can displace MapKit's tracking
-        // controller (follow-with-heading drops back to .none). Re-assert
-        // the mode in the SAME turn so the map is never left untracked
-        // between writes; the recenter is a no-op because the write
-        // preserved the tracked center coordinate. Without this, the map
-        // sits untracked until the next SwiftUI pass re-engages it — the
-        // 2 Hz recenter snap that reads as convulsing/spasming.
+        lastWrittenAltitude = displayAltitude
+        lastWrittenPitch = displayPitch
+        lastWrittenHeading = displayHeading ?? camCurrentHeading
+        // Safety net only: if the direct assignment actually flipped the
+        // tracking mode off, restore it so the map never sits untracked.
+        // (Both drive states use plain `.follow`, so flips are rare — and
+        // with the last-written baseline above, this re-assert can no
+        // longer feed the reported-camera write loop it once did.)
         if trackingMode != .none, mapView.userTrackingMode != trackingMode {
             mapView.setUserTrackingMode(trackingMode, animated: false)
         }

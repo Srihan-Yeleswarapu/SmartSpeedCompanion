@@ -545,6 +545,138 @@ def s5_highway_exit():
     return passed
 
 
+# ── S6: write-loop limit cycle (the video-measured zoom breathing) ────────
+def s6_write_loop_limit_cycle():
+    """Models the ACTUAL MapKit write loop: display link at 30 fps, governor
+    gating (0.35 s settling interval, 2.5 m epsilon), and MapKit's tracking
+    controller perturbing the reported camera after every direct write.
+
+    The defect (TestFlight 2.3.0 b640, video-measured at 8-11 zoom-direction
+    reversals/s while parked): the write decision compared the integrated
+    altitude against the map's LIVE-REPORTED camera. Each write perturbs the
+    reported camera (modeled as +6 m of bounce decaying over ~0.3 s), which
+    re-arms the 2.5 m epsilon, forcing another write every settling slot —
+    a self-sustaining write cycle whose altitude sawtooth is the zoom
+    breathing on screen.
+
+    The fix compares against the LAST-WRITTEN values: a steady target writes
+    once (convergence) and the loop goes silent; MapKit's reported bounce is
+    never chased.
+    """
+    SETTLE = 0.35
+    EPS = 2.5
+    RESIDUAL = 3.5         # m: MapKit's tracking controller re-derives its
+                           # tracking camera at an offset from what we wrote;
+                           # the reported camera RELAXES there over ~0.36 s
+    RELAX_TAU = 0.12
+
+    class Map:
+        def __init__(self):
+            self.reported = 560.0      # what mapView.camera reports now
+            self._rest = 560.0         # where the tracking controller settles
+
+        def write(self, value, now):
+            # The assignment takes effect immediately; MapKit's tracking
+            # controller then re-derives its own camera and the reported
+            # value relaxes toward written + RESIDUAL (the repeated
+            # zoom-down/relax-up cycle that reads as breathing).
+            self.reported = value
+            self._rest = value + RESIDUAL
+
+        def tick(self, now, dt):
+            alpha = 1.0 - math.exp(-dt / RELAX_TAU)
+            self.reported += alpha * (self._rest - self.reported)
+
+    def run(policy):
+        m = Map()
+        disp = 540.0                   # glide in flight (20 m above target)
+        target = 560.0                 # steady navigation target (parked car)
+        last_write = None
+        baseline = None                # None until seeded (Swift: seeds from
+                                       # the map's real camera once)
+        writes = []
+        history = []
+        t, dt = 0.0, FRAME_DT
+        for i in range(int(12.0 / dt)):
+            m.tick(t, dt)
+            # integrate toward the (steady) target
+            disp = approach(disp, target, dt, TIMING["alt_cap"], 0.75)
+            due = last_write is None or t - last_write >= SETTLE
+            if policy == "fixed":
+                if baseline is None:
+                    baseline = disp       # seed ONCE from reality
+                delta = disp - baseline
+            else:
+                delta = disp - m.reported
+            if due and abs(delta) >= EPS:
+                m.write(disp, t)
+                last_write = t
+                if policy == "fixed":
+                    baseline = disp       # we wrote this value
+                writes.append(t)
+            history.append(m.reported)
+            t += dt
+        return writes, history
+
+    writes_old, hist_old = run("reported")
+    writes_new, hist_new = run("fixed")
+
+    # The glide itself takes ~2 s; the defect is what happens AFTER the
+    # integrated state has converged onto the steady target (the parked-car
+    # scenario in the video). Old policy: keeps writing every settling slot
+    # forever — the limit cycle. New policy: zero further writes.
+    converge_t = 4.0
+    old_post = [t for t in writes_old if t > converge_t]
+    new_post = [t for t in writes_new if t > converge_t]
+    ok_old_loops = len(old_post) >= 15
+    # A single trailing glide write can legitimately land just past the
+    # convergence mark (slot timing); a LIMIT CYCLE means many writes
+    # forever. Silence = at most that one trailing write.
+    ok_new_silent = len(new_post) <= 1
+
+    # Visible effect: reported-altitude sawtooth amplitude (the breathing)
+    # measured over the post-convergence window only.
+    def amplitude(h):
+        # Pure-python detrended std: subtract a 1 s moving average over the
+        # post-convergence tail of the reported-camera history.
+        tail = h[int(converge_t / FRAME_DT):]
+        k = int(1.0 / FRAME_DT)
+        n = len(tail)
+        csum = [0.0]
+        for v in tail:
+            csum.append(csum[-1] + v)
+        det = []
+        for i in range(n):
+            lo = max(0, i - k // 2)
+            hi = min(n, i + k // 2 + 1)
+            mean = (csum[hi] - csum[lo]) / (hi - lo)
+            det.append(tail[i] - mean)
+        m = sum(det) / n
+        var = sum((d - m) ** 2 for d in det) / n
+        return var ** 0.5
+
+    amp_old = amplitude(hist_old)
+    amp_new = amplitude(hist_new)
+    ok_amplitude = amp_new < amp_old * 0.25
+
+    passed = ok_old_loops and ok_new_silent and ok_amplitude
+    print(f"{'S6':4} write-loop: old post-glide writes={len(old_post)} (loops={ok_old_loops}) "
+          f"new post-glide writes={len(new_post)} (silent={ok_new_silent}) "
+          f"amplitude old={amp_old:.2f}m new={amp_new:.2f}m -> "
+          f"{'OK' if passed else 'STILL LOOPING'}")
+    return passed
+
+
+def np_array(x):
+    import numpy as np
+    return np.asarray(x, dtype=float)
+
+
+def np_convolve(a, w, mode="same"):
+    import numpy as np
+    return np.convolve(a, w, mode=mode)
+
+
 if __name__ == "__main__":
     results = [
         s1_boundary_noise(),
@@ -552,6 +684,7 @@ if __name__ == "__main__":
         s3_red_light(),
         s4_stop_and_go_free_drive(),
         s5_highway_exit(),
+        s6_write_loop_limit_cycle(),
     ]
     total, good = len(results), sum(results)
     print(f"\n{good}/{total} scenarios passed")
