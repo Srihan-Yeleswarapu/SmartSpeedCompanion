@@ -1058,8 +1058,12 @@ fileprivate struct LimitSignView: View {
     /// the two live network paths, and shows an unobtrusive grey when no data is available.
     private var sourceChip: (text: String, color: Color) {
         switch source {
-        case "Batch (HERE)":    return ("HERE", Color(hex: "#34D38A"))      // warm HERE cache
-        case "Live (HERE)":     return ("HERE", Color(hex: "#00D4FF"))      // live HERE
+        // Production: hide the HERE source label under the sign so end users
+        // don't see provider names. The code paths that populate `source`
+        // (SpeedLimitDataSource / SpeedLimitService) are unchanged — this
+        // only affects what the HUD renders.
+        case "Batch (HERE)":    return ("--", Color(hex: "#34D38A"))      // warm HERE cache
+        case "Live (HERE)":     return ("--", Color(hex: "#00D4FF"))      // live HERE
         // Keep legacy-provider names truthful if an older persisted state or
         // diagnostic path ever reaches the HUD. Hiding them as "--" made it
         // impossible to explain why a non-HERE answer appeared under the sign.

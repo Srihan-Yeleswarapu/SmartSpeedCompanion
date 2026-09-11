@@ -380,10 +380,13 @@ class CarPlayListSpeedController {
                 title: "Status",
                 detail: viewModel.status.rawValue.uppercased()
             ),
-            CPInformationItem(
-                title: "Speed Limit Source",
-                detail: viewModel.speedLimitSource
-            ),
+            // Production: hide the speed-limit source line from CarPlay so
+            // end users don't see provider names. The underlying data flow
+            // (DriveViewModel.speedLimitSource / SpeedLimitService) is unchanged.
+            // CPInformationItem(
+            //     title: "Speed Limit Source",
+            //     detail: viewModel.speedLimitSource
+            // ),
             CPInformationItem(
                 title: "Current Road",
                 detail: viewModel.currentRoadName ?? "Unknown"
