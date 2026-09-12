@@ -61,7 +61,7 @@ settings:
     # `distribute.yml` and overrides this static value on the CLI.
     # Keep the literal below only as a local-dev fallback so previews
     # in Xcode don't show "(null)".
-    MARKETING_VERSION: "2.3.0"
+    MARKETING_VERSION: "2.4.0"
     CURRENT_PROJECT_VERSION: "5"
     ENABLE_BITCODE: NO
     DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
@@ -232,7 +232,7 @@ targets:
         # project-level default. $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION)
         # in this target's `info.properties` block above still drive the
         # baked Info.plist values.
-        MARKETING_VERSION: "2.3.0"
+        MARKETING_VERSION: "2.4.0"
         # CURRENT_PROJECT_VERSION is auto-derived at archive time in
         # distribute.yml from `git rev-list --count HEAD` -- the literal
         # "4" below only affects Xcode local-dev previews. Keep it > last
@@ -336,7 +336,7 @@ targets:
         # block on the SmartSpeedCompanion target's settings.base for why
         # duplicating these here matters when an older `xcodegen generate`
         # version may have cached a stale scheme-level override.
-        MARKETING_VERSION: "2.3.0"
+        MARKETING_VERSION: "2.4.0"
         CURRENT_PROJECT_VERSION: "5"
         # Bundle id is the host-app's id with a `.SpeedWidget` suffix —
         # iOS only embeds an extension into its parent app when the
